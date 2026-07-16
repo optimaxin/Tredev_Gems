@@ -1,0 +1,58 @@
+{
+  "summary": "GEMORA MVP end-to-end review. Backend: 25/27 pytest passing (auth, seed idempotency, catalog, vernacular search, cart double-sell 409, checkout mock-pay, dispatch→activation→vault, revoke, RBAC, Emergent session bearer, consultation all pass). Frontend: home / shop (8 cards) / product detail / verify page render cleanly with palette + testids. The 2 failing tests expose ONE CRITICAL backend bug (ephemeral Ed25519 key regenerated on every backend restart → all previously-issued certificates return SUSPICIOUS forever, breaking the crown-jewel verify feature).",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "/api/verify/{qr_token}",
+        "issue": "CRITICAL — Ed25519 private key is ephemeral. backend/.env has ED25519_PRIVATE_KEY_HEX=\"\" so server.py:54 generates a NEW random key on every backend startup. Every certificate signed with the previous key can never re-verify against the new public key, so /api/verify/... returns status=SUSPICIOUS instead of AUTHENTIC even for legitimate seeded/dispatched units. Reproduced twice: currently mounted certs have public_key_hex=0002a5… while ED25519_PUBLIC_HEX=1b2821…. Also seen the key rotate between two curl calls minutes apart (any backend reload silently breaks all prior certs). Fix: persist ED25519_PRIVATE_KEY_HEX in backend/.env (32 raw bytes, hex-encoded) OR generate once and write to .env on first boot. Until fixed, GEMORA's core trust guarantee is unusable.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "/api/auth/me, /api/cart",
+        "issue": "Anonymous first paint logs 401s in browser console (auth-probe pattern). Consider treating a 401 on these endpoints as `not signed in` and suppressing the network error in the client, or add a lightweight /api/auth/whoami that returns 200 with null user for cleaner logs."
+      },
+      {
+        "endpoint": "/api/consultation/book",
+        "issue": "Model uses `concern` (not `topic`). Endpoint returns booking dict directly (not `{booking: {...}}`) — docstring/tests should match. Not a bug; noted for API doc consistency."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Verify page for a legitimate activated cert",
+        "issue": "Always shows SUSPICIOUS due to backend ephemeral-key bug (see backend/critical/1). Frontend rendering itself is correct; it faithfully displays whatever backend returns.",
+        "affected_selectors": ["/verify/:qr_token status card"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_gemora_backend.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "URGENT: Persist Ed25519 private key. In backend/.env set ED25519_PRIVATE_KEY_HEX to a stable 32-byte hex value (e.g., `python -c \"from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey; from cryptography.hazmat.primitives import serialization as s; k=Ed25519PrivateKey.generate(); print(k.private_bytes(s.Encoding.Raw,s.PrivateFormat.Raw,s.NoEncryption()).hex())\"`), then restart backend and re-seed. After that /api/verify/:qr_token will return AUTHENTIC for freshly-signed certs and stay stable across restarts.",
+    "Optional: on startup, if ED25519_PRIVATE_KEY_HEX is empty, generate once and PERSIST to .env instead of only in-memory — prevents this footgun.",
+    "Optional: silence anonymous 401 console noise on /auth/me + /cart during first paint."
+  ],
+  "critical_code_review_comments": [
+    "server.py:50-55 — ephemeral key generation without persistence is unsafe for a product whose entire value proposition is verifiable authenticity. Refuse to boot without ED25519_PRIVATE_KEY_HEX, or write a generated one to disk atomically.",
+    "server.py is 1096 lines — consider splitting into routers/{auth,catalog,verify,cart,orders,admin,consultation}.py plus core/{crypto,security,db,seed}.py for maintainability.",
+    "server.py:743 raises HTTPException from _mark_paid after some reservations already flipped to sold → partial commit state. Mongo without txns can't be truly atomic here; consider wrapping in a session/transaction if replica set is available, or add a compensating rollback loop.",
+    "server.py:615 sets `httponly=False` on the gemora_anon cookie (fine for readable anon key) but path scope + samesite=none+secure=true is correct. Good."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_gemora_backend.py (created)"
+  ],
+  "success_rate": {"backend": "93% (25/27 pytest)", "frontend": "100% render, all pages load, 8 product cards on /shop, verify page renders correct card"},
+  "test_credentials": "admin@gemora.in / admin@1234, priya@example.com / priya@1234 — both work; sourced from /app/memory/test_credentials.md",
+  "seed_data_creation": "Idempotent POST /api/dev/seed produces 8 products, 2 units per serialised product, 1 activated Ed25519-signed cert per serialised product. During testing I purged & re-seeded certificates+units+carts+reservations+orders once to validate the verify chain within a single key epoch (it worked). Buyer verified_items may need a re-seed if further UI E2E is required.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "After main agent sets ED25519_PRIVATE_KEY_HEX in backend/.env and restarts + POST /api/dev/seed, run: `cd /app && python -m pytest backend/tests/test_gemora_backend.py -v`. All 27 tests should pass. Pytest is configured with -n 2 --dist loadscope (see /app/backend/pytest.ini) — the single TestGemora class keeps sequential state on one worker. If seed already has old certs with previous public key, purge db.certificates + db.units + db.reservations + db.carts + db.orders + db.verified_items before re-seeding.",
+  "rca_of_the_issue": "ROOT CAUSE — server.py loads ED25519_PRIVATE_KEY_HEX from env at startup (lines 50-55). backend/.env contains ED25519_PRIVATE_KEY_HEX=\"\" (empty). So the `if _priv_hex` branch is False and Ed25519PrivateKey.generate() creates a random key that only lives for the process lifetime. On every supervisor restart / code hot-reload, the key rotates. Certificates persisted in Mongo carry the old public_key_hex + a signature made with the old private key; the new process cannot verify them → verify() returns AUTHENTIC only if signature verification succeeds, else SUSPICIOUS. REPRO: (1) POST /api/dev/seed, (2) note public_key from GET /api/, (3) sudo supervisorctl restart backend, (4) GET /api/ shows a NEW public_key, (5) GET /api/verify/<any_seed_qr_token> returns SUSPICIOUS. MITIGATION: generate a fixed key and put its hex in backend/.env; supervisorctl restart backend; POST /api/dev/seed (idempotent, so purge certs+units first if you want fresh signed data)."
+}

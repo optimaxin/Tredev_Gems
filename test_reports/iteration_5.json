@@ -1,0 +1,42 @@
+{
+  "summary": "Verified Login Phone-OTP → Firebase migration. Found and fixed a critical .env formatting bug that was defeating the migration. After fix, all acceptance criteria met.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verifications": {
+    "login_otp_renders_PhoneVerify_panel": true,
+    "old_login_otp_testids_absent": ["login-otp-phone", "login-otp-code", "login-otp-send", "login-otp-submit"],
+    "gemora_recaptcha_div_present": true,
+    "api_auth_otp_send_called_from_login_otp_tab": false,
+    "firebase_identitytoolkit_calls_made": true,
+    "dev_code_banner_visible": false,
+    "backend_firebase_verify_bogus_token": "401 with detail 'Invalid Firebase ID token: Wrong number of segments in token: b\\'bogus_token_xyz\\''",
+    "backend_firebase_admin_initialised": "INFO gemora Firebase Admin initialised for project doctorappointmentcx (present in backend logs)",
+    "password_login_admin_gemora_in": "success — redirected to /account",
+    "signup_phone_verify_panel_present": true,
+    "console_errors_login_page": "0 app errors (only a benign 'requestStorageAccess: Permission denied' from Google reCAPTCHA iframe in headless browser)"
+  },
+  "root_cause_and_fix": {
+    "issue": "On first test run, clicking 'Phone OTP' on /login STILL called the mock /api/auth/otp/send and displayed dev code 123456 (bug appeared unfixed).",
+    "rca": "frontend/.env line had 'ENABLE_HEALTH_CHECK=false' and 'REACT_APP_FIREBASE_API_KEY=AIzaSy...' concatenated with no newline separator between them. Create-React-App's dotenv parser therefore interpreted REACT_APP_FIREBASE_API_KEY as part of the value of ENABLE_HEALTH_CHECK, so REACT_APP_FIREBASE_API_KEY was undefined at build time. FIREBASE_ENABLED (= !!(apiKey && projectId && appId)) evaluated to false, and PhoneVerify.jsx fell back to the legacy /api/auth/otp/send mock path.",
+    "fix_applied": "Inserted a newline between ENABLE_HEALTH_CHECK=false and REACT_APP_FIREBASE_API_KEY=... in /app/frontend/.env, then restarted the frontend supervisor to pick up the new env.",
+    "post_fix_evidence": "21 network calls to identitytoolkit.googleapis.com / recaptcha / gstatic; 0 calls to /api/auth/otp/send; reCAPTCHA visual challenge (stairs) rendered on-screen; no dev-code toast."
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Guard against .env parsing bugs — add a runtime assertion in /app/frontend/src/lib/firebase.js that warns if FIREBASE_ENABLED is false but any REACT_APP_FIREBASE_* var is set (helps catch env misconfig fast).",
+    "Consider removing the legacy /api/auth/otp/send fallback in PhoneVerify.jsx once Firebase is deemed the only supported path — the fallback silently hides misconfigurations like the one found above.",
+    "Backend error message 'Invalid Firebase ID token: Wrong number of segments in token: b\\'bogus_token_xyz\\'' leaks a Python bytes-repr. Consider sanitising the upstream exception before returning to clients."
+  ],
+  "updated_files": ["/app/frontend/.env"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin@gemora.in / admin@1234 (password login OK)",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Login Phone OTP now correctly uses PhoneVerify + Firebase reCAPTCHA. The only change required to make it work was fixing a missing newline in frontend/.env. Password login and signup PhoneVerify were unaffected. Playwright cannot solve Firebase reCAPTCHA so a full SMS delivery e2e is not possible in this env — that is expected."
+}

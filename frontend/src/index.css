@@ -1,0 +1,164 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Tredev brand tokens */
+  --ivory: #FBFBF9;
+  --cream: #F3F0E6;
+  --sand: #EBE5D8;
+  --ink: #1A1514;
+  --ink-2: #4A423D;
+  --ink-muted: #8A817C;
+  --saffron: #F28C28;
+  --gold: #D4AF37;
+  --gold-soft: #C9A227;
+  --maroon: #722F37;
+  --maroon-deep: #4E1F26;
+  --verified: #2E7D32;
+  --suspicious: #D84315;
+  --revoked: #B71C1C;
+}
+
+@layer base {
+  :root {
+    --background: 44 30% 97%;
+    --foreground: 12 15% 10%;
+    --card: 44 30% 97%;
+    --card-foreground: 12 15% 10%;
+    --popover: 44 30% 97%;
+    --popover-foreground: 12 15% 10%;
+    --primary: 351 39% 32%;
+    --primary-foreground: 44 30% 97%;
+    --secondary: 44 25% 92%;
+    --secondary-foreground: 12 15% 10%;
+    --muted: 44 20% 90%;
+    --muted-foreground: 20 6% 45%;
+    --accent: 44 25% 90%;
+    --accent-foreground: 12 15% 10%;
+    --destructive: 5 78% 42%;
+    --destructive-foreground: 44 30% 97%;
+    --border: 45 40% 65%;
+    --input: 45 20% 82%;
+    --ring: 351 39% 32%;
+    --radius: 2px;
+  }
+}
+
+html, body {
+  background-color: var(--ivory);
+  color: var(--ink);
+  font-family: "Manrope", "Hind", -apple-system, BlinkMacSystemFont, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "ss01", "cv11";
+}
+
+body {
+  margin: 0;
+}
+
+.font-display { font-family: "Yatra One", "Cormorant Garamond", serif; }
+.font-serif-display { font-family: "Cormorant Garamond", serif; }
+.font-devanagari { font-family: "Tiro Devanagari Sanskrit", "Yatra One", serif; }
+.font-devanagari-display { font-family: "Yatra One", "Tiro Devanagari Sanskrit", serif; }
+.font-mono-cert { font-family: "JetBrains Mono", monospace; letter-spacing: -0.02em; }
+
+.brand-gradient { background-image: linear-gradient(90deg, #F28C28 0%, #D4AF37 50%, #722F37 100%); }
+.brand-gradient-text {
+  background-image: linear-gradient(90deg, #F28C28 0%, #D4AF37 50%, #722F37 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+
+/* Thin gold linework */
+.gold-line { border: 1px solid rgba(212, 175, 55, 0.35); }
+.gold-line-strong { border: 1px solid rgba(212, 175, 55, 0.7); }
+.gold-line-t { border-top: 1px solid rgba(212, 175, 55, 0.35); }
+.gold-line-b { border-bottom: 1px solid rgba(212, 175, 55, 0.35); }
+
+/* Subtle sacred-geometry watermark */
+.geom-bg {
+  background-image:
+    radial-gradient(circle at 20% 30%, rgba(212, 175, 55, 0.08) 0, transparent 40%),
+    radial-gradient(circle at 80% 70%, rgba(114, 47, 55, 0.05) 0, transparent 45%);
+}
+
+.grain::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0.05;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='0.5'/></svg>");
+}
+
+/* Sharp cards */
+.card-sharp {
+  background: var(--ivory);
+  border: 1px solid rgba(212, 175, 55, 0.35);
+  border-radius: 2px;
+}
+
+/* Scanning animation for verify page */
+@keyframes scanline {
+  0% { transform: translateY(-50%); opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { transform: translateY(150%); opacity: 0; }
+}
+.scanline {
+  position: absolute; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, transparent, #D4AF37, transparent);
+  animation: scanline 1.6s cubic-bezier(.7, 0, .3, 1) infinite;
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.fade-up { animation: fade-up 0.5s ease-out both; }
+
+/* No universal transition — only specific utilities */
+.hover-lift { transition: transform 200ms ease, box-shadow 200ms ease; }
+.hover-lift:hover { transform: translateY(-2px); box-shadow: 0 8px 24px -12px rgba(114, 47, 55, 0.25); }
+
+.img-hover { transition: transform 400ms ease; }
+.img-hover:hover { transform: scale(1.03); }
+
+::selection { background: rgba(242, 140, 40, 0.3); color: var(--maroon-deep); }
+
+/* ===== Ambassador hero — chakra + ambient motion ===== */
+@keyframes chakra-spin { to { transform: rotate(360deg); } }
+@keyframes chakra-spin-rev { to { transform: rotate(-360deg); } }
+.chakra-spin { animation: chakra-spin 46s linear infinite; transform-origin: 50% 50%; }
+.chakra-spin-rev { animation: chakra-spin-rev 64s linear infinite; transform-origin: 50% 50%; }
+
+/* Radiating aura rings that pulse outward */
+@keyframes aura-pulse {
+  0%   { transform: scale(0.72); opacity: 0.55; }
+  70%  { opacity: 0; }
+  100% { transform: scale(1.55); opacity: 0; }
+}
+.aura-ring { animation: aura-pulse 6s ease-out infinite; }
+
+/* Gold embers drifting upward */
+@keyframes ember-rise {
+  0%   { transform: translateY(0) scale(1); opacity: 0; }
+  12%  { opacity: 0.85; }
+  100% { transform: translateY(-160px) scale(0.3); opacity: 0; }
+}
+.ember { animation: ember-rise 7s ease-in infinite; }
+
+/* Slow breathing glow behind the figure */
+@keyframes halo-breathe {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50%      { opacity: 0.85; transform: scale(1.06); }
+}
+.halo-breathe { animation: halo-breathe 5.5s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .chakra-spin, .chakra-spin-rev, .aura-ring, .ember, .halo-breathe { animation: none !important; }
+}
+
+/* Devanagari readability tweak */
+.hindi { font-family: "Tiro Devanagari Sanskrit", serif; font-weight: 400; }
+
+@layer base {
+  * { border-color: hsl(var(--border) / 0.6); }
+}

@@ -1,0 +1,33 @@
+{
+  "summary": "Iteration 3 — targeted regression + visual richness verification. Admin sidebar nav (all 12 links) still works post iteration_2 fix (0 JS errors, URLs update, H1 renders on each). ProductCard enrichments (5-star row + '(4.9)', '% OFF' badge, 'Prepaid 5% off') all render 12x on homepage. 'How It Works' 3-step, Certifications (GJEPC/GIA/IGI/BIS) and 'Also available on Amazon · Flipkart · Myntra · Blinkit' sections all render. Public verify page for a seeded activated cert (qr_6d2b84d9715a4e21) returns AUTHENTIC with temple, signature panel and QR image. HOWEVER: CategoryRail and ConsultMarquee are imported in Home.jsx but NEVER RENDERED in the JSX — the two headline visual-richness additions of this iteration are effectively missing from the page.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Home.jsx", "issue": "CategoryRail is imported (line 7) but not used anywhere in the JSX — the 16 round category tiles above the hero DO NOT render. Verified with DOM query: `div.rounded-full.overflow-hidden` count is 0 on the page.", "selector": "n/a (component not mounted)", "priority": "HIGH"},
+      {"component": "Home.jsx", "issue": "ConsultMarquee is imported (line 8) but not used anywhere in the JSX — the '@ ₹499' infinite ticker DOES NOT render. Verified with DOM query: `.marquee-track` not present.", "selector": ".marquee-track", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_gemora_backend.py", "/app/backend/tests/test_admin_features.py"],
+  "action_items": [
+    "Add `<CategoryRail />` to Home.jsx JSX — user asked for it 'at top of homepage above the hero'. Suggested placement: as the first child of the top-level div (before the HERO carousel section).",
+    "Add `<ConsultMarquee />` to Home.jsx JSX — user asked for it 'after the category-tiles section'. Suggested placement: immediately after CategoryRail (or wherever the CATEGORY TILES section ends around line 207).",
+    "Optional: also consider using the imported <OrnamentHeader> more widely — currently used only once. If not needed elsewhere, no action.",
+    "Housekeeping: the eslint-plugin-react/jsx-no-unused-imports check is not tripping in create-react-app default config; consider enabling `no-unused-vars` at error level to catch this class of bug (imported-but-never-rendered components) at build time."
+  ],
+  "critical_code_review_comments": [
+    "Home.jsx is now 561 lines and mixes constants (HERO_SLIDES, CATS, PURPOSES, PLANETS, TESTIMONIALS, POSTS, FAQ) with a single component. Extract data to /constants/home.js so the component body is under 300 lines.",
+    "Home.jsx imports CategoryRail and ConsultMarquee but never uses them — this is exactly the kind of ship-blocker a lint rule (react/jsx-no-undef and no-unused-vars raised to `error`) would catch pre-merge.",
+    "CategoryRail uses `justify-center` inside an `overflow-x-auto` — on wide viewports the 16 tiles are centered fine, but on narrow viewports they scroll horizontally as expected. OK, no fix needed.",
+    "ConsultMarquee ships CSS keyframes inline via <style>{...}</style> — works but pollutes global style scope. Prefer a Tailwind utility or a CSS module."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per iteration_2 coverage)", "frontend": "5/7 review items pass (admin nav, ProductCard, How It Works, Certifications, Also-available-on, verify page). 2/7 fail (CategoryRail + ConsultMarquee not rendered)."},
+  "test_credentials": "Owner admin@gemora.in/admin@1234 (worked). Admin dashboard loads at /admin/dashboard.",
+  "seed_data_creation": "None. Used pre-existing seeded activated cert qr_6d2b84d9715a4e21 (product: Brass Ganesha Idol, serial GEM-BRASS--13DBAC).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Main agent needs to actually render <CategoryRail /> and <ConsultMarquee /> in Home.jsx JSX — currently both are only imported. After the fix, verify: (a) `document.querySelectorAll('div.rounded-full.overflow-hidden').length === 16` on the homepage, (b) `.marquee-track` present, (c) marquee sits between category tiles and the rest. Everything else in this iteration passed.",
+  "rca of the issue": "Root cause: developer added imports for CategoryRail and ConsultMarquee in Home.jsx (lines 7-8) but forgot to place `<CategoryRail />` and `<ConsultMarquee />` JSX tags in the render tree. React silently accepts unused imports (only ESLint would warn, and CRA's default config has no-unused-vars at 'warn' level which is drowned out by other warnings). Reproduction: open the deployed homepage and grep the DOM for `.marquee-track` or round tiles — 0 matches. Mitigation: (1) actually mount the components, (2) elevate no-unused-vars to 'error' in .eslintrc so this class of bug fails the build."
+}

@@ -1,0 +1,35 @@
+{
+  "summary": "Frontend-only retest of iter_7 issues. Clipboard fallback WORKS (welcome-copy shows 'Copied ✓', affiliate-copy shows 'Link copied' toast, no uncaught errors). Direct-URL nav protection WORKS (/astrologer/dashboard while logged-out cleanly redirects to /astrologer/login, no path recursion). Astrologer dashboard KPIs render when reached via direct URL (kpi-upcoming, kpi-completed, kpi-total-commission, kpi-pending-commission all visible). Availability add-slot + save works with 'Availability saved' toast. Affiliate link contains '/?ref=<code>'. Logout redirects to /astrologer/login. HOWEVER, the sidebar NavLink navigation is STILL BROKEN: clicking astro-nav-consultations / -availability / -affiliate / -dashboard from within the astrologer workspace triggers the exact same infinite path recursion the iter_7 fix was supposed to resolve (URL becomes /astrologer/dashboard/consultations/dashboard/dashboard/...).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Astrologer.jsx sidebar NavLinks + inner catch-all Route",
+        "issue": "CRITICAL — path recursion NOT fixed for sidebar navigation. Under react-router-dom 7.15.0, relative `to` values (`to=\"dashboard\"`, `to=\"consultations\"`, etc.) inside a component rendered by a splat route `/astrologer/*` resolve against the FULL current URL rather than the parent route's pathnameBase. Clicking `astro-nav-consultations` from /astrologer/dashboard produces URL /astrologer/dashboard/consultations, which then never matches any child Route, so `<Route path=\"*\" element={<Navigate to=\"dashboard\" replace />}>` fires and appends `/dashboard` again — infinite loop. Direct URL entry (e.g. window.location or nav('/astrologer/dashboard')) works because that's absolute. The App.js wrapping fix (Route path=\"/astrologer/*\") is necessary but not sufficient — Astrologer.jsx itself must use ABSOLUTE paths. REQUIRED FIX: in /app/frontend/src/pages/Astrologer.jsx: (a) NAV entries -> `to: '/astrologer/dashboard'`, `'/astrologer/consultations'`, `'/astrologer/availability'`, `'/astrologer/affiliate'`; (b) inner Routes: `<Route index element={<Navigate to='/astrologer/dashboard' replace />} />` and `<Route path='*' element={<Navigate to='/astrologer/dashboard' replace />} />`. Alternatively pass `relative='route'` on every NavLink/Navigate, but absolute paths are the cleanest v7-safe fix.",
+        "selector": "[data-testid=\"astro-nav-dashboard\"], [data-testid=\"astro-nav-consultations\"], [data-testid=\"astro-nav-availability\"], [data-testid=\"astro-nav-affiliate\"]",
+        "priority": "CRITICAL"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_astrologer_flow.py"],
+  "action_items": [
+    "In /app/frontend/src/pages/Astrologer.jsx replace all relative sidebar NAV entries and inner <Navigate> targets with ABSOLUTE paths (/astrologer/dashboard, /astrologer/consultations, /astrologer/availability, /astrologer/affiliate). This is the only remaining blocker for the astrologer workspace nav flow."
+  ],
+  "critical_code_review_comments": [
+    "React Router v7 relative-link semantics differ from v6 inside splat routes — future workspace shells should prefer absolute route paths or explicit `relative='route'` NavLink prop.",
+    "AstroDashboard shows KPI cards immediately with no loading skeleton on slow response — mostly fine, but the earlier 'stays on Loading… forever on API failure' remark still applies for a couple of the astrologer sub-pages (AstroAvailability, AstroAffiliate) which use `.catch(() => {})` silently — no error state UI."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "not retested (per request)",
+    "frontend": "85% — clipboard fixes and direct-nav guard both work; KPI cards render; availability + affiliate flows work when reached by URL; only sidebar NavLink navigation still recurses"
+  },
+  "test_credentials": "Admin: admin@gemora.in / admin@1234. QA astrologer created this run: qa+4e82a120@example.com / astro@1234 (retained in DB).",
+  "seed_data_creation": "One astrologer QA Test 4e82a120 (qa+4e82a120@example.com) created via admin UI and left in DB for main-agent verification.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "After the Astrologer.jsx absolute-path fix lands, re-run the E2E sidebar navigation portion of the test (click astro-nav-consultations, -availability, -affiliate, -dashboard in sequence and assert URL is exactly /astrologer/<page> after each). Clipboard + direct-nav guard + set-password redirect + availability save + affiliate copy + logout are all verified passing and don't need re-testing. Skip backend re-run.",
+  "rca of the issue": "React Router 7.15 changed how relative `to` resolves when the enclosing route is a splat (`/astrologer/*`). In v6, `to='dashboard'` from a component rendered by such a route resolves against the pathnameBase (/astrologer), yielding /astrologer/dashboard. In v7 the resolution treats the full matched pathname as the base, yielding /astrologer/dashboard/dashboard on the first click, then the catch-all `<Route path='*'>` fires `<Navigate to='dashboard'>` which itself resolves against the newly matched splat, appending `/dashboard` on every render — infinite loop. Fix: use absolute paths in Astrologer.jsx NavLinks and Navigates."
+}

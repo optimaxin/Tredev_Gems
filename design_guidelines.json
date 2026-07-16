@@ -1,0 +1,126 @@
+{
+  "theme": "light",
+  "typography": {
+    "primary_heading_font": "Yatra One, Cormorant Garamond",
+    "secondary_heading_font": "Cormorant Garamond",
+    "body_font": "Hind, Manrope",
+    "devanagari_support": "Tiro Devanagari Sanskrit, Yatra One",
+    "monospace_font": "JetBrains Mono, Roboto Mono",
+    "rules": [
+      "Use Yatra One or Cormorant Garamond for all primary hero and section headings.",
+      "Use Manrope for readable English body text and data tables, blending modern utility with elegant headings.",
+      "Ensure Devanagari text uses Yatra One (display) or Hind (reading) specifically, and falls back correctly.",
+      "Never use Inter or standard safe fonts for headings.",
+      "For cryptographic signatures and Ed25519 certs, use JetBrains Mono or Roboto Mono with tight letter spacing for that 'technical proof' aesthetic.",
+      "Heading typography MUST use tracking-tight or tracking-tighter.",
+      "Maximum H1 size is text-5xl or text-6xl. Do not use text-7xl+."
+    ]
+  },
+  "colors": {
+    "background": {
+      "primary": "#FBFBF9",
+      "secondary": "#F3F0E6",
+      "tertiary": "#EBE5D8"
+    },
+    "brand": {
+      "saffron": "#F28C28",
+      "gold": "#D4AF37",
+      "maroon": "#722F37",
+      "gradient": "bg-gradient-to-r from-[#F28C28] via-[#D4AF37] to-[#722F37]"
+    },
+    "text": {
+      "primary": "#1A1514",
+      "secondary": "#4A423D",
+      "muted": "#8A817C",
+      "inverse": "#FBFBF9"
+    },
+    "status": {
+      "verified": "#2E7D32",
+      "suspicious": "#D84315",
+      "revoked": "#B71C1C"
+    },
+    "rules": [
+      "No generic full-screen gradients. Apply the brand gradient only to specific emphasis items like Trust Badges, CTA buttons, or fine 1px decorative borders.",
+      "The UI background is primarily Warm Ivory and Cream. Do not use pure white (#FFFFFF).",
+      "Use Deep Charcoal (#1A1514) for primary text. Never use pure black.",
+      "Status colors for the Verification UI must be high-contrast and authoritative."
+    ]
+  },
+  "visual_enhancers": {
+    "borders": "Use 1px solid borders in #D4AF37 (Gold) with varying opacities (20% to 50%) for sections and cards to create 'thin gold linework'.",
+    "shadows": "Minimal. Use soft ambient shadows for elevated cards, or completely flat designs with crisp gold borders.",
+    "textures": "Incorporate subtle noise textures or faint sacred-geometry watermark backgrounds in the Public QR Verification page.",
+    "radii": "Restrained corner radii (0px, 2px, or max 4px). Keep it architectural, sharp, and premium."
+  },
+  "layouts_and_grids": {
+    "marketing_pages": "Use Mode A 'Tetris' Grid for home and category pages. Asymmetrical product discovery. Let high-res product photos overlap structural borders.",
+    "verification_page": "Use Mode B 'High Density Grid' (Bento Style). Drill-down metadata panels for certificate details, Ed25519 signatures, and provenance chain. Every pixel utilized. Sharp corners, 1px gold borders.",
+    "trust_panel": "On Product Detail Page, the Trust Panel must sit immediately next to or below the primary CTA. It must look like a secure cryptographic widget.",
+    "spacing": "Generous spacing. Use p-8, p-12, or p-16 for main sections. Let the UI breathe to feel premium and reverent."
+  },
+  "components": {
+    "buttons": "Pill-shaped or sharp rectangular buttons. Primary buttons can use the subtle saffron-to-maroon gradient or solid Maroon with Ivory text. Always have hover lift.",
+    "cards": "Flat, rectangular cards with 1px gold borders. No heavy shadows. High use of 'Grid Borders' style where borders collapse to form a continuous grid.",
+    "trust_badges": "Use shield or certificate icons. Green shield for 'AUTHENTIC'. Use Phosphor Icons for elegant duotone weight.",
+    "navigation": "Solid or Glassmorphism background on sticky header (e.g., bg-[#FBFBF9]/80 backdrop-blur-xl). Never fully transparent. Include Devanagari script elements.",
+    "verification_status": "Crown jewel widget. Use drill-down accordions for 'Lab Report', 'Temple Energization', 'Pooja Recording', and 'Ed25519 Signature'. Must look highly polished."
+  },
+  "motion": {
+    "general": "Smooth and reverent. Use Framer Motion for subtle fade-ins and 1px border reveals.",
+    "interactions": "Hover states on products must slightly scale the image and reveal the 'Verify Provenance' link.",
+    "page_transitions": "Soft opacity fades.",
+    "verification_animation": "When scanning/loading a QR code, show a scanning line or cryptographic decoding animation before revealing the 'AUTHENTIC' green state."
+  },
+  "accessibility": {
+    "contrast": "Ensure text over the ivory/cream background passes APCA/WCAG AA.",
+    "data_testid": "MANDATORY. Add 'data-testid' to all buttons, navigation links, trust panels, certificate links, and verification status badges.",
+    "motion_preference": "Respect 'prefers-reduced-motion' for all scanning or decoding animations."
+  },
+  "media": {
+    "icons": "Use @phosphor-icons/react for high-end, elegant duotone or light weights. Avoid heavy or cartoonish icons.",
+    "image_urls": {
+      "homepage_hero": {
+        "url": "https://images.unsplash.com/photo-1669256335723-1fa03d5123c0?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NDh8MHwxfHNlYXJjaHwyfHxJbmRpYW4lMjB0ZW1wbGUlMjBhcmNoaXRlY3R1cmUlMjBnb2xkJTIwZGV0YWlsc3xlbnwwfHx8fDE3ODM3Njc4NDd8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Gold Indian temple architecture details for trust narrative"
+      },
+      "rudraksha_category": {
+        "url": "https://images.unsplash.com/photo-1661915606983-cc9759b99343?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1Mjh8MHwxfHNlYXJjaHwxfHxydWRyYWtzaCUyMGJlYWQlMjBjbG9zZSUyMHVwfGVufDB8fHx8MTc4Mzc4MzE2OHww&ixlib=rb-4.1.0&q=85",
+        "description": "Authentic Rudraksha bead close-up"
+      },
+      "gemstone_category": {
+        "url": "https://images.pexels.com/photos/9953656/pexels-photo-9953656.jpeg",
+        "description": "Close-up of a luxury sapphire gemstone"
+      },
+      "certificate_background": {
+        "url": "https://images.unsplash.com/photo-1755540735876-ff503cf594fe?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NTN8MHwxfHNlYXJjaHwxfHxjZXJ0aWZpY2F0ZSUyMGJvcmRlciUyMGVsZWdhbnQlMjB0ZW1wbGF0ZXxlbnwwfHx8fDE3ODE4NzE5MzF8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Ornate gold border with crests on a cream background, to be used subtly in the verification UI"
+      },
+      "verification_pattern": {
+        "url": "https://images.pexels.com/photos/15286007/pexels-photo-15286007.jpeg",
+        "description": "Artistic marbled gold pattern for the Verification UI background (use at 5-10% opacity)"
+      }
+    }
+  },
+  "instructions_to_main_agent": [
+    "You are building GEMORA, a premium, first-party spiritual store emphasizing cryptographic authenticity. Avoid generic e-commerce templates.",
+    "The UI must feel 'sacred and reverent'. Use the exact colors provided: Warm Ivory, Cream, Saffron, Gold, Maroon.",
+    "Implement the 'Public QR Verification Page' as the absolute crown jewel of this app. Use bento-grid layouts to display cryptographic hashes, temple videos, and lab report PDFs with high technical precision mixed with luxury aesthetics.",
+    "Use Shadcn UI components but strip away the default 'Vercel/Stripe' look. Customize them to have sharp 0px or 2px radii and 1px gold/maroon borders.",
+    "For the Trust Panel on the Product Detail Page, build a visually distinct card that lists the Serial #, Ed25519 signature, Lab Report, and Energization info prominently.",
+    "Install and use @phosphor-icons/react for elegant icons (e.g. Shields, Certificates, QR Codes, Play buttons for pooja).",
+    "Do NOT use pure white backgrounds. Ensure all main surfaces are slightly tinted ivory.",
+    "Add data-testid attributes to all major interactive elements for testing.",
+    "Render Devanagari text correctly. Ensure font fallbacks are set in Tailwind.",
+    "Use sonner for toast notifications."
+  ],
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "You tend to converge toward generic, 'on distribution' outputs. Avoid the 'AI slop' aesthetic. Make creative, distinctive frontends.",
+    "Don't make generic centered layouts, simplistic gradients, and uniform styling.",
+    "Create depth through layered design elements with z-index hierarchy, but keep the overall UI clean and sharp.",
+    "Use 2-3x more spacing than feels comfortable. Cramped designs look cheap.",
+    "You MUST NOT apply universal transitions (e.g. `transition: all`). Add transitions only for specific interactive elements.",
+    "You MUST NOT center align the app container. Do not add `.App { text-align: center; }`.",
+    "NEVER use AI assistant Emoji characters like 🤖🧠💭💡🔮🎯 etc for icons.",
+    "Use the exact provided image URLs. NEVER use placeholder URLs like via.placeholder.com or generic grey blocks."
+  ]
+}

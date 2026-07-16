@@ -1,0 +1,41 @@
+{
+  "summary": "Verified NEW backend + frontend features: legacy OTP endpoints removed (404), Firebase verify still 401 on bogus, Media library upload/list/serve, Site-assets set/clear + public map + slot validation, Events CRUD + past-ended filtering, admin auth gate on all new endpoints. Frontend: admin nav shows Media/Site Images/Events, event create → strip + card render on homepage, media upload via hidden input works and thumbnails load (200 image), site-assets MediaPicker assigns image to slot and thumbnail updates.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AdminMedia", "issue": "data-testid=\"admin-media-upload\" is on the visible <button>, not on the hidden <input type=\"file\">. Playwright page.set_input_files on the button fails with 'Node is not an HTMLInputElement'. Review request explicitly asked for the testid to be on the hidden file input for automation. Workaround used: page.locator('input[type=\"file\"]').first — worked. Suggest either moving the testid to the input, or adding a second testid like admin-media-upload-input on the <input>.", "selector": "[data-testid=\"admin-media-upload\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verifications": {
+    "legacy_otp_endpoints_404": ["/api/auth/otp/send", "/api/auth/otp/verify", "/api/auth/login-otp"],
+    "firebase_verify_bogus": "401 as expected",
+    "admin_auth_gate": "All 9 new endpoints return 401/403 unauthenticated",
+    "media_upload_url_scheme": "/api/media/file/gemora/media/<hex>.png (served with image/png, cache-control public)",
+    "site_assets_public_after_set": "home_hero_1 present in GET /api/site-assets, disappears after PUT {media_id:null}",
+    "site_assets_slot_validation_400": "PUT /api/admin/site-assets/BAD%20SLOT → 400",
+    "events_past_ended_filtered": true,
+    "frontend_admin_nav_owner": ["admin-nav-media", "admin-nav-site-assets", "admin-nav-events"],
+    "frontend_event_render_on_home": {"event-strip-<id>": true, "event-card-<id>": true},
+    "frontend_media_thumbnail_loads": "naturalWidth>0 confirmed via JS eval",
+    "frontend_slot_thumbnail_updates_after_picker": true
+  },
+  "test_report_links": ["/app/backend/tests/test_media_events.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "(LOW) Move data-testid='admin-media-upload' to the hidden <input type='file'> in /app/frontend/src/pages/admin/AdminMedia.jsx (or add a companion testid). Current placement on the button prevents Playwright set_input_files without a fallback selector."
+  ],
+  "critical_code_review_comments": [
+    "AdminMedia.jsx: the file input is the actual upload target — put data-testid there. Buttons that only trigger .click() can have a different testid (e.g. admin-media-upload-btn).",
+    "Slot regex '^[a-z0-9_\\-]{2,64}$' is good, but consider also rejecting leading/trailing underscores or hyphens to keep slot keys tidy.",
+    "site_assets_public strips slots with null url — consider returning them anyway as null so the frontend can distinguish 'known slot cleared' vs 'unknown slot' (currently the client must know all slot keys itself).",
+    "Emergent storage init log 'Object storage initialised' should be verified on startup; storage endpoints returned image bytes correctly during tests, so init worked."
+  ],
+  "updated_files": ["/app/backend/tests/test_media_events.py"],
+  "success_rate": {"backend": "100% (18/18 tests pass)", "frontend": "100% of new-feature flows verified"},
+  "test_credentials": "admin@gemora.in / admin@1234 (owner role, password login used)",
+  "seed_data_creation": "Uploaded a handful of 1x1 PNGs to media library during tests; cleaned up the Diwali/Playwright/Expired events and cleared home_hero_1 slot post-run. Some test PNGs remain in the media library (visible in AdminMedia screenshot) — safe to leave or delete.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "All new endpoints under /api/admin/{media,site-assets,events} plus public /api/site-assets and /api/events/active are wired correctly and gated by require_admin. Frontend admin nav & pages render for owner (admin@gemora.in). Storage backend is real (Emergent object storage). The only nit is that AdminMedia.jsx puts the data-testid on the upload button instead of the hidden file input — the review request explicitly asked the reverse. Fix is 1 line."
+}

@@ -1,0 +1,49 @@
+{
+  "summary": "Iteration 2 — validated all newly-added GEMORA admin features. Backend: 38/39 pytest passing (97%); all 12 new endpoints (low-stock, staff auto-invite, delete user/order, purge orders, audit-log) verified with data assertions. Frontend: after fixing an async-useEffect cleanup bug that was crashing 8 admin pages during route changes, all 12 sidebar nav links now navigate correctly (URL updates + main content renders). Owner-only UI controls (purge, per-row delete, low-stock card, temp password field) all present. Verify chain confirmed working — public_key stable across restarts (persisted ED25519 key in env from iteration_1 fix is holding).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/checkout/mock-pay/{order_id}", "issue": "Flaky in full-suite run — test_20 fails with 'Reservation lost for unit …' about 50% of the time. The reservation is created at cart-add but appears not-found by mock_pay a moment later, even though test_21 (dispatch) which follows still succeeds. Suspect: reservation is being cleared by a later cart_add re-attempt or the unique index behavior interacts with re-adds. Not blocking (dispatch/vault/revoke still pass); recorded as flaky. This same test also failed in iteration_1 due to a different (key) cause."},
+      {"endpoint": "/api/admin/orders/purge", "issue": "Purge flips ALL sold units to available, including units belonging to orders that were NOT in the purge scope in the future (currently there is only one scope: all). Also, purge does not clean db.certificates.activated flags → post-purge those units are technically 'available' but their certificates remain marked activated+sold_to_user_id. Not a bug today because purge is owner-only reset, but worth flagging."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "8 admin pages (AdminUsers, AdminCerts, AdminOrders, AdminQueries, AdminConsultations, AdminTeam, AdminProducts, AdminCategories, AdminInventory)", "issue": "FIXED by testing agent — pattern `useEffect(fnReturningPromise, deps)` caused React 'destroy is not a function' TypeError on unmount, crashing every subsequent admin page navigation. Replaced with `useEffect(() => { fn(); }, deps)`.", "selector": "[data-testid^=admin-nav-]", "priority": "HIGH (was blocking user's reported bug)"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_gemora_backend.py", "/app/backend/tests/test_admin_features.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Consider fixing the mock-pay 'Reservation lost' flaky failure (see backend/minor) — reproduce by running the pytest suite twice; test_20 sometimes passes, sometimes 409s. Not user-visible but breaks CI determinism.",
+    "Optional: audit_log() should record more mutations (e.g., product create/update, category ops) to make the audit trail exhaustive as advertised. Currently it covers only the 5 flows explicitly wrapped.",
+    "Optional: on server startup, if ED25519_PRIVATE_KEY_HEX is empty, auto-write a fresh key to backend/.env instead of silently using an ephemeral one. Would remove the iteration_1 footgun entirely."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 2036 lines — split into routers (auth, catalog, verify, cart, orders, admin, consultation) + core/{crypto,security,db,seed}.py. Currently every new admin endpoint compounds the file's cognitive load.",
+    "AdminUsers/AdminOrders/AdminCerts/AdminTeam/AdminProducts/AdminCategories/AdminInventory/AdminQueries/AdminConsultations all shared the same async-useEffect anti-pattern (`useEffect(fnReturningPromise, deps)` → React sees the Promise and calls it as cleanup → 'destroy is not a function'). Adopt a lint rule (react-hooks/exhaustive-deps + a custom check) to catch this in future PRs.",
+    "audit_log() best-effort try/except swallows exceptions — good for the mutation not to fail, but a fully-lost audit trail with no alert defeats the point. Consider a stderr warning + optional in-memory ring buffer as fallback.",
+    "admin_delete_user() lets an owner delete a customer whose orders still exist; the orders now point to a ghost user_id. Consider soft-delete or cascade/anonymize."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_gemora_backend.py (updated: signup now requires phone+OTP; test rewritten to include OTP dev flow)",
+    "/app/backend/tests/test_admin_features.py (created: 12 tests for new admin endpoints)",
+    "/app/frontend/src/pages/admin/AdminUsers.jsx (fixed async-useEffect anti-pattern)",
+    "/app/frontend/src/pages/admin/AdminCerts.jsx (fixed)",
+    "/app/frontend/src/pages/admin/AdminOrders.jsx (fixed)",
+    "/app/frontend/src/pages/admin/AdminQueries.jsx (fixed)",
+    "/app/frontend/src/pages/admin/AdminConsultations.jsx (fixed)",
+    "/app/frontend/src/pages/admin/AdminTeam.jsx (fixed)",
+    "/app/frontend/src/pages/admin/AdminProducts.jsx (fixed)",
+    "/app/frontend/src/pages/admin/AdminCategories.jsx (fixed)",
+    "/app/frontend/src/pages/admin/AdminInventory.jsx (fixed)"
+  ],
+  "success_rate": {"backend": "97% (38/39)", "frontend": "100% for admin nav (12/12), 100% for admin owner-only UI controls (purge/delete/low-stock/temp-password all render)"},
+  "test_credentials": "Owner admin@gemora.in/admin@1234 (from /app/memory/test_credentials.md). Test staff auto-generated by test_03: any email `staff_<hex>@example.com`, temp password returned in response.",
+  "seed_data_creation": "Test suite POST /api/dev/seed then adds throwaway staff + customer + orders + reservations under TEST_/staff_/del_ prefixes. Purge-orders test wipes db.orders; the suite handles re-seeding as needed within test_10.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run `cd /app && python -m pytest backend/tests/ -v -n 0` (serial — pytest.ini uses -n 2 --dist loadscope which races the two files against each other and breaks class-scoped state). Frontend: owner sidebar nav testids are `admin-nav-{to}` where `to` is one of dashboard, products, inventory, certificates, orders, categories, astrologers, consultations, queries, broadcast (NOT 'whatsapp'), team, users. Note that WhatsApp nav item uses to='broadcast'.",
+  "bug_reported_by_user_status": "RESOLVED. The 'admin sidebar shows names but clicking navigates nowhere' bug had TWO root causes: (1) NavLink relative paths (fixed by main agent — now `/admin/${to}`), AND (2) async-useEffect cleanup crash in 9 admin page components (fixed by testing agent in this iteration). Both fixes are needed for the flow to work."
+}
