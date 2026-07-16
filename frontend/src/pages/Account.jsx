@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, formatINR } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
-import { ShieldCheck, Package, Heart, Certificate as CertIcon, ArrowRight, Phone, WhatsappLogo, Gear, PencilSimple } from "@phosphor-icons/react";
+import { ShieldCheck, Package, Heart, Certificate as CertIcon, ArrowRight, Phone, WhatsappLogo, Gear, PencilSimple, LockKey } from "@phosphor-icons/react";
 import PhoneVerify from "@/components/gemora/PhoneVerify";
 import { toast } from "sonner";
 
@@ -15,14 +15,79 @@ export default function Account() {
   const [wish, setWish] = useState([]);
   const [showVerify, setShowVerify] = useState(false);
   const [changingPhone, setChangingPhone] = useState(false);
+  const [payingId, setPayingId] = useState(null);
+
+  const loadOrders = () => api.get("/orders").then((r) => setOrders(r.data)).catch(() => {});
 
   useEffect(() => {
     if (loading) return;
     if (!user) { nav("/login"); return; }
-    api.get("/orders").then((r) => setOrders(r.data)).catch(() => {});
+    loadOrders();
     api.get("/me/verified-items").then((r) => setVault(r.data)).catch(() => {});
     api.get("/me/wishlist").then((r) => setWish(r.data)).catch(() => {});
   }, [user, loading, nav]);
+
+  // Human-readable order status — the API returns snake_case enums like "pending_payment".
+  const fmtStatus = (s) => (s || "").replace(/_/g, " ");
+
+  const openRazorpay = (options) => {
+    if (!window.Razorpay) {
+      const s = document.createElement("script");
+      s.src = "https://checkout.razorpay.com/v1/checkout.js";
+      s.onload = () => new window.Razorpay(options).open();
+      document.body.appendChild(s);
+    } else {
+      new window.Razorpay(options).open();
+    }
+  };
+
+  // "Pay now" for an unpaid order: re-initiates payment on the existing order, then
+  // reuses the same Razorpay-open + verify flow as checkout (or the mock path).
+  const payNow = async (o) => {
+    setPayingId(o.order_id);
+    try {
+      const { data } = await api.post(`/checkout/pay/${o.order_id}`);
+      if (data.already_paid) { toast.success("This order is already paid"); await loadOrders(); return; }
+      if (data.mock_payment || !data.razorpay_key_id) {
+        const paid = await api.post(`/checkout/mock-pay/${o.order_id}`);
+        toast.success("Payment complete (test mode)");
+        await loadOrders();
+        nav(`/order-confirmed/${paid.data.order_id}`);
+        return;
+      }
+      const options = {
+        key: data.razorpay_key_id,
+        amount: o.total,
+        currency: "INR",
+        name: "Tredev",
+        description: "Complete your pending payment",
+        order_id: data.razorpay_order_id,
+        prefill: { name: user.name, email: user.email, contact: user.phone || "" },
+        theme: { color: "#722F37" },
+        handler: async (rp) => {
+          try {
+            await api.post("/checkout/verify", {
+              order_id: o.order_id,
+              razorpay_order_id: rp.razorpay_order_id,
+              razorpay_payment_id: rp.razorpay_payment_id,
+              razorpay_signature: rp.razorpay_signature,
+            });
+          } catch (err) {
+            toast.error("Payment verification failed");
+            return;
+          }
+          toast.success("Payment verified");
+          await loadOrders();
+          nav(`/order-confirmed/${o.order_id}`);
+        },
+      };
+      openRazorpay(options);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Could not start payment");
+    } finally {
+      setPayingId(null);
+    }
+  };
 
   useEffect(() => {
     if (user && !user.phone_verified) setShowVerify(true);
@@ -166,7 +231,7 @@ export default function Account() {
                   </div>
                   <div className="text-right">
                     <div className="font-display text-2xl text-maroon-deep">{formatINR(o.total)}</div>
-                    <div className={`text-xs uppercase tracking-widest ${o.status === "shipped" ? "text-verified" : o.status === "paid" ? "text-gold-soft" : "text-ink-muted"}`}>{o.status}</div>
+                    <div className={`text-xs uppercase tracking-widest ${o.status === "shipped" ? "text-verified" : o.status === "paid" ? "text-gold-soft" : "text-ink-muted"}`}>{fmtStatus(o.status)}</div>
                   </div>
                 </div>
                 <div className="mt-4 grid md:grid-cols-2 gap-2 text-sm text-ink-soft">
@@ -177,6 +242,19 @@ export default function Account() {
                     </div>
                   ))}
                 </div>
+                {o.status === "pending_payment" && (
+                  <div className="mt-5 pt-4 border-t border-gold/30 flex flex-wrap items-center justify-between gap-3">
+                    <div className="text-xs text-ink-muted">Payment for this order is incomplete.</div>
+                    <button
+                      onClick={() => payNow(o)}
+                      disabled={payingId === o.order_id}
+                      data-testid={`order-pay-now-${o.order_id}`}
+                      className="brand-gradient text-ivory px-6 py-3 text-xs uppercase tracking-widest inline-flex items-center gap-2 hover-lift disabled:opacity-50"
+                    >
+                      <LockKey size={14} weight="duotone" /> {payingId === o.order_id ? "Starting…" : "Pay now"}
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>

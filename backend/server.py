@@ -1855,6 +1855,45 @@ async def checkout_verify(body: RazorpayVerifyIn):
     return await _mark_paid(order, body.razorpay_payment_id)
 
 
+@api.post("/checkout/pay/{order_id}")
+async def checkout_pay(order_id: str, request: Request,
+                       user_id: Optional[str] = Depends(get_user_id_optional)):
+    """Re-initiate payment for an existing unpaid order — the "Pay now" button on the
+    account page. Creates a FRESH Razorpay order for the outstanding total and repoints
+    the payment row's gateway_ref at it (so the webhook can still match), then hands the
+    key + order id back to the client to open checkout. Falls back to the mock path when
+    Razorpay keys aren't configured. Response shape mirrors /checkout so the frontend
+    reuses the same Razorpay-open + /checkout/verify logic."""
+    order = await _load_order(order_id)
+    if not order:
+        raise HTTPException(404, "Order not found")
+    if user_id and order.get("user_id") and order["user_id"] != user_id:
+        raise HTTPException(403, "Not your order")
+    if order.get("status") == "paid":
+        return {"order": order, "already_paid": True}
+    if order.get("status") != "pending_payment":
+        raise HTTPException(409, f"Order is {order.get('status')} — not payable")
+
+    rp_key = os.environ.get("RAZORPAY_KEY_ID", "")
+    rp_secret = os.environ.get("RAZORPAY_KEY_SECRET", "")
+    if rp_key and rp_secret:
+        try:
+            import razorpay
+            rp = razorpay.Client(auth=(rp_key, rp_secret))
+            rp_order = rp.order.create({"amount": int(order["total"]), "currency": "INR",
+                                        "receipt": order_id[:40], "payment_capture": 1})
+            await db.execute(
+                """UPDATE payments SET gateway_ref = $2, status = 'initiated'
+                    WHERE id = (SELECT id FROM payments WHERE order_id = $1::uuid
+                                ORDER BY created_at DESC LIMIT 1)""",
+                order_id, rp_order["id"])
+            return {"order": order, "razorpay_key_id": rp_key,
+                    "razorpay_order_id": rp_order["id"], "mock_payment": False}
+        except Exception as e:
+            log.warning(f"pay-now razorpay create failed: {e} — falling back to mock")
+    return {"order": order, "razorpay_key_id": None, "mock_payment": True}
+
+
 # ── Razorpay webhook (server-to-server, signature-verified, idempotent) ───────
 @api.post("/webhook/razorpay")
 async def razorpay_webhook(request: Request):
