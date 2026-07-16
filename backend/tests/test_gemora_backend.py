@@ -100,22 +100,21 @@ class TestGemora:
         assert isinstance(prods, list) and len(prods) >= 8
         TestGemora.S["products"] = prods
 
-    def test_08_product_detail_and_units(self):
+    def test_08_product_detail_and_stock(self):
+        # Buyers pick a quantity now, not a serial: detail exposes an in_stock count.
         found = False
         for p in TestGemora.S["products"]:
             slug = p["slug"]
             r = _get(f"/products/{slug}")
             assert r.status_code == 200
             d = r.json()
-            units = d.get("available_units") or []
-            if units and d.get("is_serialized", True):
+            if d.get("is_serialized", True) and (d.get("in_stock") or 0) > 0:
                 TestGemora.S["product_slug"] = slug
                 TestGemora.S["product_id"] = d["product_id"]
-                TestGemora.S["unit_id"] = units[0]["unit_id"]
-                assert "has_certificate" in units[0]
+                TestGemora.S["in_stock"] = d["in_stock"]
                 found = True
                 break
-        assert found, "no product with available serialised units"
+        assert found, "no serialised product with stock"
 
     def test_09_categories(self):
         r = _get("/categories")
@@ -173,63 +172,61 @@ class TestGemora:
         r = _get("/admin/certificates", headers={"Authorization": f"Bearer {TestGemora.S['buyer_token']}"})
         assert r.status_code == 403
 
-    # ---------- 06: Cart + double-sell prevention ----------
+    # ---------- 06: Cart (quantity-based) + stock cap ----------
     def test_16_cart_add_anon_a(self):
         s = requests.Session()
         r = s.post(
             f"{API}/cart/add",
-            json={"product_id": TestGemora.S["product_id"], "unit_id": TestGemora.S["unit_id"]},
+            json={"product_id": TestGemora.S["product_id"], "qty": 1},
             timeout=30,
         )
         assert r.status_code == 200, r.text
         cart = r.json()
-        assert cart.get("items") and cart["items"][0]["unit_id"] == TestGemora.S["unit_id"]
+        assert cart.get("items") and cart["items"][0]["qty"] == 1
+        # No serial is chosen at cart time — units are assigned at payment.
+        assert cart["items"][0]["unit_id"] is None
         TestGemora.S["cookies_a"] = s.cookies.get_dict()
         TestGemora.S["line_id"] = cart["items"][0]["line_id"]
 
-    def test_17_double_sell_returns_409(self):
-        # different anon cart tries same unit
+    def test_17_stock_cap_returns_409(self):
+        # Can't add more pieces than are in stock.
         s2 = requests.Session()
         r = s2.post(
             f"{API}/cart/add",
-            json={"product_id": TestGemora.S["product_id"], "unit_id": TestGemora.S["unit_id"]},
+            json={"product_id": TestGemora.S["product_id"], "qty": TestGemora.S["in_stock"] + 1},
             timeout=30,
         )
         assert r.status_code == 409, f"expected 409, got {r.status_code}: {r.text[:200]}"
 
-    def test_18_cart_remove_releases_reservation(self):
+    def test_18_cart_merge_setqty_and_remove(self):
         cookies = TestGemora.S["cookies_a"]
+        # A second add of the same product merges into the one line (qty -> 2).
+        r = requests.post(
+            f"{API}/cart/add",
+            json={"product_id": TestGemora.S["product_id"], "qty": 1},
+            cookies=cookies, timeout=30,
+        )
+        assert r.status_code == 200, r.text
+        items = r.json()["items"]
+        assert len(items) == 1 and items[0]["qty"] == 2, items
+        # The +/- stepper sets an explicit quantity.
+        r = requests.post(
+            f"{API}/cart/set-qty",
+            json={"line_id": items[0]["line_id"], "qty": 1},
+            cookies=cookies, timeout=30,
+        )
+        assert r.status_code == 200 and r.json()["items"][0]["qty"] == 1
+        # Remove empties the cart.
         r = requests.post(f"{API}/cart/remove/{TestGemora.S['line_id']}", cookies=cookies, timeout=30)
         assert r.status_code == 200
-        # a fresh anon cart should now be able to reserve
-        s3 = requests.Session()
-        r2 = s3.post(
-            f"{API}/cart/add",
-            json={"product_id": TestGemora.S["product_id"], "unit_id": TestGemora.S["unit_id"]},
-            timeout=30,
-        )
-        assert r2.status_code == 200, r2.text
-        TestGemora.S["checkout_cookies"] = s3.cookies.get_dict()
-        TestGemora.S["checkout_line_id"] = r2.json()["items"][0]["line_id"]
 
     # ---------- 07: Checkout, mock-pay ----------
     def test_19_checkout_creates_mock_order(self):
         headers = {"Authorization": f"Bearer {TestGemora.S['buyer_token']}"}
-        # buyer is now logged in; but their cart is server-side keyed by user_id.
-        # Move the anon reservation to the buyer by re-adding under the buyer cart:
-        #   The reservation for the unit exists under anon; buyer has no items.
-        # Simpler: place the order using the anon cookies + no auth, so user_id=None.
-        # But we need the buyer to receive verified-items → order must have user_id.
-        # Approach: add to buyer's cart while anon reservation is released, then checkout.
-        # First release the anon reservation, then add as buyer.
-        requests.post(
-            f"{API}/cart/remove/{TestGemora.S['checkout_line_id']}",
-            cookies=TestGemora.S["checkout_cookies"],
-            timeout=30,
-        )
+        # Quantity-based cart: buyer just adds the product; units assign at payment.
         r_add = requests.post(
             f"{API}/cart/add",
-            json={"product_id": TestGemora.S["product_id"], "unit_id": TestGemora.S["unit_id"]},
+            json={"product_id": TestGemora.S["product_id"], "qty": 1},
             headers=headers,
             timeout=30,
         )
@@ -251,20 +248,32 @@ class TestGemora:
         assert d["order"]["status"] == "pending_payment"
         TestGemora.S["order_id"] = d["order"]["order_id"]
 
-    def test_20_mock_pay_flips_status(self):
+    def test_20_mock_pay_assigns_units(self):
         r = requests.post(f"{API}/checkout/mock-pay/{TestGemora.S['order_id']}", timeout=30)
         assert r.status_code == 200, r.text
-        d = r.json()
-        assert d["status"] == "paid"
+        assert r.json()["status"] == "paid"
+        # Units are auto-assigned at capture — the line now carries serial(s).
+        headers = {"Authorization": f"Bearer {TestGemora.S['buyer_token']}"}
+        o = requests.get(f"{API}/orders/{TestGemora.S['order_id']}", headers=headers, timeout=30).json()
+        li = o["items"][0]
+        assert li.get("serials"), f"no serials assigned: {li}"
+        TestGemora.S["assigned_serial"] = li["serials"][0]
 
-    # ---------- 08: Dispatch → activation + vault ----------
-    def test_21_admin_dispatch_activates(self):
+    # ---------- 08: Dispatch → certify + activation + vault ----------
+    def test_21_admin_dispatch_certifies_and_activates(self):
         headers = {"Authorization": f"Bearer {TestGemora.S['admin_token']}"}
         r = requests.post(
             f"{API}/admin/dispatch",
             json={
                 "order_id": TestGemora.S["order_id"],
-                "unit_id": TestGemora.S["unit_id"],
+                "lab_name": "GJEPC Lab Mumbai",
+                "lab_report_no": "GJ-TEST01",
+                "temple_name": "Kashi Vishwanath Temple",
+                "temple_devanagari": "काशी विश्वनाथ मंदिर",
+                "energization_date": "2026-01-01",
+                "priest_name": "Pandit Test",
+                "mantra": "ॐ नमः शिवाय",
+                "estimated_delivery_date": "2026-02-01",
                 "tracking_number": "TRK123",
                 "courier": "BlueDart",
             },
@@ -273,17 +282,19 @@ class TestGemora:
         )
         assert r.status_code == 200, r.text
         certs = requests.get(f"{API}/admin/certificates", headers=headers, timeout=30).json()
-        unit_cert = next((c for c in certs if c.get("unit_id") == TestGemora.S["unit_id"]), None)
-        assert unit_cert and unit_cert["activated"] is True
+        # The certificate is issued AT dispatch — match it by the assigned serial.
+        unit_cert = next((c for c in certs if c.get("serial") == TestGemora.S["assigned_serial"]), None)
+        assert unit_cert and unit_cert["activated"] is True, f"cert not activated for serial {TestGemora.S['assigned_serial']}"
         TestGemora.S["dispatched_cert_id"] = unit_cert["cert_id"]
         TestGemora.S["dispatched_qr_token"] = unit_cert["qr_token"]
+        TestGemora.S["dispatched_unit_id"] = unit_cert["unit_id"]
 
     def test_22_verified_items_vault(self):
         headers = {"Authorization": f"Bearer {TestGemora.S['buyer_token']}"}
         r = requests.get(f"{API}/me/verified-items", headers=headers, timeout=30)
         assert r.status_code == 200
         items = r.json()
-        assert any(i.get("item", {}).get("unit_id") == TestGemora.S["unit_id"] for i in items), f"vault: {items}"
+        assert any(i.get("item", {}).get("unit_id") == TestGemora.S["dispatched_unit_id"] for i in items), f"vault: {items}"
 
     def test_23_verify_still_authentic_after_dispatch(self):
         r = _get(f"/verify/{TestGemora.S['dispatched_qr_token']}")

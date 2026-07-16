@@ -2,12 +2,22 @@ import React from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useCart } from "@/context/CartContext";
 import { formatINR } from "@/lib/api";
-import { TrashSimple, ShieldCheck, ShoppingBag } from "@phosphor-icons/react";
+import { TrashSimple, ShieldCheck, ShoppingBag, Plus, Minus } from "@phosphor-icons/react";
+import { toast } from "sonner";
 
 export default function Cart() {
-  const { cart, remove, subtotal } = useCart();
+  const { cart, remove, setQty, subtotal } = useCart();
   const nav = useNavigate();
   const items = cart.items || [];
+
+  const changeQty = async (li, next) => {
+    if (next < 1) return remove(li.line_id);
+    try {
+      await setQty(li.line_id, next);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Could not update quantity");
+    }
+  };
 
   return (
     <div className="mx-auto max-w-6xl px-6 lg:px-10 py-16">
@@ -34,12 +44,28 @@ export default function Cart() {
                 </div>
                 <div className="flex-1">
                   <div className="font-serifd text-xl text-ink">{li.name}</div>
-                  {li.unit_id && (
-                    <div className="mt-1 flex items-center gap-2 text-xs text-verified">
-                      <ShieldCheck size={12} weight="duotone" /> Unique unit reserved
-                    </div>
-                  )}
-                  <div className="mt-1 text-xs text-ink-muted">Qty {li.qty}</div>
+                  <div className="mt-1 flex items-center gap-2 text-xs text-verified">
+                    <ShieldCheck size={12} weight="duotone" /> Certified pieces assigned at dispatch
+                  </div>
+                  <div className="mt-3 inline-flex items-center gold-line bg-cream">
+                    <button
+                      onClick={() => changeQty(li, li.qty - 1)}
+                      data-testid={`cart-qty-dec-${li.line_id}`}
+                      className="px-3 py-2 text-maroon hover:bg-ivory"
+                      aria-label="Decrease quantity"
+                    >
+                      <Minus size={14} weight="bold" />
+                    </button>
+                    <span className="px-4 py-2 font-display tabular-nums min-w-[2.5rem] text-center">{li.qty}</span>
+                    <button
+                      onClick={() => changeQty(li, li.qty + 1)}
+                      data-testid={`cart-qty-inc-${li.line_id}`}
+                      className="px-3 py-2 text-maroon hover:bg-ivory"
+                      aria-label="Increase quantity"
+                    >
+                      <Plus size={14} weight="bold" />
+                    </button>
+                  </div>
                 </div>
                 <div className="font-display text-xl text-maroon-deep">{formatINR(li.price * li.qty)}</div>
                 <button onClick={() => remove(li.line_id)} data-testid={`cart-remove-${li.line_id}`} className="text-ink-muted hover:text-revoked">

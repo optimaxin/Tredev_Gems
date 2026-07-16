@@ -477,6 +477,7 @@ class ProductIn(BaseModel):
     attrs: dict = {}  # carat, graha, mukhi, origin, rashi, purpose, etc.
     devanagari_name: Optional[str] = None
     is_serialized: bool = True  # if False, non-unit-based
+    quantity: int = 0  # serialized only: auto-generate this many units with serial numbers
 
 
 class UnitIn(BaseModel):
@@ -485,6 +486,11 @@ class UnitIn(BaseModel):
     weight_carat: Optional[float] = None
     origin: Optional[str] = None
     notes: Optional[str] = None
+
+
+class BulkUnitsIn(BaseModel):
+    product_id: str
+    quantity: int  # how many pieces to stock; serials are auto-generated
 
 
 class CertificateIssueIn(BaseModel):
@@ -519,9 +525,25 @@ class CheckoutIn(BaseModel):
 
 class DispatchIn(BaseModel):
     order_id: str
-    unit_id: str
+    # Provenance is captured AT dispatch (not intake): the lab report, temple
+    # energisation and Ed25519 signature are issued for every sold unit on the order.
+    lab_name: str
+    lab_report_no: str
+    lab_report_url: Optional[str] = None
+    temple_name: str
+    temple_devanagari: Optional[str] = None
+    energization_date: str  # ISO date
+    priest_name: str
+    pooja_recording_url: Optional[str] = None
+    mantra: Optional[str] = None
+    estimated_delivery_date: Optional[str] = None  # ISO date shown to the buyer
     tracking_number: Optional[str] = None
     courier: Optional[str] = None
+
+
+class SetQtyIn(BaseModel):
+    line_id: str
+    qty: int  # new quantity for the cart line; <= 0 removes it
 
 
 class ReviewIn(BaseModel):
@@ -1023,33 +1045,17 @@ async def get_product(slug: str):
     if not row:
         raise HTTPException(404, "Product not found")
     p = _shape_product(row)
-    # Available units: in_stock, not held by an active reservation. This was three
-    # queries plus a Python loop in Mongo (N+1); it's now one join.
-    # weight_carat/origin come from gemstone_details — in Mongo they were copied onto
-    # every unit from the product's attrs, so they were always product-level.
-    units = await db.fetch_all(
-        """SELECT pu.id::text                       AS unit_id,
-                  pu.product_id::text               AS product_id,
-                  pu.serial_no                      AS serial,
-                  ''                                AS notes,
-                  'available'                       AS status,
-                  pu.created_at                     AS created_at,
-                  (ac.id IS NOT NULL)               AS has_certificate
-             FROM product_units pu
-             LEFT JOIN authenticity_certificates ac ON ac.product_unit_id = pu.id
-            WHERE pu.product_id = $1::uuid
-              AND pu.status = 'in_stock'
-              AND NOT EXISTS (SELECT 1 FROM reservations rs
-                               WHERE rs.product_unit_id = pu.id AND rs.status = 'active')
-            -- serial_no tiebreak: created_at alone can tie for units seeded in one txn
-            ORDER BY pu.created_at, pu.serial_no""",
-        p["product_id"])
-    # weight_carat/origin were never really per-unit: the Mongo seed copied them onto
-    # each unit from the product's attrs (server.py:1646). Same source, same values.
-    for u in units:
-        u["weight_carat"] = p["attrs"].get("carat_range")
-        u["origin"] = p["attrs"].get("origin")
-    p["available_units"] = units
+    # Buyers no longer pick a specific serial — they choose a quantity and units are
+    # auto-assigned at payment. The page only needs the count of pieces still in stock
+    # so it can cap the quantity selector. Non-serialized products aren't unit-tracked,
+    # so they're treated as unlimited (in_stock = None).
+    if p["is_serialized"]:
+        p["in_stock"] = await db.fetch_val(
+            """SELECT count(*) FROM product_units
+                WHERE product_id = $1::uuid AND status = 'in_stock'""",
+            p["product_id"])
+    else:
+        p["in_stock"] = None
     return p
 
 
@@ -1088,6 +1094,47 @@ async def categories():
 
 
 # ── Admin: product/unit/cert ──────────────────────────────────────────────────
+def _serial_prefix(slug: str, category_key: str) -> str:
+    """Compact, readable serial prefix from the product slug (fallback: category)."""
+    base = re.sub(r"[^A-Za-z0-9]", "", (slug or category_key or "ITEM")).upper()
+    return base[:8] or "ITEM"
+
+
+async def _generate_units(conn, product_id: str, slug: str, category_key: str,
+                          variant_id, unit_price, qty: int):
+    """Auto-create `qty` product_units with sequential, collision-safe serial numbers.
+
+    Numbering continues after any units the product already has, so re-stocking a
+    product doesn't reuse serials. serial_no is globally unique, so we probe for a
+    free number and fall back to a random suffix if a manual serial ever collides.
+    """
+    prefix = _serial_prefix(slug, category_key)
+    seq = await conn.fetchval(
+        "SELECT count(*) FROM product_units WHERE product_id = $1::uuid", product_id)
+    created = []
+    for _ in range(max(0, qty)):
+        serial = None
+        for _attempt in range(50):
+            seq += 1
+            candidate = f"{prefix}-{seq:04d}"
+            if not await conn.fetchval(
+                    "SELECT 1 FROM product_units WHERE serial_no = $1", candidate):
+                serial = candidate
+                break
+        if serial is None:
+            serial = f"{prefix}-{seq:04d}-{secrets.token_hex(2).upper()}"
+        unit_id = uuid.uuid4()
+        # clock_timestamp(), not now(): units created in one txn must get distinct
+        # created_at so ORDER BY created_at stays deterministic (see admin_create_unit).
+        await conn.execute(
+            """INSERT INTO product_units (id, product_id, variant_id, serial_no, status,
+                    verification_state, unit_price, created_at)
+               VALUES ($1,$2::uuid,$3,$4,'in_stock','unverified',$5, clock_timestamp())""",
+            unit_id, product_id, variant_id, serial, unit_price)
+        created.append({"unit_id": str(unit_id), "serial": serial})
+    return created
+
+
 @api.post("/admin/products")
 async def admin_create_product(p: ProductIn, user_id: str = Depends(require_admin)):
     ck = db.CATEGORY_TO_DB.get(p.category)
@@ -1110,13 +1157,19 @@ async def admin_create_product(p: ProductIn, user_id: str = Depends(require_admi
                 db.to_amount(p.price), db.to_amount(p.mrp), p.is_serialized,
                 p.attrs or {})
             # cart_items/order_items require a variant, so every product needs one.
+            variant_id = uuid.uuid4()
             await conn.execute(
                 """INSERT INTO product_variants (id, product_id, sku, variant_name, price,
                         compare_at_price, stock_qty, track_inventory, is_active)
                    VALUES ($1,$2,$3,'Standard',$4,$5,$6,$7,true)""",
-                uuid.uuid4(), pid, p.slug[:24].upper().replace("-", "_") + "-STD",
+                variant_id, pid, p.slug[:24].upper().replace("-", "_") + "-STD",
                 db.to_amount(p.price), db.to_amount(p.mrp),
                 None if p.is_serialized else 0, not p.is_serialized)
+            # Serialized products stock as individual units — auto-generate the
+            # requested number of pieces, each with its own serial number.
+            if p.is_serialized and p.quantity > 0:
+                await _generate_units(conn, str(pid), p.slug, ck, variant_id,
+                                      db.to_amount(p.price), p.quantity)
             for i, url in enumerate(p.images or []):
                 mid = await conn.fetchval(
                     "SELECT id FROM media_assets WHERE object_key=$1 AND bucket='external'", url)
@@ -1164,17 +1217,37 @@ async def admin_create_unit(u: UnitIn, user_id: str = Depends(require_admin)):
             "status": "available", "created_at": iso(now())}
 
 
-@api.post("/admin/certificates/issue")
-async def admin_issue_certificate(body: CertificateIssueIn, user_id: str = Depends(require_admin)):
-    unit = await db.fetch_one(
-        """SELECT pu.id::text AS unit_id, pu.serial_no AS serial,
-                  pu.product_id::text AS product_id, p.title AS product_name
-             FROM product_units pu
-             LEFT JOIN products p ON p.id = pu.product_id
-            WHERE pu.id = $1::uuid""", body.unit_id)
-    if not unit:
-        raise HTTPException(404, "Unit not found")
+@api.post("/admin/units/bulk")
+async def admin_create_units_bulk(b: BulkUnitsIn, user_id: str = Depends(require_admin)):
+    """Stock N pieces of a product at once, auto-generating serial numbers for each."""
+    if b.quantity < 1 or b.quantity > 500:
+        raise HTTPException(400, "Quantity must be between 1 and 500")
+    prod = await db.fetch_one(
+        """SELECT p.id::text AS product_id, p.slug::text AS slug,
+                  p.category_key::text AS category_key, p.base_price, p.is_serialized,
+                  (SELECT v.id FROM product_variants v WHERE v.product_id = p.id
+                    ORDER BY v.created_at LIMIT 1) AS variant_id
+             FROM products p WHERE p.id = $1::uuid AND p.deleted_at IS NULL""",
+        b.product_id)
+    if not prod:
+        raise HTTPException(404, "Product not found")
+    if not prod["is_serialized"]:
+        raise HTTPException(400, "Product is not serialized — set stock quantity instead")
+    async with db.transaction() as conn:
+        created = await _generate_units(
+            conn, prod["product_id"], prod["slug"], prod["category_key"],
+            prod["variant_id"], prod["base_price"], b.quantity)
+    return {"product_id": b.product_id, "count": len(created), "units": created}
 
+
+async def _issue_certificate_tx(conn, unit: dict, body, issued_by_user_id: str) -> str:
+    """Sign and persist an authenticity certificate for one unit, inside a transaction.
+
+    `unit` carries unit_id/serial/product_id/product_name; `body` supplies the lab,
+    temple, priest and mantra fields (CertificateIssueIn or DispatchIn both fit).
+    Returns the new certificate id. The QR is minted 'pending' — the caller activates
+    it at dispatch. Shared by intake issuance and dispatch-time issuance.
+    """
     cert_id = uuid.uuid4()
     # The signed payload keeps the legacy flat shape verbatim — it's what /api/verify
     # returns and what the signature covers. Do not add fields to it lightly.
@@ -1200,77 +1273,90 @@ async def admin_issue_certificate(body: CertificateIssueIn, user_id: str = Depen
     chash = content_hash(payload)
     signature = sign_payload(payload)
 
-    async with db.transaction() as conn:
-        # Reuse the active signing key, registering it on first use. Certificates
-        # reference the key they were signed with so rotation doesn't break old ones.
-        signing_key_id = await conn.fetchval(
-            "SELECT id FROM signing_keys WHERE public_key = $1 AND is_active",
+    # Reuse the active signing key, registering it on first use. Certificates
+    # reference the key they were signed with so rotation doesn't break old ones.
+    signing_key_id = await conn.fetchval(
+        "SELECT id FROM signing_keys WHERE public_key = $1 AND is_active",
+        ED25519_PUBLIC_HEX)
+    if not signing_key_id:
+        signing_key_id = uuid.uuid4()
+        await conn.execute(
+            """INSERT INTO signing_keys (id, kid, algorithm, public_key, is_active)
+               VALUES ($1,$2,'ed25519',$3,true)""",
+            signing_key_id, f"tredev-ed25519-{str(signing_key_id)[:8]}",
             ED25519_PUBLIC_HEX)
-        if not signing_key_id:
-            signing_key_id = uuid.uuid4()
+
+    # Mongo inlined lab/temple/priest on the certificate; here they're their own rows.
+    lab_id = uuid.uuid4()
+    await conn.execute(
+        """INSERT INTO lab_certifications (id, product_unit_id, lab_name,
+                certificate_number, report_media_id)
+           VALUES ($1,$2::uuid,$3,$4,NULL)""",
+        lab_id, unit["unit_id"], body.lab_name, body.lab_report_no)
+
+    en_id = None
+    temple_id = None
+    if body.temple_name:
+        temple_id = await conn.fetchval(
+            "SELECT id FROM temples WHERE name = $1", body.temple_name)
+        if not temple_id:
+            temple_id = uuid.uuid4()
             await conn.execute(
-                """INSERT INTO signing_keys (id, kid, algorithm, public_key, is_active)
-                   VALUES ($1,$2,'ed25519',$3,true)""",
-                signing_key_id, f"tredev-ed25519-{str(signing_key_id)[:8]}",
-                ED25519_PUBLIC_HEX)
-
-        # Mongo inlined lab/temple/priest on the certificate; here they're their own rows.
-        lab_id = uuid.uuid4()
-        await conn.execute(
-            """INSERT INTO lab_certifications (id, product_unit_id, lab_name,
-                    certificate_number, report_media_id)
-               VALUES ($1,$2::uuid,$3,$4,NULL)""",
-            lab_id, body.unit_id, body.lab_name, body.lab_report_no)
-
-        en_id = None
-        temple_id = None
-        if body.temple_name:
-            temple_id = await conn.fetchval(
-                "SELECT id FROM temples WHERE name = $1", body.temple_name)
-            if not temple_id:
-                temple_id = uuid.uuid4()
+                """INSERT INTO temples (id, name, slug, country, trust_verified)
+                   VALUES ($1,$2,$3::citext,'IN',false)""",
+                temple_id, body.temple_name,
+                re.sub(r"[^a-z0-9]+", "-", body.temple_name.lower()).strip("-"))
+        priest_id = None
+        if body.priest_name:
+            priest_id = await conn.fetchval(
+                "SELECT id FROM priests WHERE full_name = $1", body.priest_name)
+            if not priest_id:
+                priest_id = uuid.uuid4()
                 await conn.execute(
-                    """INSERT INTO temples (id, name, slug, country, trust_verified)
-                       VALUES ($1,$2,$3::citext,'IN',false)""",
-                    temple_id, body.temple_name,
-                    re.sub(r"[^a-z0-9]+", "-", body.temple_name.lower()).strip("-"))
-            priest_id = None
-            if body.priest_name:
-                priest_id = await conn.fetchval(
-                    "SELECT id FROM priests WHERE full_name = $1", body.priest_name)
-                if not priest_id:
-                    priest_id = uuid.uuid4()
-                    await conn.execute(
-                        """INSERT INTO priests (id, full_name, temple_id, is_verified)
-                           VALUES ($1,$2,$3,false)""", priest_id, body.priest_name, temple_id)
-            en_id = uuid.uuid4()
-            await conn.execute(
-                """INSERT INTO energization_certificates (id, product_unit_id, temple_id,
-                        priest_id, performed_on, mantras)
-                   VALUES ($1,$2::uuid,$3,$4,$5,$6)""",
-                en_id, body.unit_id, temple_id, priest_id,
-                datetime.fromisoformat(body.energization_date).replace(tzinfo=timezone.utc)
-                if body.energization_date else None,
-                [body.mantra] if body.mantra else [])
-
+                    """INSERT INTO priests (id, full_name, temple_id, is_verified)
+                       VALUES ($1,$2,$3,false)""", priest_id, body.priest_name, temple_id)
+        en_id = uuid.uuid4()
         await conn.execute(
-            """INSERT INTO authenticity_certificates (id, product_unit_id, certificate_no,
-                    issuing_authority, issued_by_user_id, issued_at, lab_certification_id,
-                    energization_certificate_id, temple_id, signing_key_id, signed_payload,
-                    content_hash, signature)
-               VALUES ($1,$2::uuid,$3,'Tredev',$4::uuid, now(),$5,$6,$7,$8,$9,$10,$11)""",
-            cert_id, body.unit_id, f"TDV-{secrets.token_hex(4).upper()}", user_id,
-            lab_id, en_id, temple_id, signing_key_id, payload, chash, signature)
+            """INSERT INTO energization_certificates (id, product_unit_id, temple_id,
+                    priest_id, performed_on, mantras)
+               VALUES ($1,$2::uuid,$3,$4,$5,$6)""",
+            en_id, unit["unit_id"], temple_id, priest_id,
+            datetime.fromisoformat(body.energization_date).replace(tzinfo=timezone.utc)
+            if body.energization_date else None,
+            [body.mantra] if body.mantra else [])
 
-        # QR gap: minted now, but only activated at dispatch.
-        await conn.execute(
-            """INSERT INTO qr_codes (id, product_unit_id, authenticity_certificate_id,
-                    token, status)
-               VALUES ($1,$2::uuid,$3,$4,'pending')""",
-            uuid.uuid4(), body.unit_id, cert_id, f"qr_{uuid.uuid4().hex[:16]}")
+    await conn.execute(
+        """INSERT INTO authenticity_certificates (id, product_unit_id, certificate_no,
+                issuing_authority, issued_by_user_id, issued_at, lab_certification_id,
+                energization_certificate_id, temple_id, signing_key_id, signed_payload,
+                content_hash, signature)
+           VALUES ($1,$2::uuid,$3,'Tredev',$4::uuid, now(),$5,$6,$7,$8,$9,$10,$11)""",
+        cert_id, unit["unit_id"], f"TDV-{secrets.token_hex(4).upper()}", issued_by_user_id,
+        lab_id, en_id, temple_id, signing_key_id, payload, chash, signature)
 
+    # QR gap: minted now, but only activated at dispatch.
+    await conn.execute(
+        """INSERT INTO qr_codes (id, product_unit_id, authenticity_certificate_id,
+                token, status)
+           VALUES ($1,$2::uuid,$3,$4,'pending')""",
+        uuid.uuid4(), unit["unit_id"], cert_id, f"qr_{uuid.uuid4().hex[:16]}")
+    return str(cert_id)
+
+
+@api.post("/admin/certificates/issue")
+async def admin_issue_certificate(body: CertificateIssueIn, user_id: str = Depends(require_admin)):
+    unit = await db.fetch_one(
+        """SELECT pu.id::text AS unit_id, pu.serial_no AS serial,
+                  pu.product_id::text AS product_id, p.title AS product_name
+             FROM product_units pu
+             LEFT JOIN products p ON p.id = pu.product_id
+            WHERE pu.id = $1::uuid""", body.unit_id)
+    if not unit:
+        raise HTTPException(404, "Unit not found")
+    async with db.transaction() as conn:
+        cert_id = await _issue_certificate_tx(conn, unit, body, user_id)
     return _shape_cert(await db.fetch_one(
-        _CERT_SELECT + " WHERE ac.id = $1::uuid", str(cert_id)))
+        _CERT_SELECT + " WHERE ac.id = $1::uuid", cert_id))
 
 
 # ── Public verification (crown jewel) ─────────────────────────────────────────
@@ -1465,41 +1551,44 @@ async def cart_add(body: CartAddIn, request: Request, response: Response, user_i
 
     cart = await _get_or_create_cart(user_id, anon_key)
 
-    unit_id = None
-    qty = max(1, body.qty)
-    if product["is_serialized"]:
-        if not body.unit_id:
-            raise HTTPException(400, "Serialized product requires unit_id")
-        unit_id, qty = body.unit_id, 1
-        exists = await db.fetch_val(
-            """SELECT id::text FROM product_units
-                WHERE id = $1::uuid AND product_id = $2::uuid""", unit_id, body.product_id)
-        if not exists:
-            raise HTTPException(404, "Unit not found")
+    add_qty = max(1, body.qty)
 
-    # Reservation + line insert are one transaction: if the unit was just taken, the
-    # partial unique index (ux_reservations_active_unit) raises and nothing is written.
-    try:
-        async with db.transaction() as conn:
-            if unit_id:
-                await conn.execute(
-                    """INSERT INTO reservations (id, product_unit_id, cart_id, user_id,
-                                                 status, expires_at)
-                       VALUES ($1,$2::uuid,$3::uuid,$4::uuid,'active',$5)""",
-                    uuid.uuid4(), unit_id, cart["cart_id"], user_id,
-                    now() + timedelta(minutes=15))
-                await conn.execute(
-                    "UPDATE product_units SET status='reserved' WHERE id=$1::uuid", unit_id)
+    # Quantity-based cart: no serial is chosen here and nothing is reserved. Adds for
+    # the same product merge into one line so the +/- stepper works on a single row.
+    # Specific units are auto-assigned only when payment is captured (_mark_paid).
+    async with db.transaction() as conn:
+        existing = await conn.fetchrow(
+            """SELECT id::text AS id, qty FROM cart_items
+                WHERE cart_id = $1::uuid AND variant_id = $2::uuid
+                  AND product_unit_id IS NULL
+                ORDER BY created_at LIMIT 1""",
+            cart["cart_id"], product["variant_id"])
+        new_qty = (existing["qty"] if existing else 0) + add_qty
+
+        # For serialized products, never let the cart exceed pieces actually in stock.
+        if product["is_serialized"]:
+            available = await conn.fetchval(
+                """SELECT count(*) FROM product_units
+                    WHERE product_id = $1::uuid AND status = 'in_stock'""",
+                product["product_id"])
+            if available < 1:
+                raise HTTPException(409, "Out of stock.")
+            if new_qty > available:
+                raise HTTPException(
+                    409, f"Only {available} in stock — can't add more.")
+
+        if existing:
+            await conn.execute(
+                "UPDATE cart_items SET qty = $2 WHERE id = $1::uuid", existing["id"], new_qty)
+        else:
             await conn.execute(
                 """INSERT INTO cart_items (id, cart_id, variant_id, product_unit_id, qty,
                                            unit_price_snapshot)
-                   VALUES ($1,$2::uuid,$3::uuid,$4::uuid,$5,$6)""",
-                uuid.uuid4(), cart["cart_id"], product["variant_id"], unit_id, qty,
+                   VALUES ($1,$2::uuid,$3::uuid,NULL,$4,$5)""",
+                uuid.uuid4(), cart["cart_id"], product["variant_id"], new_qty,
                 product["base_price"])
-            await conn.execute(
-                "UPDATE carts SET updated_at = now() WHERE id = $1::uuid", cart["cart_id"])
-    except asyncpg.exceptions.UniqueViolationError:
-        raise HTTPException(409, "This unit has just been reserved by another buyer.")
+        await conn.execute(
+            "UPDATE carts SET updated_at = now() WHERE id = $1::uuid", cart["cart_id"])
 
     return await _get_or_create_cart(user_id, anon_key)
 
@@ -1528,6 +1617,40 @@ async def cart_remove(line_id: str, request: Request, user_id: Optional[str] = D
                     WHERE product_unit_id = $1 AND status = 'active'""", unit_id)
             await conn.execute(
                 "UPDATE product_units SET status='in_stock' WHERE id=$1", unit_id)
+    return await _get_or_create_cart(user_id, anon_key)
+
+
+@api.post("/cart/set-qty")
+async def cart_set_qty(body: SetQtyIn, request: Request, user_id: Optional[str] = Depends(get_user_id_optional)):
+    """Set a line's quantity for the +/- stepper. qty <= 0 removes the line; a raise is
+    capped at pieces in stock for serialized products."""
+    anon_key = request.cookies.get("gemora_anon")
+    cart = await _get_or_create_cart(user_id, anon_key)
+    async with db.transaction() as conn:
+        line = await conn.fetchrow(
+            """SELECT ci.id::text AS id, v.product_id::text AS product_id,
+                      p.is_serialized AS is_serialized
+                 FROM cart_items ci
+                 JOIN product_variants v ON v.id = ci.variant_id
+                 JOIN products p ON p.id = v.product_id
+                WHERE ci.id = $1::uuid AND ci.cart_id = $2::uuid""",
+            body.line_id, cart["cart_id"])
+        if not line:
+            raise HTTPException(404, "Cart line not found")
+        if body.qty <= 0:
+            await conn.execute("DELETE FROM cart_items WHERE id = $1::uuid", body.line_id)
+        else:
+            if line["is_serialized"]:
+                available = await conn.fetchval(
+                    """SELECT count(*) FROM product_units
+                        WHERE product_id = $1::uuid AND status = 'in_stock'""",
+                    line["product_id"])
+                if body.qty > available:
+                    raise HTTPException(409, f"Only {available} in stock.")
+            await conn.execute(
+                "UPDATE cart_items SET qty = $2 WHERE id = $1::uuid", body.line_id, body.qty)
+        await conn.execute(
+            "UPDATE carts SET updated_at = now() WHERE id = $1::uuid", cart["cart_id"])
     return await _get_or_create_cart(user_id, anon_key)
 
 
@@ -1562,6 +1685,7 @@ _ORDER_SELECT = """
            sh.tracking_no         AS tracking_number,
            sh.carrier             AS courier,
            sh.shipped_at          AS shipped_at,
+           sh.estimated_delivery_date AS estimated_delivery_date,
            cm.id::text            AS commission_id
       FROM orders o
       LEFT JOIN addresses a ON a.id = o.shipping_address_id
@@ -1570,7 +1694,7 @@ _ORDER_SELECT = """
               FROM payments WHERE order_id = o.id ORDER BY created_at DESC LIMIT 1
       ) pay ON true
       LEFT JOIN LATERAL (
-            SELECT carrier, tracking_no, shipped_at
+            SELECT carrier, tracking_no, shipped_at, estimated_delivery_date
               FROM shipments WHERE order_id = o.id ORDER BY created_at DESC LIMIT 1
       ) sh ON true
       LEFT JOIN affiliate_commissions cm ON cm.order_id = o.id
@@ -1587,14 +1711,22 @@ _ORDER_ITEMS_COLS = """
                oi.qty                 AS qty,
                oi.unit_price          AS unit_price,
                oi.title_snapshot      AS name,
+               p.is_serialized        AS is_serialized,
+               -- Units assigned to this line at payment: many units can share one
+               -- order_item (product_units.sold_order_item_id), so a qty-3 line lists
+               -- all three serials. This is what the admin dispatches/certifies.
+               (SELECT array_agg(pu.serial_no ORDER BY pu.serial_no)
+                  FROM product_units pu WHERE pu.sold_order_item_id = oi.id) AS serials,
                (SELECT ma.object_key FROM product_media pm
                   JOIN media_assets ma ON ma.id = pm.media_id
                  WHERE pm.product_id = oi.product_id ORDER BY pm.position LIMIT 1) AS image
-          FROM order_items oi"""
+          FROM order_items oi
+          JOIN products p ON p.id = oi.product_id"""
 
 
 def _shape_order_item(i: dict) -> dict:
     return {**{k: v for k, v in i.items() if k not in ("unit_price", "order_id")},
+            "serials": list(i.get("serials") or []),
             "price": db.to_paise(i["unit_price"])}
 
 
@@ -1656,6 +1788,19 @@ async def checkout(body: CheckoutIn, request: Request, user_id: Optional[str] = 
     items = cart.get("items", [])
     if not items:
         raise HTTPException(400, "Cart is empty")
+
+    # Stock guard before we create a payable order. Units are only assigned at capture,
+    # so this is a best-effort early check — _mark_paid re-checks atomically under lock.
+    for li in items:
+        chk = await db.fetch_one(
+            """SELECT p.is_serialized,
+                      (SELECT count(*) FROM product_units pu
+                        WHERE pu.product_id = p.id AND pu.status = 'in_stock') AS avail
+                 FROM products p WHERE p.id = $1::uuid""", li["product_id"])
+        if chk and chk["is_serialized"] and chk["avail"] < li["qty"]:
+            raise HTTPException(
+                409, f"“{li['name']}” is out of stock — only {chk['avail']} of "
+                     f"{li['qty']} available.")
 
     subtotal = sum(li["price"] * li["qty"] for li in items)
     gst = int(round(subtotal * 0.03))  # 3% GST on gemstones (illustrative)
@@ -1770,30 +1915,40 @@ async def mock_pay(order_id: str):
 
 
 async def _mark_paid(order: dict, payment_id: str) -> dict:
-    """Reservations -> consumed, units -> sold, order -> paid, commission recorded.
+    """Assign units -> sold, order -> paid, commission recorded — one transaction.
 
-    Mongo had to sequence these as separate best-effort writes ("atomic-ish"); here
-    it's one real transaction, so a lost reservation rolls the whole payment back
-    rather than leaving a half-paid order.
+    Units aren't reserved during the cart's life; they're auto-assigned here, when the
+    payment is captured. For each serialized line we grab `qty` in-stock units under a
+    row lock (FOR UPDATE SKIP LOCKED, so concurrent buyers can't grab the same piece)
+    and bind them to the order_item. If a line can't be fully filled the whole payment
+    rolls back rather than leaving a half-filled order.
     """
     order_id = order["order_id"]
     async with db.transaction() as conn:
         for li in order.get("items", []):
-            if not li.get("unit_id"):
+            if not li.get("is_serialized"):
+                continue  # non-serialized products aren't unit-tracked
+            qty = li.get("qty") or 1
+            # Skip units already bound to this line (idempotency / re-runs).
+            already = await conn.fetchval(
+                "SELECT count(*) FROM product_units WHERE sold_order_item_id = $1::uuid",
+                li["line_id"])
+            need = qty - (already or 0)
+            if need <= 0:
                 continue
-            # Consume the reservation we hold; 0 rows means someone else took the unit.
-            got = await conn.fetchval(
-                """UPDATE reservations SET status = 'consumed'
-                    WHERE product_unit_id = $1::uuid AND status = 'active'
-                RETURNING id""", li["unit_id"])
-            if not got:
-                raise HTTPException(409, f"Reservation lost for unit {li['unit_id']}")
-            await conn.execute(
-                """UPDATE product_units pu SET status = 'sold',
-                          sold_order_item_id = (SELECT id FROM order_items
-                                                 WHERE order_id = $2::uuid
-                                                   AND product_unit_id = $1::uuid LIMIT 1)
-                    WHERE pu.id = $1::uuid""", li["unit_id"], order_id)
+            assigned = await conn.fetch(
+                """UPDATE product_units SET status = 'sold', sold_order_item_id = $2::uuid
+                    WHERE id IN (
+                        SELECT id FROM product_units
+                         WHERE product_id = $1::uuid AND status = 'in_stock'
+                         ORDER BY created_at, serial_no
+                         LIMIT $3
+                         FOR UPDATE SKIP LOCKED)
+                RETURNING id""", li["product_id"], li["line_id"], need)
+            if len(assigned) < need:
+                raise HTTPException(
+                    409, f"“{li.get('name', 'An item')}” is out of stock — "
+                         f"only {len(assigned) + (already or 0)} of {qty} available.")
 
         # paid_at lives on payments here, not orders — the order only carries status.
         await conn.execute(
@@ -1874,38 +2029,18 @@ async def checkout_pay(order_id: str, request: Request,
     if order.get("status") != "pending_payment":
         raise HTTPException(409, f"Order is {order.get('status')} — not payable")
 
-    # Reserve, THEN take payment. A pending order's original 15-min hold may have
-    # expired and released its unit(s) back to stock (reservation -> 'expired',
-    # product_unit -> 'in_stock'). Re-acquire each still-available unit before creating
-    # a payable Razorpay order; refuse if any unit was sold or grabbed by someone else —
-    # a serialized piece can't be sold twice. This is what lets _mark_paid (which
-    # consumes 'active' reservations) succeed at verify time instead of 409-ing.
-    serialized = [li for li in order.get("items", []) if li.get("unit_id")]
-    if serialized:
-        cart = await _get_or_create_cart(user_id, request.cookies.get("gemora_anon"))
-        async with db.transaction() as conn:
-            for li in serialized:
-                unit_id = li["unit_id"]
-                held = await conn.fetchval(
-                    "SELECT id FROM reservations WHERE product_unit_id=$1::uuid AND status='active'",
-                    unit_id)
-                if held:
-                    continue  # still actively held for this purchase — nothing to do
-                # Grab it back only if it is genuinely free. The status='in_stock' guard
-                # makes this atomic against a concurrent buyer.
-                got = await conn.fetchval(
-                    "UPDATE product_units SET status='reserved' WHERE id=$1::uuid AND status='in_stock' RETURNING id",
-                    unit_id)
-                if not got:
-                    raise HTTPException(
-                        409, f"“{li.get('name', 'This item')}” is no longer available — "
-                             "its reservation expired and the piece was taken.")
-                await conn.execute(
-                    """INSERT INTO reservations (id, product_unit_id, cart_id, user_id,
-                                                 status, expires_at)
-                       VALUES ($1,$2::uuid,$3::uuid,$4::uuid,'active',$5)""",
-                    uuid.uuid4(), unit_id, cart["cart_id"], order.get("user_id"),
-                    now() + timedelta(minutes=15))
+    # Nothing is held for a pending order — units are assigned at capture (_mark_paid).
+    # Guard here so the buyer isn't sent to pay for something already out of stock.
+    for li in order.get("items", []):
+        if not li.get("is_serialized"):
+            continue
+        available = await db.fetch_val(
+            """SELECT count(*) FROM product_units
+                WHERE product_id = $1::uuid AND status = 'in_stock'""", li["product_id"])
+        if available < (li.get("qty") or 1):
+            raise HTTPException(
+                409, f"“{li.get('name', 'This item')}” is out of stock — "
+                     f"only {available} of {li.get('qty') or 1} left.")
 
     rp_key = os.environ.get("RAZORPAY_KEY_ID", "")
     rp_secret = os.environ.get("RAZORPAY_KEY_SECRET", "")
@@ -2054,54 +2189,74 @@ async def get_order(order_id: str, user_id: str = Depends(require_user)):
 # ── Admin: dispatch → activate QR ────────────────────────────────────────────
 @api.post("/admin/dispatch")
 async def admin_dispatch(body: DispatchIn, user_id: str = Depends(require_admin)):
+    """Dispatch a paid order: issue the provenance certificate (lab + temple + Ed25519
+    signature) for every unit assigned to it, activate their QRs, record the shipment
+    with an estimated delivery date, and mark the order shipped. Provenance is captured
+    here — not at intake — so the admin fills the lab/temple details at this step."""
     order = await _load_order(body.order_id)
     if not order:
         raise HTTPException(404, "Order not found")
-    # Confirm unit belongs to this order
-    li = next((x for x in order.get("items", []) if x.get("unit_id") == body.unit_id), None)
-    if not li:
-        raise HTTPException(400, "Unit not in this order")
-    cert = await db.fetch_one(
-        """SELECT ac.id::text AS cert_id, ac.product_unit_id::text AS unit_id,
-                  pu.product_id::text AS product_id, q.id::text AS qr_id, q.token AS qr_token
-             FROM authenticity_certificates ac
-             JOIN product_units pu ON pu.id = ac.product_unit_id
-             LEFT JOIN qr_codes q ON q.authenticity_certificate_id = ac.id
-            WHERE ac.product_unit_id = $1::uuid""", body.unit_id)
-    if not cert:
-        raise HTTPException(400, "No certificate on file — issue one before dispatch")
+
+    est_date = None
+    if body.estimated_delivery_date:
+        try:
+            est_date = date.fromisoformat(body.estimated_delivery_date)
+        except ValueError:
+            raise HTTPException(400, "estimated_delivery_date must be YYYY-MM-DD")
 
     async with db.transaction() as conn:
-        # Activate the QR. Mongo kept activated/activated_at on the certificate; here
-        # the QR itself owns its lifecycle (qr_codes.status/activated_at).
-        # The QR owns activation. Ownership (sold_to_user_id/order_id in the legacy API)
-        # is derived from product_units.sold_order_item_id -> order_items -> orders,
-        # which _mark_paid already wired up — nothing to write on the certificate.
+        # Every unit assigned to this order at payment (many units can hang off one line).
+        units = db._rows(await conn.fetch(
+            """SELECT pu.id::text AS unit_id, pu.serial_no AS serial,
+                      pu.product_id::text AS product_id, p.title AS product_name,
+                      ac.id::text AS cert_id
+                 FROM product_units pu
+                 JOIN order_items oi ON oi.id = pu.sold_order_item_id
+                 LEFT JOIN products p ON p.id = pu.product_id
+                 LEFT JOIN authenticity_certificates ac ON ac.product_unit_id = pu.id
+                WHERE oi.order_id = $1::uuid""", body.order_id))
+        if not units:
+            raise HTTPException(400, "No paid units on this order — capture payment first.")
+
+        # Issue a signed certificate for any unit that doesn't already have one.
+        for u in units:
+            if not u["cert_id"]:
+                await _issue_certificate_tx(conn, u, body, user_id)
+
+        # Activate every QR on this order's units — this is what makes a public scan verify.
         await conn.execute(
             """UPDATE qr_codes SET status='active', activated_at=now()
-                WHERE authenticity_certificate_id=$1::uuid""", cert["cert_id"])
-        # Shipment carries tracking; orders only carries status.
+                WHERE product_unit_id IN (
+                    SELECT pu.id FROM product_units pu
+                     JOIN order_items oi ON oi.id = pu.sold_order_item_id
+                    WHERE oi.order_id = $1::uuid)""", body.order_id)
+
+        # Shipment carries tracking + the buyer-facing ETA; orders only carries status.
         await conn.execute(
-            """INSERT INTO shipments (id, order_id, carrier, tracking_no, status, shipped_at)
-               VALUES ($1,$2::uuid,$3,$4,'in_transit', now())""",
-            uuid.uuid4(), body.order_id, body.courier, body.tracking_number)
+            """INSERT INTO shipments (id, order_id, carrier, tracking_no, status,
+                    shipped_at, estimated_delivery_date)
+               VALUES ($1,$2::uuid,$3,$4,'in_transit', now(), $5)""",
+            uuid.uuid4(), body.order_id, body.courier, body.tracking_number, est_date)
         await conn.execute(
             "UPDATE orders SET status='shipped' WHERE id=$1::uuid", body.order_id)
         await conn.execute(
             """UPDATE order_items SET fulfillment_status='shipped'
-                WHERE order_id=$1::uuid AND product_unit_id=$2::uuid""",
-            body.order_id, body.unit_id)
+                WHERE order_id=$1::uuid""", body.order_id)
         await conn.execute(
             """INSERT INTO order_events (id, order_id, actor_id, from_status, to_status, reason)
                VALUES ($1,$2::uuid,$3::uuid,'paid','shipped','dispatched')""",
             uuid.uuid4(), body.order_id, user_id)
-        # Add to buyer's verified vault
+        # Add every dispatched unit to the buyer's verified vault.
         if order.get("user_id"):
             await conn.execute(
                 """INSERT INTO verified_items (user_id, product_unit_id, qr_code_id, product_id)
-                   VALUES ($1::uuid,$2::uuid,$3::uuid,$4::uuid)
+                   SELECT $2::uuid, pu.id, q.id, pu.product_id
+                     FROM product_units pu
+                     JOIN order_items oi ON oi.id = pu.sold_order_item_id
+                     LEFT JOIN qr_codes q ON q.product_unit_id = pu.id
+                    WHERE oi.order_id = $1::uuid
                    ON CONFLICT (user_id, product_unit_id) DO NOTHING""",
-                order["user_id"], body.unit_id, cert["qr_id"], cert["product_id"])
+                body.order_id, order["user_id"])
 
     # Fire WhatsApp "order dispatched" notification (utility template — always allowed)
     buyer = await _load_user(user_id=order["user_id"]) if order.get("user_id") else None
@@ -2113,8 +2268,9 @@ async def admin_dispatch(body: DispatchIn, user_id: str = Depends(require_admin)
             )
         except Exception as e:
             log.warning(f"WA dispatch send failed: {e}")
-    await audit_log(user_id, "order.dispatch", order["order_id"], {"unit_id": body.unit_id})
-    return {"ok": True}
+    await audit_log(user_id, "order.dispatch", order["order_id"],
+                    {"units": len(units), "eta": body.estimated_delivery_date})
+    return {"ok": True, "units": len(units)}
 
 
 @api.post("/admin/certificates/revoke/{cert_id}")
@@ -2792,8 +2948,6 @@ async def admin_low_stock(_: str = Depends(require_perm("inventory")), threshold
              LEFT JOIN product_units pu
                     ON pu.product_id = p.id
                    AND pu.status = 'in_stock'
-                   AND NOT EXISTS (SELECT 1 FROM reservations r
-                                    WHERE r.product_unit_id = pu.id AND r.status = 'active')
             WHERE p.status = 'active' AND p.is_serialized AND p.deleted_at IS NULL
             GROUP BY p.id
            HAVING count(pu.id) <= $1

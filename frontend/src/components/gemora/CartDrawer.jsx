@@ -42,11 +42,7 @@ export default function CartDrawer({ open, onClose }) {
               </div>
               <div className="flex-1 min-w-0">
                 <div className="font-serifd text-base truncate">{li.name}</div>
-                {li.unit_id && (
-                  <div className="mt-1 flex items-center gap-1 text-[10px] text-verified">
-                    <ShieldCheck size={10} weight="duotone" /> Unique unit
-                  </div>
-                )}
+                <div className="mt-1 text-[10px] text-ink-muted">Qty {li.qty}</div>
                 <div className="text-xs text-maroon-deep mt-1">{formatINR(li.price * li.qty)}</div>
               </div>
               <button onClick={() => remove(li.line_id)} className="text-ink-muted hover:text-revoked">

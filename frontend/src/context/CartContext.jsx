@@ -32,11 +32,17 @@ export function CartProvider({ children }) {
     setCart(data);
   };
 
+  const setQty = async (line_id, qty) => {
+    const { data } = await api.post("/cart/set-qty", { line_id, qty });
+    setCart(data);
+    return data;
+  };
+
   const count = (cart.items || []).reduce((s, li) => s + (li.qty || 1), 0);
   const subtotal = (cart.items || []).reduce((s, li) => s + li.price * li.qty, 0);
 
   return (
-    <CartCtx.Provider value={{ cart, refresh, add, remove, count, subtotal }}>
+    <CartCtx.Provider value={{ cart, refresh, add, remove, setQty, count, subtotal }}>
       {children}
     </CartCtx.Provider>
   );

@@ -3,7 +3,7 @@ import { api, formatINR } from "@/lib/api";
 import { toast } from "sonner";
 import { PencilSimple, PlusCircle, Trash } from "@phosphor-icons/react";
 
-const EMPTY = { name: "", slug: "", category: "gemstone", description: "", price: "", mrp: "", images: "", devanagari_name: "", attrs: "{}" };
+const EMPTY = { name: "", slug: "", category: "gemstone", description: "", price: "", mrp: "", images: "", devanagari_name: "", attrs: "{}", quantity: "" };
 
 export default function AdminProducts() {
   const [products, setProducts] = useState([]);
@@ -47,10 +47,12 @@ export default function AdminProducts() {
         mrp: form.mrp ? rupeesToPaise(form.mrp) : null,
         images: form.images.split("\n").map((s) => s.trim()).filter(Boolean),
         attrs: JSON.parse(form.attrs || "{}"),
+        // Number of pieces in stock — backend auto-generates a serial per unit.
+        quantity: form.quantity ? Math.max(0, parseInt(form.quantity, 10) || 0) : 0,
       };
       if (editing === "new") {
         await api.post("/admin/products", payload);
-        toast.success("Product created");
+        toast.success(payload.quantity ? `Product created · ${payload.quantity} pieces stocked` : "Product created");
       } else {
         await api.patch(`/admin/products/${editing.product_id}`, payload);
         toast.success("Product updated");
@@ -116,6 +118,20 @@ export default function AdminProducts() {
               {cats.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
             </select>
           </label>
+          {editing === "new" && (
+            <label className="block">
+              <div className="text-xs text-ink-muted mb-1">Number of pieces in stock</div>
+              <input
+                type="number" min="0" step="1" inputMode="numeric"
+                value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })}
+                placeholder="e.g. 10" data-testid="product-quantity-input"
+                className="w-full gold-line px-3 py-2 outline-none focus:border-maroon"
+              />
+              <div className="text-[10px] text-ink-muted mt-1">
+                A serial number is generated automatically for each piece and added to inventory.
+              </div>
+            </label>
+          )}
           <label className="block md:col-span-2">
             <div className="text-xs text-ink-muted mb-1">Description</div>
             <textarea rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="w-full gold-line px-3 py-2 outline-none focus:border-maroon" />

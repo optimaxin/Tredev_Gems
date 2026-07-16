@@ -3,7 +3,7 @@ import { useParams, Link, useNavigate, useLocation } from "react-router-dom";
 import { api, formatINR } from "@/lib/api";
 import { useCart } from "@/context/CartContext";
 import { toast } from "sonner";
-import { ShieldCheck, Certificate, QrCode, Fingerprint, Play, HandHeart, ShoppingBag, Heart } from "@phosphor-icons/react";
+import { ShieldCheck, Certificate, QrCode, Fingerprint, Play, HandHeart, ShoppingBag, Heart, Plus, Minus } from "@phosphor-icons/react";
 
 export default function ProductDetail() {
   const { slug } = useParams();
@@ -12,23 +12,22 @@ export default function ProductDetail() {
   // immediately instead of showing a blank "Loading…" while the detail is fetched.
   const [p, setP] = useState(() => location.state?.product ?? null);
   const [reviews, setReviews] = useState([]);
-  const [selectedUnit, setSelectedUnit] = useState(null);
+  const [qty, setQty] = useState(1);
   const [tab, setTab] = useState("trust");
   const cart = useCart();
   const nav = useNavigate();
 
   useEffect(() => {
     let cancelled = false;
-    // Show the passed-in summary right away (units/description fill in from the fetch).
+    // Show the passed-in summary right away (stock/description fill in from the fetch).
     const pre = location.state?.product;
     if (pre && pre.slug === slug) setP(pre);
     else setP((cur) => (cur && cur.slug === slug ? cur : null)); // never flash a different product
-    setSelectedUnit(null);
+    setQty(1);
 
     api.get(`/products/${slug}`).then(({ data }) => {
       if (cancelled) return;
       setP(data);
-      setSelectedUnit(data.available_units?.[0] || null);
       api.get(`/reviews/${data.product_id}`).then((r) => { if (!cancelled) setReviews(r.data); }).catch(() => {});
     }).catch(() => { if (!cancelled) setP((cur) => (cur && cur.slug === slug ? cur : false)); });
     return () => { cancelled = true; };
@@ -38,17 +37,18 @@ export default function ProductDetail() {
   if (p === null) return <div className="p-16 text-ink-muted">Loading…</div>;
   if (!p) return <div className="p-16">Not found.</div>;
 
+  // in_stock is a count for serialized products, null (unlimited) for non-serialized.
+  const stock = p.in_stock;
+  const soldOut = p.is_serialized && stock != null && stock <= 0;
+  const maxQty = p.is_serialized && stock != null ? stock : 99;
+
   const addToCart = async () => {
     try {
-      if (p.is_serialized && !selectedUnit) {
-        toast.error("Select a specific unit first");
-        return;
-      }
-      await cart.add({ product_id: p.product_id, unit_id: selectedUnit?.unit_id });
-      toast.success(`${p.name} reserved in your cart for 15 min`);
+      await cart.add({ product_id: p.product_id, qty });
+      toast.success(`${qty} × ${p.name} added to your cart`);
       nav("/cart");
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Could not reserve");
+      toast.error(e.response?.data?.detail || "Could not add to cart");
     }
   };
 
@@ -92,50 +92,50 @@ export default function ProductDetail() {
             </div>
           )}
 
-          {/* Unit picker */}
-          {p.is_serialized && (
-            <div className="mt-8">
-              <div className="text-xs uppercase tracking-widest text-ink-muted mb-3">Choose a specific unit</div>
-              {p.available_units === undefined ? (
-                <div className="gold-line p-4 text-sm text-ink-muted animate-pulse">Loading available units…</div>
-              ) : p.available_units?.length ? (
-                <div className="grid grid-cols-1 gap-2">
-                  {p.available_units.map((u) => (
-                    <button
-                      key={u.unit_id}
-                      onClick={() => setSelectedUnit(u)}
-                      data-testid={`select-unit-${u.serial}`}
-                      className={`text-left px-4 py-3 border flex items-center justify-between ${selectedUnit?.unit_id === u.unit_id ? "border-maroon bg-cream" : "border-gold/40 hover:border-maroon"}`}
-                    >
-                      <div>
-                        <div className="font-mono text-sm">{u.serial}</div>
-                        <div className="text-xs text-ink-muted mt-0.5">
-                          {u.weight_carat && `weight ${u.weight_carat}`} · {u.origin || "Tredev vault"}
-                        </div>
-                      </div>
-                      {u.has_certificate && (
-                        <span className="text-verified text-[10px] uppercase tracking-widest flex items-center gap-1">
-                          <ShieldCheck size={12} weight="duotone" /> Certified
-                        </span>
-                      )}
-                    </button>
-                  ))}
+          {/* Quantity */}
+          <div className="mt-8">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-widest text-ink-muted">Quantity</div>
+              {p.is_serialized && stock != null && (
+                <div className={`text-xs ${soldOut ? "text-revoked" : "text-verified"}`}>
+                  {soldOut ? "Out of stock" : `${stock} in stock`}
                 </div>
-              ) : (
-                <div className="gold-line p-4 text-sm text-ink-muted">All units currently reserved. Please check back or contact us for the next lot.</div>
               )}
             </div>
-          )}
+            <div className="mt-3 inline-flex items-center gold-line-strong bg-ivory">
+              <button
+                type="button"
+                onClick={() => setQty((q) => Math.max(1, q - 1))}
+                disabled={qty <= 1}
+                data-testid="qty-decrement"
+                className="px-4 py-3 text-maroon disabled:opacity-30 hover:bg-cream"
+                aria-label="Decrease quantity"
+              >
+                <Minus size={16} weight="bold" />
+              </button>
+              <span data-testid="qty-value" className="px-6 py-3 font-display text-xl min-w-[3.5rem] text-center tabular-nums">{qty}</span>
+              <button
+                type="button"
+                onClick={() => setQty((q) => Math.min(maxQty, q + 1))}
+                disabled={qty >= maxQty}
+                data-testid="qty-increment"
+                className="px-4 py-3 text-maroon disabled:opacity-30 hover:bg-cream"
+                aria-label="Increase quantity"
+              >
+                <Plus size={16} weight="bold" />
+              </button>
+            </div>
+          </div>
 
           {/* CTA */}
           <div className="mt-8 flex flex-wrap gap-3">
             <button
               onClick={addToCart}
               data-testid="add-to-cart-btn"
-              disabled={p.is_serialized && !selectedUnit}
+              disabled={soldOut}
               className="brand-gradient text-ivory px-8 py-4 text-sm uppercase tracking-widest inline-flex items-center gap-2 hover-lift disabled:opacity-40"
             >
-              <ShoppingBag size={16} weight="duotone" /> Reserve this unit
+              <ShoppingBag size={16} weight="duotone" /> {soldOut ? "Sold out" : "Add to cart"}
             </button>
             <button className="border border-maroon text-maroon px-6 py-4 text-sm uppercase tracking-widest inline-flex items-center gap-2 hover:bg-maroon hover:text-ivory transition-colors"
               onClick={() => api.post(`/me/wishlist/${p.product_id}`).then(() => toast.success("Saved to wishlist")).catch(() => toast.error("Please login to save"))}
@@ -158,7 +158,7 @@ export default function ProductDetail() {
             <div className="mt-5 grid grid-cols-2 gap-4 text-sm">
               <div>
                 <div className="text-[10px] uppercase tracking-widest text-ink-muted">Serial</div>
-                <div className="font-mono mt-1">{selectedUnit?.serial || "select a unit"}</div>
+                <div className="font-mono mt-1">Assigned at dispatch</div>
               </div>
               <div>
                 <div className="text-[10px] uppercase tracking-widest text-ink-muted">Signature</div>

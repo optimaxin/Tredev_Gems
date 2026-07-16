@@ -174,6 +174,11 @@ export default function OrderConfirmed() {
                 {order.shipping.shipping_state ? `, ${order.shipping.shipping_state}` : ""}
               </div>
             )}
+            {order.estimated_delivery_date && (
+              <div className="mt-1 text-xs text-ink-muted flex items-center gap-1">
+                <Truck size={13} weight="duotone" /> Est. delivery by {new Date(order.estimated_delivery_date).toLocaleDateString()}
+              </div>
+            )}
           </motion.div>
         )}
 

@@ -16,12 +16,18 @@ export default function AdminInventory() {
   };
   useEffect(() => { refresh(); }, [sel]);
 
-  const addUnit = async (product_id) => {
-    const serial = prompt("Serial number?");
-    if (!serial) return;
+  const addUnits = async (product_id) => {
+    const input = prompt("How many pieces to add? (serial numbers are auto-generated)");
+    if (input == null) return;
+    const quantity = parseInt(input, 10);
+    if (!Number.isInteger(quantity) || quantity < 1) {
+      toast.error("Enter a whole number of pieces (1 or more)");
+      return;
+    }
     try {
-      await api.post("/admin/units", { product_id, serial });
-      toast.success("Unit added"); refresh();
+      const { data } = await api.post("/admin/units/bulk", { product_id, quantity });
+      toast.success(`${data.count} piece${data.count === 1 ? "" : "s"} added to inventory`);
+      refresh();
     } catch (e) { toast.error(e.response?.data?.detail); }
   };
 
@@ -52,7 +58,7 @@ export default function AdminInventory() {
           <option value="">All products</option>
           {products.map((p) => <option key={p.product_id} value={p.product_id}>{p.name}</option>)}
         </select>
-        {sel && <button onClick={() => addUnit(sel)} className="text-xs text-maroon underline inline-flex items-center gap-1"><PlusCircle size={12} /> Add unit</button>}
+        {sel && <button onClick={() => addUnits(sel)} className="text-xs text-maroon underline inline-flex items-center gap-1"><PlusCircle size={12} /> Add stock</button>}
       </div>
 
       <div className="gold-line bg-ivory overflow-x-auto">
