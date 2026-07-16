@@ -1874,6 +1874,39 @@ async def checkout_pay(order_id: str, request: Request,
     if order.get("status") != "pending_payment":
         raise HTTPException(409, f"Order is {order.get('status')} — not payable")
 
+    # Reserve, THEN take payment. A pending order's original 15-min hold may have
+    # expired and released its unit(s) back to stock (reservation -> 'expired',
+    # product_unit -> 'in_stock'). Re-acquire each still-available unit before creating
+    # a payable Razorpay order; refuse if any unit was sold or grabbed by someone else —
+    # a serialized piece can't be sold twice. This is what lets _mark_paid (which
+    # consumes 'active' reservations) succeed at verify time instead of 409-ing.
+    serialized = [li for li in order.get("items", []) if li.get("unit_id")]
+    if serialized:
+        cart = await _get_or_create_cart(user_id, request.cookies.get("gemora_anon"))
+        async with db.transaction() as conn:
+            for li in serialized:
+                unit_id = li["unit_id"]
+                held = await conn.fetchval(
+                    "SELECT id FROM reservations WHERE product_unit_id=$1::uuid AND status='active'",
+                    unit_id)
+                if held:
+                    continue  # still actively held for this purchase — nothing to do
+                # Grab it back only if it is genuinely free. The status='in_stock' guard
+                # makes this atomic against a concurrent buyer.
+                got = await conn.fetchval(
+                    "UPDATE product_units SET status='reserved' WHERE id=$1::uuid AND status='in_stock' RETURNING id",
+                    unit_id)
+                if not got:
+                    raise HTTPException(
+                        409, f"“{li.get('name', 'This item')}” is no longer available — "
+                             "its reservation expired and the piece was taken.")
+                await conn.execute(
+                    """INSERT INTO reservations (id, product_unit_id, cart_id, user_id,
+                                                 status, expires_at)
+                       VALUES ($1,$2::uuid,$3::uuid,$4::uuid,'active',$5)""",
+                    uuid.uuid4(), unit_id, cart["cart_id"], order.get("user_id"),
+                    now() + timedelta(minutes=15))
+
     rp_key = os.environ.get("RAZORPAY_KEY_ID", "")
     rp_secret = os.environ.get("RAZORPAY_KEY_SECRET", "")
     if rp_key and rp_secret:
