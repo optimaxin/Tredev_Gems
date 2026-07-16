@@ -1845,6 +1845,13 @@ async def checkout_verify(body: RazorpayVerifyIn):
     order = await _load_order(body.order_id)
     if not order:
         raise HTTPException(404, "Order not found")
+    # Idempotent: the payment.captured webhook may have already marked this order paid
+    # in a race with this client-side verify call. _mark_paid is not safe to run twice
+    # (it consumes 'active' reservations and 409s once they're already consumed), so
+    # short-circuit when the order is already paid — the payment IS complete. Mirrors
+    # the same status guard the webhook uses above.
+    if order.get("status") == "paid":
+        return order
     return await _mark_paid(order, body.razorpay_payment_id)
 
 

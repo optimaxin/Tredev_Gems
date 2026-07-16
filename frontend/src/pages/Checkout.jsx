@@ -42,6 +42,9 @@ export default function Checkout() {
         prefill: { name: form.shipping_name, email: form.email, contact: form.shipping_phone },
         theme: { color: "#722F37" },
         handler: async (rp) => {
+          // Only the verify call itself determines success/failure. Post-success
+          // steps (refresh/nav) must never surface a "failed" toast — the payment
+          // is already done by then.
           try {
             await api.post("/checkout/verify", {
               order_id: data.order.order_id,
@@ -49,12 +52,13 @@ export default function Checkout() {
               razorpay_payment_id: rp.razorpay_payment_id,
               razorpay_signature: rp.razorpay_signature,
             });
-            toast.success("Payment verified");
-            await refresh();
-            nav(`/account?order=${data.order.order_id}`);
           } catch (err) {
             toast.error("Payment verification failed");
+            return;
           }
+          toast.success("Payment verified");
+          try { await refresh(); } catch (_) {}
+          nav(`/account?order=${data.order.order_id}`);
         },
       };
       if (!window.Razorpay) {
