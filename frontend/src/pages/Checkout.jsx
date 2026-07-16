@@ -28,7 +28,7 @@ export default function Checkout() {
         const paid = await api.post(`/checkout/mock-pay/${data.order.order_id}`);
         toast.success("Payment complete (test mode)");
         await refresh();
-        nav(`/account?order=${paid.data.order_id}`);
+        nav(`/order-confirmed/${paid.data.order_id}`);
         return;
       }
       // Real Razorpay
@@ -58,7 +58,7 @@ export default function Checkout() {
           }
           toast.success("Payment verified");
           try { await refresh(); } catch (_) {}
-          nav(`/account?order=${data.order.order_id}`);
+          nav(`/order-confirmed/${data.order.order_id}`);
         },
       };
       if (!window.Razorpay) {
