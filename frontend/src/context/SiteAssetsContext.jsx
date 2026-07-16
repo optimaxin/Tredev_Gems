@@ -33,9 +33,18 @@ function readCachedAssets() {
   } catch (_) { return {}; }
 }
 
+// How long a first-time visitor (no cache) will wait for the real image map before
+// we give up and render with defaults. Keeps a slow/unreachable API from hanging the
+// page while still avoiding the placeholder→real swap in the normal case.
+const FIRST_PAINT_TIMEOUT_MS = 1500;
+
 export function SiteAssetsProvider({ children }) {
   // Lazy initialiser runs synchronously before first paint — no flash on refresh.
   const [assets, setAssets] = useState(readCachedAssets);
+  // "Ready" means we may safely paint. Returning visitors (cache present) are ready
+  // immediately. First-time visitors hold briefly until /site-assets resolves so a
+  // shared link never shows the placeholder image and then swaps to the real one.
+  const [ready, setReady] = useState(() => Object.keys(readCachedAssets()).length > 0);
 
   const refresh = useCallback(async () => {
     try {
@@ -43,11 +52,22 @@ export function SiteAssetsProvider({ children }) {
       setAssets(absolutizeMap(data));
       try { localStorage.setItem(LS_KEY, JSON.stringify(data || {})); } catch (_) { /* quota / private mode */ }
     } catch (_) { /* silent — keep cached values / fall back to defaults */ }
+    finally { setReady(true); }
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
 
+  // Safety net: never hold the first paint longer than the timeout.
+  useEffect(() => {
+    if (ready) return undefined;
+    const t = setTimeout(() => setReady(true), FIRST_PAINT_TIMEOUT_MS);
+    return () => clearTimeout(t);
+  }, [ready]);
+
   const getAsset = useCallback((slot, fallback) => assets[slot] || fallback, [assets]);
+
+  // Brief, on-brand hold on a first visit — avoids painting wrong images.
+  if (!ready) return <div className="min-h-screen bg-ivory" aria-busy="true" aria-label="Loading" />;
 
   return (
     <SiteAssetsCtx.Provider value={{ assets, getAsset, refresh }}>

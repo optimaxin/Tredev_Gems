@@ -27,7 +27,6 @@ import Consultation from "@/pages/Consultation";
 import Astrologer from "@/pages/Astrologer";
 import AstrologerLogin from "@/pages/AstrologerLogin";
 import AstrologerSetPassword from "@/pages/AstrologerSetPassword";
-import { api } from "@/lib/api";
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -82,7 +81,10 @@ function AuthRouter() {
 }
 
 function App() {
-  useEffect(() => { api.post("/dev/seed").catch(() => {}); }, []);
+  // NOTE: previously this fired POST /dev/seed on every page load, which re-inserted
+  // the demo catalogue (and re-created any demo product an admin had deleted) on each
+  // visit. Seeding is a one-time/dev action, not something the live app should do —
+  // removed. Seed manually against a fresh DB if ever needed.
   return (
     <div className="App">
       <BrowserRouter>

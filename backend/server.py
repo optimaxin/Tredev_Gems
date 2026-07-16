@@ -3615,9 +3615,16 @@ async def admin_media_delete(media_id: str, _: str = Depends(require_admin)):
 
 @api.get("/media/file/{path:path}")
 async def media_serve(path: str):
-    """Public passthrough — image tags fetch here. Streams from storage."""
+    """Public passthrough — image tags fetch here. Streams from storage.
+
+    Object keys are content-unique (uuid), so a given URL's bytes never change:
+    cache them for a year and mark immutable so browsers/CDNs stop re-fetching on
+    every page view. (Deletes soft-delete the DB row, not the object, so a still-
+    referenced URL keeps resolving.)"""
     data, ct = await _storage_get(path)
-    return FastAPIResponse(content=data, media_type=ct, headers={"Cache-Control": "public, max-age=3600"})
+    return FastAPIResponse(content=data, media_type=ct, headers={
+        "Cache-Control": "public, max-age=31536000, immutable",
+    })
 
 
 # ── Site assets (slot → media) ───────────────────────────────────────────────
