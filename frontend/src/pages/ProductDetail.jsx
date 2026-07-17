@@ -3,7 +3,7 @@ import { useParams, Link, useNavigate, useLocation } from "react-router-dom";
 import { api, formatINR } from "@/lib/api";
 import { useCart } from "@/context/CartContext";
 import { toast } from "sonner";
-import { ShieldCheck, Certificate, QrCode, Fingerprint, Play, HandHeart, ShoppingBag, Heart, Plus, Minus } from "@phosphor-icons/react";
+import { ShieldCheck, Certificate, QrCode, Fingerprint, Play, HandHeart, ShoppingBag, Heart, Plus, Minus, CaretLeft, CaretRight } from "@phosphor-icons/react";
 
 export default function ProductDetail() {
   const { slug } = useParams();
@@ -14,6 +14,7 @@ export default function ProductDetail() {
   const [reviews, setReviews] = useState([]);
   const [qty, setQty] = useState(1);
   const [tab, setTab] = useState("trust");
+  const [active, setActive] = useState(0); // selected gallery image
   const cart = useCart();
   const nav = useNavigate();
 
@@ -24,6 +25,7 @@ export default function ProductDetail() {
     if (pre && pre.slug === slug) setP(pre);
     else setP((cur) => (cur && cur.slug === slug ? cur : null)); // never flash a different product
     setQty(1);
+    setActive(0); // reset gallery to the first photo for the new product
 
     api.get(`/products/${slug}`).then(({ data }) => {
       if (cancelled) return;
@@ -56,17 +58,75 @@ export default function ProductDetail() {
     <div className="mx-auto max-w-7xl px-6 lg:px-10 py-12">
       <div className="grid lg:grid-cols-2 gap-14">
         {/* Gallery */}
-        <div>
-          <div className="aspect-square gold-line-strong overflow-hidden bg-cream">
-            <img src={p.images?.[0]} alt={p.name} className="w-full h-full object-cover" />
-          </div>
-          <div className="mt-3 grid grid-cols-4 gap-3">
-            {(p.images || []).slice(0, 4).map((im, i) => (
-              <div key={i} className="aspect-square gold-line overflow-hidden">
-                <img src={im} className="w-full h-full object-cover" alt="" />
-              </div>
-            ))}
-          </div>
+        <div className="lg:sticky lg:top-24 h-fit">
+          {(() => {
+            const images = (p.images || []).filter(Boolean);
+            const idx = Math.min(active, Math.max(0, images.length - 1));
+            const go = (d) => setActive((images.length + idx + d) % images.length);
+            return (
+              <>
+                <div className="relative aspect-square gold-line-strong overflow-hidden bg-cream group">
+                  {images.length > 0 ? (
+                    <img
+                      key={idx}
+                      src={images[idx]}
+                      alt={`${p.name} — photo ${idx + 1}`}
+                      data-testid="product-main-image"
+                      className="w-full h-full object-cover img-hover fade-up"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-ink-muted">No image</div>
+                  )}
+
+                  {images.length > 1 && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => go(-1)}
+                        aria-label="Previous photo"
+                        className="absolute left-3 top-1/2 -translate-y-1/2 w-10 h-10 bg-ivory/85 backdrop-blur border border-gold/40 text-maroon-deep flex items-center justify-center hover:bg-ivory transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
+                      >
+                        <CaretLeft size={18} weight="bold" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => go(1)}
+                        aria-label="Next photo"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 w-10 h-10 bg-ivory/85 backdrop-blur border border-gold/40 text-maroon-deep flex items-center justify-center hover:bg-ivory transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
+                      >
+                        <CaretRight size={18} weight="bold" />
+                      </button>
+                      <div className="absolute bottom-3 right-3 bg-maroon-deep/80 text-ivory text-[11px] font-mono px-2 py-1 tracking-widest">
+                        {idx + 1} / {images.length}
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {images.length > 1 && (
+                  <div className="mt-3 grid grid-cols-5 gap-3">
+                    {images.map((im, i) => (
+                      <button
+                        type="button"
+                        key={i}
+                        onClick={() => setActive(i)}
+                        aria-label={`View photo ${i + 1}`}
+                        aria-current={i === idx}
+                        data-testid={`product-thumb-${i}`}
+                        className={`aspect-square overflow-hidden transition-all ${
+                          i === idx
+                            ? "gold-line-strong ring-2 ring-maroon ring-offset-2 ring-offset-ivory"
+                            : "gold-line opacity-60 hover:opacity-100"
+                        }`}
+                      >
+                        <img src={im} className="w-full h-full object-cover" alt="" loading="lazy" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </div>
 
         {/* Info */}
