@@ -3448,6 +3448,24 @@ async def admin_audit_log(_: str = Depends(require_owner), limit: int = 200):
              FROM admin_events ORDER BY created_at DESC LIMIT $1""", limit)
 
 
+@api.post("/admin/inventory/purge")
+async def admin_purge_inventory(actor: str = Depends(require_owner)):
+    """Wipe ALL unsold inventory (owner-confirmed reset): every in-stock unit across
+    every product is removed, and non-serialized stock counts are zeroed. Sold units are
+    left untouched — they belong to completed orders and their certificates. Products
+    themselves stay; only their sellable stock is cleared."""
+    async with db.transaction() as conn:
+        unsold = await conn.fetch(
+            "SELECT id::text AS id FROM product_units WHERE sold_order_item_id IS NULL")
+        removed = await _delete_units(conn, [r["id"] for r in unsold])
+        # Non-serialized products carry stock on the variant, not as units.
+        await conn.execute(
+            "UPDATE product_variants SET stock_qty=0, updated_at=now() "
+            "WHERE stock_qty IS NOT NULL AND stock_qty <> 0")
+    await audit_log(actor, "inventory.purge_all", "", {"units_removed": removed})
+    return {"ok": True, "units_removed": removed}
+
+
 @api.get("/admin/inventory/low-stock")
 async def admin_low_stock(_: str = Depends(require_perm("inventory")), threshold: int = 2):
     """List serialised products where available units ≤ threshold."""
@@ -3596,13 +3614,78 @@ async def admin_update_product(product_id: str, body: ProductUpdateIn, _: str = 
     return _shape_product(row)
 
 
+async def _delete_units(conn, unit_ids: list[str]) -> int:
+    """Hard-delete product_units and everything hanging off them, in FK order.
+
+    Only call with units that were never sold — a sold unit is referenced by an
+    order_item (NO ACTION) and belongs to order history. In the current flow an unsold
+    in-stock unit has no certificate/QR (those are issued at dispatch), so most of these
+    deletes are no-ops; they're here so the delete is correct even for legacy rows."""
+    if not unit_ids:
+        return 0
+    ids = unit_ids
+    # qr_codes -> authenticity_certificates -> lab/energization: child before parent.
+    await conn.execute("DELETE FROM qr_codes WHERE product_unit_id = ANY($1::uuid[])", ids)
+    await conn.execute("DELETE FROM authenticity_certificates WHERE product_unit_id = ANY($1::uuid[])", ids)
+    for tbl in ("lab_certifications", "energization_certificates", "pooja_recordings",
+                "returns", "reservations", "temple_associations", "cart_items"):
+        await conn.execute(f"DELETE FROM {tbl} WHERE product_unit_id = ANY($1::uuid[])", ids)
+    n = await conn.fetchval(
+        "WITH d AS (DELETE FROM product_units WHERE id = ANY($1::uuid[]) RETURNING 1) "
+        "SELECT count(*) FROM d", ids)
+    return n or 0
+
+
+async def _purge_product(conn, product_id: str) -> None:
+    """Remove a product and its remaining rows entirely. Only valid once its units are
+    gone and it has never been in an order (order_items is NO ACTION → the product row
+    can't be deleted while any order references it). jewellery_designs / verified_items
+    / wishlist cascade on the products delete; everything else is explicit."""
+    await conn.execute("DELETE FROM temple_associations WHERE product_id=$1::uuid", product_id)
+    await conn.execute("DELETE FROM digital_assets WHERE product_id=$1::uuid", product_id)
+    await conn.execute(
+        """DELETE FROM cart_items WHERE variant_id IN
+             (SELECT id FROM product_variants WHERE product_id=$1::uuid)""", product_id)
+    await conn.execute("DELETE FROM product_variants WHERE product_id=$1::uuid", product_id)
+    for tbl in ("book_details", "gemstone_details", "idol_details", "prashad_details",
+                "rudraksha_details", "yantra_details", "product_media",
+                "product_questions", "reviews"):
+        await conn.execute(f"DELETE FROM {tbl} WHERE product_id=$1::uuid", product_id)
+    await conn.execute("DELETE FROM products WHERE id=$1::uuid", product_id)
+
+
 @api.delete("/admin/products/{product_id}")
 async def admin_delete_product(product_id: str, _: str = Depends(require_perm("products"))):
-    # Archive, not delete: products are referenced by order_items.
-    await db.execute(
-        "UPDATE products SET status='archived', updated_at=now() WHERE id=$1::uuid",
-        product_id)
-    return {"ok": True}
+    """Remove a product and its inventory. A product that's been ordered can't be
+    deleted outright (order history references it), so it's archived and its *unsold*
+    stock is cleared — no active product ever leaves sellable inventory behind. A
+    product that was never ordered is deleted entirely, freeing its slug."""
+    async with db.transaction() as conn:
+        exists = await conn.fetchval(
+            "SELECT 1 FROM products WHERE id=$1::uuid AND deleted_at IS NULL", product_id)
+        if not exists:
+            raise HTTPException(404, "Product not found")
+        ordered = await conn.fetchval(
+            "SELECT 1 FROM order_items WHERE product_id=$1::uuid LIMIT 1", product_id)
+        if ordered:
+            unsold = await conn.fetch(
+                """SELECT id::text AS id FROM product_units
+                    WHERE product_id=$1::uuid AND sold_order_item_id IS NULL""", product_id)
+            removed = await _delete_units(conn, [r["id"] for r in unsold])
+            await conn.execute(
+                "UPDATE products SET status='archived', updated_at=now() WHERE id=$1::uuid",
+                product_id)
+            # Non-serialized stock lives on the variant — zero it so nothing is sellable.
+            await conn.execute(
+                "UPDATE product_variants SET stock_qty=0, is_active=false, updated_at=now() "
+                "WHERE product_id=$1::uuid", product_id)
+            return {"ok": True, "mode": "archived", "units_removed": removed}
+        # Never ordered — remove it and all its inventory outright.
+        all_units = await conn.fetch(
+            "SELECT id::text AS id FROM product_units WHERE product_id=$1::uuid", product_id)
+        removed = await _delete_units(conn, [r["id"] for r in all_units])
+        await _purge_product(conn, product_id)
+        return {"ok": True, "mode": "deleted", "units_removed": removed}
 
 
 # --- Categories CRUD (perm: categories) ---------------------------------------

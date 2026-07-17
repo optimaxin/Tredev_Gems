@@ -2,8 +2,10 @@ import React, { useEffect, useState } from "react";
 import { api, formatINR } from "@/lib/api";
 import { toast } from "sonner";
 import { PlusCircle, ShieldCheck } from "@phosphor-icons/react";
+import { useAuth } from "@/context/AuthContext";
 
 export default function AdminInventory() {
+  const { user } = useAuth();
   const [products, setProducts] = useState([]);
   const [units, setUnits] = useState([]);
   const [certs, setCerts] = useState([]);
@@ -31,6 +33,16 @@ export default function AdminInventory() {
     } catch (e) { toast.error(e.response?.data?.detail); }
   };
 
+  const purgeAll = async () => {
+    if (!confirm("Purge ALL inventory? Every unsold unit across every product is removed and non-serialized stock is zeroed. Sold units (in completed orders) are kept. This cannot be undone.")) return;
+    if (!confirm("Are you absolutely sure? This wipes your entire sellable stock.")) return;
+    try {
+      const { data } = await api.post("/admin/inventory/purge");
+      toast.success(`Purged · ${data.units_removed} unit${data.units_removed === 1 ? "" : "s"} removed`);
+      refresh();
+    } catch (e) { toast.error(e.response?.data?.detail); }
+  };
+
   const issueCert = async (unit_id) => {
     try {
       await api.post("/admin/certificates/issue", {
@@ -49,8 +61,17 @@ export default function AdminInventory() {
 
   return (
     <div>
-      <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">Vault</div>
-      <h1 className="font-display text-4xl text-ink mt-1 mb-6">Inventory</h1>
+      <div className="flex items-baseline justify-between mb-6 gap-3 flex-wrap">
+        <div>
+          <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">Vault</div>
+          <h1 className="font-display text-4xl text-ink mt-1">Inventory</h1>
+        </div>
+        {user?.role === "owner" && (
+          <button onClick={purgeAll} data-testid="admin-inventory-purge" className="text-xs uppercase tracking-widest border border-revoked text-revoked px-4 py-2 hover:bg-revoked hover:text-ivory transition-colors">
+            Purge all inventory
+          </button>
+        )}
+      </div>
 
       <div className="flex items-center gap-2 mb-4">
         <span className="text-xs uppercase tracking-widest text-ink-muted">Filter</span>
