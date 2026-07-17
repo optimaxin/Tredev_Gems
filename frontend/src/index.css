@@ -188,6 +188,30 @@ body {
   .shimmer-text { color: #722F37; }
 }
 
+/* ===== Product page — trust marquee, glow sweep, sticky bar ===== */
+@keyframes trust-marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+.trust-marquee-track { animation: trust-marquee 38s linear infinite; }
+.trust-marquee-wrap:hover .trust-marquee-track { animation-play-state: paused; }
+
+/* slow drifting mandala behind the provenance band */
+@keyframes drift-slow {
+  0%, 100% { transform: translate3d(0,0,0) scale(1); }
+  50%      { transform: translate3d(0,-14px,0) scale(1.03); }
+}
+.drift-slow { animation: drift-slow 9s ease-in-out infinite; }
+
+/* the gold line that draws down the provenance timeline */
+@keyframes trace-line { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+.trace-line { transform-origin: top; animation: trace-line 1.4s ease-out both; }
+
+@keyframes sticky-rise { from { transform: translateY(100%); } to { transform: translateY(0); } }
+.sticky-rise { animation: sticky-rise 0.35s cubic-bezier(.2,.8,.2,1) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .trust-marquee-track, .drift-slow, .trace-line, .sticky-rise { animation: none !important; }
+  .trace-line { transform: scaleY(1); }
+}
+
 /* Devanagari readability tweak */
 .hindi { font-family: "Tiro Devanagari Sanskrit", serif; font-weight: 400; }
 

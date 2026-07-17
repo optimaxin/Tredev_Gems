@@ -105,12 +105,9 @@ export default function AdminProducts() {
             type: g.type,
             ...(g.show_if ? { show_if: g.show_if } : {}),
             ...(g.optional ? { optional: true } : {}),
+            ...(g.priced === false ? { priced: false } : {}),
             choices: (g.choices || [])
-              .map((c) => ({
-                label: c.label.trim(),
-                surcharge: surchargeToPaise(c.surcharge),
-                ...(c.surcharge_pct ? { surcharge_pct: Number(c.surcharge_pct) } : {}),
-              }))
+              .map((c) => ({ label: c.label.trim(), surcharge: surchargeToPaise(c.surcharge) }))
               .filter((c) => c.label),
           })),
         },
@@ -234,57 +231,69 @@ export default function AdminProducts() {
               </div>
             ) : (
               <div className="space-y-4">
-                {form.groups.map((g, gi) => (
-                  <div key={g.key} className="gold-line bg-cream p-3" data-testid={`product-group-${g.key}`}>
-                    <div className="flex items-baseline justify-between mb-2 gap-2 flex-wrap">
-                      <div className="text-xs uppercase tracking-widest text-maroon">{g.label}</div>
-                      <div className="text-[10px] font-mono text-ink-muted">
-                        {g.show_if && `shown only for ${g.show_if.values.join(" / ")} · `}{g.type}
+                {form.groups.map((g, gi) => {
+                  // Form and Metal are unpriced — they only decide which designs apply,
+                  // and the design carries the price. No ₹ inputs for those.
+                  const priced = g.priced !== false;
+                  return (
+                    <div key={g.key} className="gold-line bg-cream p-3" data-testid={`product-group-${g.key}`}>
+                      <div className="flex items-baseline justify-between mb-2 gap-2 flex-wrap">
+                        <div className="text-xs uppercase tracking-widest text-maroon">{g.label}</div>
+                        <div className="text-[10px] font-mono text-ink-muted">
+                          {g.show_if && `shown only for ${g.show_if.values.join(" / ")} · `}{g.type}
+                        </div>
                       </div>
-                    </div>
-                    <div className="space-y-2">
-                      {g.choices.map((c, ci) => {
-                        const isDefault = ci === 0;
-                        return (
-                          <div key={ci} className="flex gap-2 items-center">
-                            <input
-                              value={c.label}
-                              onChange={(e) => setChoice(gi, ci, "label", e.target.value)}
-                              placeholder="Option label"
-                              data-testid={`product-${g.key}-label-${ci}`}
-                              className="flex-1 gold-line bg-ivory px-3 py-2 outline-none focus:border-maroon text-sm"
-                            />
-                            <div className="flex gold-line bg-ivory overflow-hidden focus-within:border-maroon w-36 shrink-0">
-                              <span className="px-2 py-2 bg-cream text-ink-soft border-r border-gold/30 font-serifd text-sm">₹</span>
-                              {isDefault ? (
-                                <span className="flex-1 px-2 py-2 text-xs text-ink-muted self-center">Included</span>
+                      {!priced && (
+                        <div className="text-[10px] text-ink-muted mb-2">
+                          No charge here — priced per design in <strong>Designs</strong>.
+                        </div>
+                      )}
+                      <div className="space-y-2">
+                        {g.choices.map((c, ci) => {
+                          const isDefault = ci === 0;
+                          return (
+                            <div key={ci} className="flex gap-2 items-center">
+                              <input
+                                value={c.label}
+                                onChange={(e) => setChoice(gi, ci, "label", e.target.value)}
+                                placeholder="Option label"
+                                data-testid={`product-${g.key}-label-${ci}`}
+                                className="flex-1 gold-line bg-ivory px-3 py-2 outline-none focus:border-maroon text-sm"
+                              />
+                              {priced && (
+                                <div className="flex gold-line bg-ivory overflow-hidden focus-within:border-maroon w-36 shrink-0">
+                                  <span className="px-2 py-2 bg-cream text-ink-soft border-r border-gold/30 font-serifd text-sm">₹</span>
+                                  {isDefault ? (
+                                    <span className="flex-1 px-2 py-2 text-xs text-ink-muted self-center">Included</span>
+                                  ) : (
+                                    <input
+                                      type="number" min="0" step="0.01" inputMode="decimal"
+                                      value={c.surcharge}
+                                      onChange={(e) => setChoice(gi, ci, "surcharge", e.target.value)}
+                                      placeholder="0"
+                                      data-testid={`product-${g.key}-surcharge-${ci}`}
+                                      className="flex-1 px-2 py-2 outline-none text-sm"
+                                    />
+                                  )}
+                                </div>
+                              )}
+                              {!isDefault ? (
+                                <button type="button" onClick={() => removeChoice(gi, ci)} className="text-ink-muted hover:text-revoked shrink-0">
+                                  <Trash size={14} />
+                                </button>
                               ) : (
-                                <input
-                                  type="number" min="0" step="0.01" inputMode="decimal"
-                                  value={c.surcharge}
-                                  onChange={(e) => setChoice(gi, ci, "surcharge", e.target.value)}
-                                  placeholder="0"
-                                  data-testid={`product-${g.key}-surcharge-${ci}`}
-                                  className="flex-1 px-2 py-2 outline-none text-sm"
-                                />
+                                <span className="w-[14px] shrink-0" />
                               )}
                             </div>
-                            {!isDefault ? (
-                              <button type="button" onClick={() => removeChoice(gi, ci)} className="text-ink-muted hover:text-revoked shrink-0">
-                                <Trash size={14} />
-                              </button>
-                            ) : (
-                              <span className="w-[14px] shrink-0" />
-                            )}
-                          </div>
-                        );
-                      })}
+                          );
+                        })}
+                      </div>
+                      <button type="button" onClick={() => addChoice(gi)} data-testid={`product-${g.key}-add`} className="mt-2 text-xs text-maroon underline inline-flex items-center gap-1">
+                        <PlusCircle size={12} /> Add option
+                      </button>
                     </div>
-                    <button type="button" onClick={() => addChoice(gi)} data-testid={`product-${g.key}-add`} className="mt-2 text-xs text-maroon underline inline-flex items-center gap-1">
-                      <PlusCircle size={12} /> Add option
-                    </button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

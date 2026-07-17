@@ -471,9 +471,6 @@ class LoginIn(BaseModel):
 class OptionChoiceIn(BaseModel):
     label: str
     surcharge: int = 0  # paise, added to base price when this choice is selected
-    # Jewellery making charges are quoted as a % of the stone's base price ("+15%
-    # Making Charges"), not a flat amount. Both can be set; both are added.
-    surcharge_pct: float = 0.0
 
 
 class OptionShowIfIn(BaseModel):
@@ -496,6 +493,10 @@ class OptionGroupIn(BaseModel):
     # Optional groups have no default: nothing is preselected and the buyer may leave
     # them blank (the Ring Size System starts on "Select Ring System").
     optional: bool = False
+    # Unpriced groups never carry a surcharge — Form and Metal just decide *what* is
+    # being made; the money is on the Design the buyer then picks. The admin form hides
+    # the ₹ inputs for these and any surcharge sent is zeroed out.
+    priced: bool = True
 
 
 class VariantOptionsIn(BaseModel):
@@ -1108,7 +1109,7 @@ async def get_product(slug: str):
     # standard ring sizes) so the page renders the complete option set.
     p["variant_options"] = _effective_variant_options(
         db.CATEGORY_TO_DB.get(p["category"], p["category"]), p.get("variant_options"),
-        await _get_design_groups())
+        await _design_groups_for_product(p["product_id"]))
     return p
 
 
@@ -1231,12 +1232,14 @@ _CATEGORY_OPTION_TEMPLATES: dict[str, list[dict]] = {
              {"label": "SHUDH - Vedic Pooja with Video (Extra 2 Day)", "surcharge": 0},
              {"label": "SHUDH - Prana Pratishta Pooja with Video (Extra 2 Day)", "surcharge": 0},
          ]},
-        {"key": "form", "label": "Form", "type": "buttons",
+        # Form and Metal are unpriced: they narrow down *which* designs apply, and the
+        # chosen design carries the whole mounting price for that metal.
+        {"key": "form", "label": "Form", "type": "buttons", "priced": False,
          "choices": [{"label": "Loose Gemstone", "surcharge": 0},
                      {"label": "Ring", "surcharge": 0},
                      {"label": "Pendant", "surcharge": 0}]},
         # A loose stone isn't mounted, so metal only matters once it's a Ring/Pendant.
-        {"key": "metal", "label": "Metal", "type": "buttons",
+        {"key": "metal", "label": "Metal", "type": "buttons", "priced": False,
          "show_if": {"group": "form", "values": ["Ring", "Pendant"]},
          "choices": [{"label": m, "surcharge": 0} for m in _METALS]},
     ],
@@ -1273,11 +1276,11 @@ def _normalize_variant_options(vo: dict) -> dict:
 
     Surcharges are clamped non-negative and stored in paise (the API's money unit —
     jsonb has no numeric type of its own, so this keeps the same convention as every
-    other price field); surcharge_pct is a percentage of the base price, for jewellery
-    making charges. The first choice of each group is forced free because it's the
+    other price field). The first choice of each group is forced free because it's the
     default a buyer lands on — the base price already covers it — except for `optional`
-    groups, which preselect nothing. Groups with fewer than two choices are dropped: a
-    selector with one option isn't a choice, it's noise.
+    groups, which preselect nothing. Unpriced groups (Form, Metal) are zeroed entirely.
+    Groups with fewer than two choices are dropped: a selector with one option isn't a
+    choice, it's noise.
     """
     groups = []
     for g in (vo.get("groups") or []):
@@ -1285,14 +1288,14 @@ def _normalize_variant_options(vo: dict) -> dict:
         label = (g.get("label") or "").strip()
         if not key or not label:
             continue
+        priced = g.get("priced", True)
         choices = []
         for c in (g.get("choices") or []):
             clabel = (c.get("label") or "").strip()
             if not clabel:
                 continue
             choice = {"label": clabel,
-                      "surcharge": max(0, int(c.get("surcharge") or 0)),
-                      "surcharge_pct": max(0.0, round(float(c.get("surcharge_pct") or 0), 2))}
+                      "surcharge": max(0, int(c.get("surcharge") or 0)) if priced else 0}
             for extra in ("image", "note"):  # carried through for the images grid
                 if c.get(extra):
                     choice[extra] = c[extra]
@@ -1308,11 +1311,12 @@ def _normalize_variant_options(vo: dict) -> dict:
         optional = bool(g.get("optional"))
         if not optional:
             deduped[0]["surcharge"] = 0  # the default is always free
-            deduped[0]["surcharge_pct"] = 0.0
         gtype = g.get("type") if g.get("type") in _OPTION_GROUP_TYPES else "dropdown"
         out = {"key": key, "label": label, "type": gtype, "choices": deduped}
         if optional:
             out["optional"] = True
+        if not priced:
+            out["priced"] = False
         si = g.get("show_if")
         if si and (si.get("group") or "").strip():
             out["show_if"] = {"group": si["group"].strip(), "values": list(si.get("values") or [])}
@@ -1321,12 +1325,19 @@ def _normalize_variant_options(vo: dict) -> dict:
 
 
 def _visible_groups(groups: list[dict], selected: Dict[str, str]) -> list[dict]:
-    """The groups that actually apply given the buyer's picks so far.
+    """The groups that actually apply given the buyer's picks so far, with each group's
+    choices narrowed to the ones available for those picks.
 
     A group with `show_if` only counts when its controlling group is itself visible AND
     currently holds one of the listed values — so Metal/Designs vanish for a Loose
     Gemstone, and the Indian size list vanishes unless the Indian system is chosen.
     Evaluated in declaration order, so a group can only depend on an earlier one.
+
+    Choices tagged with `metal` are filtered to the chosen metal. That's load-bearing,
+    not cosmetic: the same design code exists once per metal ("R14" in 18k and in 22k
+    are separate rows at different prices), and selected_options records only the label
+    — so without this filter, pricing would match whichever R14 came first and could
+    charge the gold price for a silver ring.
     """
     visible: list[dict] = []
     values: Dict[str, str] = {}
@@ -1336,12 +1347,16 @@ def _visible_groups(groups: list[dict], selected: Dict[str, str]) -> list[dict]:
             parent = si["group"]
             if parent not in values or values[parent] not in (si.get("values") or []):
                 continue  # parent hidden, unset, or holding a value that doesn't apply
+        choices = [c for c in (g.get("choices") or [])
+                   if not c.get("metal") or c["metal"] == values.get("metal")]
+        if not choices:
+            continue  # nothing available for this metal
+        g = {**g, "choices": choices}
         visible.append(g)
-        choices = g.get("choices") or []
         picked = selected.get(g["key"])
         if picked is not None and any(c["label"] == picked for c in choices):
             values[g["key"]] = picked
-        elif not g.get("optional") and choices:
+        elif not g.get("optional"):
             values[g["key"]] = choices[0]["label"]  # its default
     return visible
 
@@ -1375,11 +1390,6 @@ def _compute_variant_price(base_price: Decimal, variant_options: Optional[dict],
                     400, f"Unknown {g.get('label', g['key'])} option: {picked_label}")
         resolved[g["key"]] = choice["label"]
         total += db.to_amount(choice.get("surcharge") or 0)
-        pct = float(choice.get("surcharge_pct") or 0)
-        if pct:
-            # Making charges are quoted against the stone's own price, not the running
-            # total — so metal/pooja add-ons don't inflate the making charge.
-            total += (base_price * Decimal(str(pct)) / 100).quantize(Decimal("0.01"))
     return total, resolved
 
 
@@ -1408,18 +1418,15 @@ def _shape_selected_options(selected: Optional[dict], variant_options: Optional[
     return out
 
 
-async def _jewellery_design_groups(conn=None) -> list[dict]:
-    """The Designs pickers, built from the shared jewellery_designs catalog.
+def _build_design_groups(rows: list[dict]) -> list[dict]:
+    """jewellery_designs rows for ONE product -> its Designs pickers.
 
-    Designs live in one catalog rather than on each product, so a new design shows up
-    across every gemstone at once. Rings and pendants get separate groups because they
-    draw from different design sets. `metals` narrows a design to certain metals (empty
-    = all); the client filters the grid by the chosen metal.
+    Designs are per product — a sapphire offers the sapphire's ring/pendant designs, not
+    every gemstone's. There's one row per metal, each carrying the full flat price of
+    that mounting, which is why Form and Metal themselves are unpriced: pick Ring + 22k
+    Gold and the grid narrows to the 22k rows whose price already covers the gold.
+    Rings and pendants get separate groups because they draw from different sets.
     """
-    sql = """SELECT code, applies_to, image_url, making_charge_pct, metals, note
-               FROM jewellery_designs WHERE is_active
-              ORDER BY applies_to, sort_order, code"""
-    rows = db._rows(await conn.fetch(sql)) if conn else await db.fetch_all(sql)
     groups = []
     for form, key, label in (("ring", "ring_design", "Designs"),
                              ("pendant", "pendant_design", "Designs")):
@@ -1427,23 +1434,45 @@ async def _jewellery_design_groups(conn=None) -> list[dict]:
         for r in rows:
             if r["applies_to"] != form:
                 continue
-            c = {"label": r["code"], "surcharge": 0,
-                 "surcharge_pct": float(r["making_charge_pct"] or 0)}
+            c = {"label": r["code"], "surcharge": db.to_paise(r["price"]) or 0,
+                 "metal": r["metal"]}
             if r["image_url"]:
                 c["image"] = r["image_url"]
             if r["note"]:
                 c["note"] = r["note"]
-            if r["metals"]:
-                c["metals"] = list(r["metals"])
             choices.append(c)
-        if len(choices) < 2:
-            continue  # nothing meaningful to choose between
+        if not choices:
+            continue
         groups.append({
             "key": key, "label": label, "type": "images", "optional": True,
             "show_if": {"group": "form", "values": [form.capitalize()]},
             "choices": choices,
         })
     return groups
+
+
+async def _design_groups_for_products(product_ids: list[str], conn=None) -> dict[str, list[dict]]:
+    """Design groups for many products in one query, keyed by product id.
+
+    Batched because carts and order pages render many lines: fetching per line would be
+    an N+1 against a table every gemstone page touches."""
+    ids = [p for p in set(product_ids) if p]
+    if not ids:
+        return {}
+    sql = """SELECT product_id::text AS product_id, code, applies_to, metal,
+                    image_url, price, note
+               FROM jewellery_designs
+              WHERE is_active AND product_id = ANY($1::uuid[])
+              ORDER BY applies_to, sort_order, code"""
+    rows = (db._rows(await conn.fetch(sql, ids)) if conn else await db.fetch_all(sql, ids))
+    by_product: dict[str, list[dict]] = {}
+    for r in rows:
+        by_product.setdefault(r["product_id"], []).append(r)
+    return {pid: _build_design_groups(rs) for pid, rs in by_product.items()}
+
+
+async def _design_groups_for_product(product_id: str, conn=None) -> list[dict]:
+    return (await _design_groups_for_products([product_id], conn)).get(product_id, [])
 
 
 def _ring_size_groups() -> list[dict]:
@@ -1464,27 +1493,6 @@ def _ring_size_groups() -> list[dict]:
     ]
 
 
-_DESIGNS_CACHE: dict = {"at": 0.0, "groups": None}
-_DESIGNS_TTL = 60.0  # seconds
-
-
-async def _get_design_groups(conn=None) -> list[dict]:
-    """Design groups, memoised. Every product page, cart render and order shaping needs
-    them, but the catalog changes rarely — without this, shaping a page of orders would
-    re-query it once per line. Writes call _invalidate_designs() so the admin sees their
-    edit immediately."""
-    ts = time.monotonic()
-    if _DESIGNS_CACHE["groups"] is not None and ts - _DESIGNS_CACHE["at"] < _DESIGNS_TTL:
-        return _DESIGNS_CACHE["groups"]
-    groups = await _jewellery_design_groups(conn)
-    _DESIGNS_CACHE.update(at=ts, groups=groups)
-    return groups
-
-
-def _invalidate_designs() -> None:
-    _DESIGNS_CACHE.update(at=0.0, groups=None)
-
-
 def _effective_variant_options(category_key: str, variant_options: Optional[dict],
                                design_groups: Optional[list[dict]] = None) -> dict:
     """The product's stored groups plus the ones that aren't per-product data.
@@ -1494,7 +1502,7 @@ def _effective_variant_options(category_key: str, variant_options: Optional[dict
     of truth and means every read path (product page, cart pricing, order shaping) sees
     the same option set. Injected after Metal so the page reads Form → Metal → Designs →
     Ring Size, as designed. Pure/sync so the per-line shapers can call it freely; pass
-    design_groups from _get_design_groups().
+    design_groups from _design_groups_for_product(s)().
     """
     groups = copy.deepcopy((variant_options or {}).get("groups") or [])
     if category_key != "gemstone":
@@ -1505,25 +1513,6 @@ def _effective_variant_options(category_key: str, variant_options: Optional[dict
         idx = next((i for i, g in enumerate(groups) if g["key"] == "mantra_jaap"), len(groups))
     groups[idx:idx] = dynamic
     return {"groups": groups}
-
-
-def _assert_design_metal_ok(variant_options: dict, selected: Dict[str, str]) -> None:
-    """A design may be restricted to certain metals. Group-by-group pricing can't catch
-    that (it's a cross-group rule), so it's checked here — the UI hides the mismatch,
-    this stops a hand-crafted request from ordering, say, a gold-only design in silver."""
-    metal = selected.get("metal")
-    if not metal:
-        return
-    for g in (variant_options.get("groups") or []):
-        if g["key"] not in ("ring_design", "pendant_design"):
-            continue
-        picked = selected.get(g["key"])
-        if not picked:
-            continue
-        choice = next((c for c in g["choices"] if c["label"] == picked), None)
-        allowed = (choice or {}).get("metals") or []
-        if allowed and metal not in allowed:
-            raise HTTPException(400, f"Design {picked} isn't available in {metal}.")
 
 
 def _line_flags(selected: Optional[dict], variant_options: Optional[dict]) -> list[str]:
@@ -1907,10 +1896,12 @@ async def _cart_items(cart_id: str, conn=None) -> list[dict]:
          ORDER BY ci.created_at
     """
     rows = db._rows(await conn.fetch(sql, cart_id)) if conn else await db.fetch_all(sql, cart_id)
-    designs = await _get_design_groups(conn)  # once, not per line
+    # One designs query for the whole cart, not one per line.
+    designs = await _design_groups_for_products([r["product_id"] for r in rows], conn)
     out = []
     for r in rows:
-        effective = _effective_variant_options(r["category_key"], r["variant_options"], designs)
+        effective = _effective_variant_options(
+            r["category_key"], r["variant_options"], designs.get(r["product_id"]))
         out.append({**{k: v for k, v in r.items()
                        if k not in ("unit_price_snapshot", "variant_options", "category_key")},
                     "options_list": _shape_selected_options(r["options"], effective),
@@ -1979,10 +1970,10 @@ async def cart_add(body: CartAddIn, request: Request, response: Response, user_i
     # client only ever supplies which choices it wants, never a price. Priced against
     # the effective options so shared designs / ring sizes are honoured too.
     effective = _effective_variant_options(
-        product["category_key"], product["variant_options"], await _get_design_groups())
+        product["category_key"], product["variant_options"],
+        await _design_groups_for_product(product["product_id"]))
     unit_price, selected = _compute_variant_price(
         product["base_price"], effective, body.options)
-    _assert_design_metal_ok(effective, selected)
 
     anon_key = request.cookies.get("gemora_anon")
     if not user_id and not anon_key:
@@ -2206,10 +2197,11 @@ async def _order_items_by_id(order_ids: list[str]) -> dict[str, list[dict]]:
     rows = await db.fetch_all(
         _ORDER_ITEMS_COLS + " WHERE oi.order_id = ANY($1::uuid[]) ORDER BY oi.created_at",
         order_ids)
-    designs = await _get_design_groups()
+    designs = await _design_groups_for_products([i["product_id"] for i in rows])
     grouped: dict[str, list[dict]] = {}
     for i in rows:
-        grouped.setdefault(i["order_id"], []).append(_shape_order_item(i, designs))
+        grouped.setdefault(i["order_id"], []).append(
+            _shape_order_item(i, designs.get(i["product_id"])))
     return grouped
 
 
@@ -2227,8 +2219,8 @@ async def _shape_order(row: Optional[dict], conn=None, items: Optional[list] = N
     if items is None:
         sql = _ORDER_ITEMS_COLS + " WHERE oi.order_id = $1::uuid ORDER BY oi.created_at"
         rows = db._rows(await conn.fetch(sql, r["order_id"])) if conn else await db.fetch_all(sql, r["order_id"])
-        designs = await _get_design_groups(conn)
-        items = [_shape_order_item(i, designs) for i in rows]
+        designs = await _design_groups_for_products([i["product_id"] for i in rows], conn)
+        items = [_shape_order_item(i, designs.get(i["product_id"])) for i in rows]
     shipping = {k: r.pop(f"shipping_{k}") for k in
                 ("name", "phone", "address", "city", "state", "pincode")}
     shipping = {f"shipping_{k}": v for k, v in shipping.items()}
@@ -3620,65 +3612,77 @@ async def admin_list_categories(_: str = Depends(require_perm("categories"))):
 
 
 class DesignIn(BaseModel):
+    product_id: str                 # designs belong to one gemstone
     code: str                       # R14, P01 …
     applies_to: str                 # "ring" | "pendant"
+    metal: str                      # one row per metal; carries that metal's full price
+    price: int = 0                  # paise, added to the gemstone's price
     image_url: Optional[str] = None
-    making_charge_pct: float = 0.0  # % of the stone's base price
-    metals: List[str] = []          # empty = every metal
     note: Optional[str] = None      # e.g. "21k Advance only"
     is_active: bool = True
     sort_order: int = 0
 
 
+def _validate_design(body: DesignIn) -> None:
+    if body.applies_to not in ("ring", "pendant"):
+        raise HTTPException(400, "applies_to must be 'ring' or 'pendant'")
+    if body.metal not in _METALS:
+        raise HTTPException(400, f"Unknown metal: {body.metal}")
+    if body.price < 0:
+        raise HTTPException(400, "Price can't be negative")
+
+
 @api.get("/admin/designs")
-async def admin_list_designs(_: str = Depends(require_perm("products"))):
-    return await db.fetch_all(
-        """SELECT id::text AS design_id, code, applies_to, image_url,
-                  making_charge_pct::float AS making_charge_pct, metals, note,
-                  is_active, sort_order
-             FROM jewellery_designs ORDER BY applies_to, sort_order, code""")
+async def admin_list_designs(_: str = Depends(require_perm("products")),
+                             product_id: Optional[str] = None):
+    sql = """SELECT d.id::text AS design_id, d.product_id::text AS product_id,
+                    p.title AS product_name, d.code, d.applies_to, d.metal,
+                    d.price AS price_n, d.image_url, d.note, d.is_active, d.sort_order
+               FROM jewellery_designs d JOIN products p ON p.id = d.product_id"""
+    args = []
+    if product_id:
+        args.append(product_id)
+        sql += " WHERE d.product_id = $1::uuid"
+    rows = await db.fetch_all(sql + " ORDER BY p.title, d.applies_to, d.sort_order, d.code", *args)
+    return [{**{k: v for k, v in r.items() if k != "price_n"},
+             "price": db.to_paise(r["price_n"])} for r in rows]
 
 
 @api.post("/admin/designs")
 async def admin_create_design(body: DesignIn, actor: str = Depends(require_perm("products"))):
-    if body.applies_to not in ("ring", "pendant"):
-        raise HTTPException(400, "applies_to must be 'ring' or 'pendant'")
-    bad = [m for m in body.metals if m not in _METALS]
-    if bad:
-        raise HTTPException(400, f"Unknown metal(s): {', '.join(bad)}")
+    _validate_design(body)
     did = uuid.uuid4()
     try:
         await db.execute(
-            """INSERT INTO jewellery_designs (id, code, applies_to, image_url,
-                    making_charge_pct, metals, note, is_active, sort_order)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)""",
-            did, body.code.strip(), body.applies_to, body.image_url,
-            max(0.0, body.making_charge_pct), body.metals, body.note,
+            """INSERT INTO jewellery_designs (id, product_id, code, applies_to, metal,
+                    price, image_url, note, is_active, sort_order)
+               VALUES ($1,$2::uuid,$3,$4,$5,$6,$7,$8,$9,$10)""",
+            did, body.product_id, body.code.strip(), body.applies_to, body.metal,
+            db.to_amount(body.price), body.image_url, body.note,
             body.is_active, body.sort_order)
     except asyncpg.exceptions.UniqueViolationError:
-        raise HTTPException(400, f"Design {body.code} already exists for {body.applies_to}")
-    _invalidate_designs()
-    await audit_log(actor, "design.create", str(did), {"code": body.code})
+        raise HTTPException(
+            400, f"{body.code} already exists for this product as a {body.applies_to} in {body.metal}")
+    except asyncpg.exceptions.ForeignKeyViolationError:
+        raise HTTPException(404, "Product not found")
+    await audit_log(actor, "design.create", str(did), {"code": body.code, "metal": body.metal})
     return {"design_id": str(did)}
 
 
 @api.patch("/admin/designs/{design_id}")
 async def admin_update_design(design_id: str, body: DesignIn,
                               actor: str = Depends(require_perm("products"))):
-    bad = [m for m in body.metals if m not in _METALS]
-    if bad:
-        raise HTTPException(400, f"Unknown metal(s): {', '.join(bad)}")
+    _validate_design(body)
     got = await db.fetch_val(
-        """UPDATE jewellery_designs SET code=$2, applies_to=$3, image_url=$4,
-               making_charge_pct=$5, metals=$6, note=$7, is_active=$8, sort_order=$9,
+        """UPDATE jewellery_designs SET product_id=$2::uuid, code=$3, applies_to=$4,
+               metal=$5, price=$6, image_url=$7, note=$8, is_active=$9, sort_order=$10,
                updated_at=now()
             WHERE id=$1::uuid RETURNING id::text""",
-        design_id, body.code.strip(), body.applies_to, body.image_url,
-        max(0.0, body.making_charge_pct), body.metals, body.note,
+        design_id, body.product_id, body.code.strip(), body.applies_to, body.metal,
+        db.to_amount(body.price), body.image_url, body.note,
         body.is_active, body.sort_order)
     if not got:
         raise HTTPException(404, "Design not found")
-    _invalidate_designs()
     await audit_log(actor, "design.update", design_id, {"code": body.code})
     return {"ok": True}
 
@@ -3691,7 +3695,6 @@ async def admin_delete_design(design_id: str, actor: str = Depends(require_perm(
         "DELETE FROM jewellery_designs WHERE id=$1::uuid RETURNING code", design_id)
     if not got:
         raise HTTPException(404, "Design not found")
-    _invalidate_designs()
     await audit_log(actor, "design.delete", design_id, {"code": got})
     return {"ok": True}
 

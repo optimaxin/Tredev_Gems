@@ -3,7 +3,9 @@ import { useParams, Link, useNavigate, useLocation } from "react-router-dom";
 import { api, formatINR } from "@/lib/api";
 import { useCart } from "@/context/CartContext";
 import { toast } from "sonner";
-import { ShieldCheck, Certificate, QrCode, Fingerprint, Play, HandHeart, ShoppingBag, Heart, Plus, Minus, CaretLeft, CaretRight } from "@phosphor-icons/react";
+import { ShieldCheck, Certificate, ShoppingBag, Heart, Plus, Minus, CaretLeft, CaretRight, Star, Truck, ArrowsClockwise, FlowerLotus, Lightning } from "@phosphor-icons/react";
+import ProductStory from "@/components/gemora/ProductStory";
+import { CATEGORY_LABEL } from "@/lib/productCopy";
 
 export default function ProductDetail() {
   const { slug } = useParams();
@@ -13,7 +15,6 @@ export default function ProductDetail() {
   const [p, setP] = useState(() => location.state?.product ?? null);
   const [reviews, setReviews] = useState([]);
   const [qty, setQty] = useState(1);
-  const [tab, setTab] = useState("trust");
   const [active, setActive] = useState(0); // selected gallery image
   // {group_key: choice_label} — which option the buyer picked in each selector.
   const [picked, setPicked] = useState({});
@@ -34,9 +35,12 @@ export default function ProductDetail() {
       if (cancelled) return;
       setP(data);
       // Which selectors exist is category-driven, so defaults can only be set once the
-      // product is loaded: every group starts on its first (free) choice.
+      // product is loaded: each group starts on its first (free) choice. Optional
+      // groups are deliberately left unset — Ring Size System must open on "Select Ring
+      // System", not silently preselect Indian and skip the "I don't know" path.
       const groups = data.variant_options?.groups || [];
-      setPicked(Object.fromEntries(groups.map((g) => [g.key, g.choices[0]?.label])));
+      setPicked(Object.fromEntries(
+        groups.filter((g) => !g.optional).map((g) => [g.key, g.choices[0]?.label])));
       api.get(`/reviews/${data.product_id}`).then((r) => { if (!cancelled) setReviews(r.data); }).catch(() => {});
     }).catch(() => { if (!cancelled) setP((cur) => (cur && cur.slug === slug ? cur : false)); });
     return () => { cancelled = true; };
@@ -63,10 +67,9 @@ export default function ProductDetail() {
   for (const g of allGroups) {
     const si = g.show_if;
     if (si && !(si.values || []).includes(resolved[si.group])) continue;
-    // A design restricted to certain metals only shows in those metals.
-    const choices = (g.choices || []).filter(
-      (c) => !c.metals?.length || c.metals.includes(resolved.metal)
-    );
+    // Designs are stored one row per metal, so narrow the grid to the chosen metal —
+    // the same code (R14) exists in several metals at different prices.
+    const choices = (g.choices || []).filter((c) => !c.metal || c.metal === resolved.metal);
     if (!choices.length) continue;
     visible.push({ ...g, choices });
     const pick = picked[g.key];
@@ -74,21 +77,22 @@ export default function ProductDetail() {
     else if (!g.optional) resolved[g.key] = choices[0].label;
   }
 
-  const surchargeOf = (g) => {
+  const unitPrice = visible.reduce((sum, g) => {
     const c = g.choices.find((x) => x.label === resolved[g.key]);
-    if (!c) return 0;
-    // Making charges are a % of the stone's base price, not the running total.
-    return (c.surcharge || 0) + Math.round((p.price * (c.surcharge_pct || 0)) / 100);
+    return sum + (c?.surcharge || 0);
+  }, p.price);
+
+  // Send only what's actually visible — a stale pick from a hidden group (e.g. a
+  // ring size after switching back to Loose Gemstone) must not reach the cart.
+  const put = async () => {
+    const options = {};
+    for (const g of visible) if (resolved[g.key] != null) options[g.key] = resolved[g.key];
+    await cart.add({ product_id: p.product_id, qty, options });
   };
-  const unitPrice = visible.reduce((sum, g) => sum + surchargeOf(g), p.price);
 
   const addToCart = async () => {
     try {
-      // Send only what's actually visible — a stale pick from a hidden group (e.g. a
-      // ring size after switching back to Loose Gemstone) must not reach the cart.
-      const options = {};
-      for (const g of visible) if (resolved[g.key] != null) options[g.key] = resolved[g.key];
-      await cart.add({ product_id: p.product_id, qty, options });
+      await put();
       toast.success(`${qty} × ${p.name} added to your cart`);
       nav("/cart");
     } catch (e) {
@@ -96,8 +100,38 @@ export default function ProductDetail() {
     }
   };
 
+  const buyNow = async () => {
+    try {
+      await put();
+      nav("/checkout");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Could not add to cart");
+    }
+  };
+
+  const rating = reviews.length
+    ? reviews.reduce((s, r) => s + (r.rating || 0), 0) / reviews.length
+    : 0;
+  const off = p.mrp && p.mrp > unitPrice ? Math.round(((p.mrp - unitPrice) / p.mrp) * 100) : 0;
+
   return (
-    <div className="mx-auto max-w-7xl px-6 lg:px-10 py-12">
+    <div className="pb-24 lg:pb-0">
+      {/* Breadcrumb */}
+      <nav aria-label="Breadcrumb" className="mx-auto max-w-7xl px-6 lg:px-10 pt-8">
+        <ol className="flex items-center gap-2 text-xs text-ink-muted flex-wrap">
+          <li><Link to="/" className="hover:text-maroon">Home</Link></li>
+          <li aria-hidden="true"><CaretRight size={10} /></li>
+          <li>
+            <Link to={`/shop?category=${p.category}`} className="hover:text-maroon">
+              {CATEGORY_LABEL[p.category] || p.category?.replace(/_/g, " ")}
+            </Link>
+          </li>
+          <li aria-hidden="true"><CaretRight size={10} /></li>
+          <li className="text-ink-soft truncate max-w-[50vw]" aria-current="page">{p.name}</li>
+        </ol>
+      </nav>
+
+      <div className="mx-auto max-w-7xl px-6 lg:px-10 py-10">
       <div className="grid lg:grid-cols-2 gap-14">
         {/* Gallery */}
         <div className="lg:sticky lg:top-24 h-fit">
@@ -176,26 +210,47 @@ export default function ProductDetail() {
           <div className="text-xs uppercase tracking-widest text-gold-soft">{p.category?.replace("_", " ")}</div>
           {p.devanagari_name && <div className="font-deva text-2xl text-maroon-deep mt-2">{p.devanagari_name}</div>}
           <h1 className="font-display text-4xl md:text-5xl text-ink mt-2 leading-tight">{p.name}</h1>
-          <div className="mt-6 flex items-baseline gap-4">
+
+          {/* rating summary */}
+          {reviews.length > 0 && (
+            <a href="#reviews" className="mt-3 inline-flex items-center gap-2 group">
+              <span className="flex gap-0.5 text-gold">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <Star key={i} size={14} weight={i < Math.round(rating) ? "fill" : "regular"} />
+                ))}
+              </span>
+              <span className="font-mono text-xs text-ink-soft">{rating.toFixed(1)}</span>
+              <span className="text-xs text-ink-muted group-hover:text-maroon underline underline-offset-4 decoration-gold-soft">
+                {reviews.length} {reviews.length === 1 ? "review" : "reviews"}
+              </span>
+            </a>
+          )}
+
+          <div className="mt-6 flex items-baseline gap-4 flex-wrap">
             <div className="font-display text-4xl text-maroon-deep" data-testid="product-unit-price">{formatINR(unitPrice)}</div>
             {p.mrp && p.mrp > unitPrice && <div className="text-ink-muted line-through">{formatINR(p.mrp)}</div>}
+            {off > 0 && (
+              <span className="bg-maroon text-ivory text-[11px] font-mono px-2 py-1 tracking-widest">{off}% OFF</span>
+            )}
           </div>
           {unitPrice !== p.price && (
             <div className="text-xs text-ink-muted mt-1">Base price {formatINR(p.price)} + your selected options</div>
           )}
           <p className="mt-6 text-ink-soft leading-relaxed">{p.description}</p>
 
-          {/* Attributes */}
-          {p.attrs && Object.keys(p.attrs).length > 0 && (
-            <div className="mt-6 grid grid-cols-2 gap-3">
-              {Object.entries(p.attrs).map(([k, v]) => (
-                <div key={k} className="gold-line px-4 py-3">
-                  <div className="text-[10px] uppercase tracking-widest text-ink-muted">{k}</div>
-                  <div className="text-ink font-medium capitalize">{String(v)}</div>
-                </div>
-              ))}
-            </div>
-          )}
+          {/* Quick trust chips — the full detail lives further down the page */}
+          <div className="mt-6 flex flex-wrap gap-2">
+            {[
+              [Truck, "Free shipping"],
+              [ArrowsClockwise, "7-day returns"],
+              [Certificate, "Lab-certified"],
+              [FlowerLotus, "Temple energised"],
+            ].map(([I, label]) => (
+              <span key={label} className="inline-flex items-center gap-1.5 gold-line bg-cream px-3 py-1.5 text-[11px] uppercase tracking-widest text-ink-soft">
+                <I size={13} weight="duotone" className="text-gold-soft" /> {label}
+              </span>
+            ))}
+          </div>
 
           {/* Option groups — which ones appear is driven by the product's category.
               Price updates live as these change. Pre-made categories (jewellery,
@@ -230,8 +285,8 @@ export default function ProductDetail() {
                             <div className="mt-1 text-[11px] leading-tight">
                               <div className="font-medium">{c.label}</div>
                               {c.note && <div className="text-ink-muted">{c.note}</div>}
-                              {c.surcharge_pct > 0 && (
-                                <div className="text-ink-muted">+{c.surcharge_pct}% Making Charges</div>
+                              {c.surcharge > 0 && (
+                                <div className="text-maroon-deep">+{formatINR(c.surcharge)}</div>
                               )}
                             </div>
                           </button>
@@ -331,6 +386,14 @@ export default function ProductDetail() {
             >
               <ShoppingBag size={16} weight="duotone" /> {soldOut ? "Sold out" : "Add to cart"}
             </button>
+            <button
+              onClick={buyNow}
+              data-testid="buy-now-btn"
+              disabled={soldOut}
+              className="border border-maroon bg-maroon text-ivory px-8 py-4 text-sm uppercase tracking-widest inline-flex items-center gap-2 hover:bg-maroon-deep transition-colors disabled:opacity-40"
+            >
+              <Lightning size={16} weight="fill" /> Buy it now
+            </button>
             <button className="border border-maroon text-maroon px-6 py-4 text-sm uppercase tracking-widest inline-flex items-center gap-2 hover:bg-maroon hover:text-ivory transition-colors"
               onClick={() => api.post(`/me/wishlist/${p.product_id}`).then(() => toast.success("Saved to wishlist")).catch(() => toast.error("Please login to save"))}
               data-testid="wishlist-btn"
@@ -372,53 +435,37 @@ export default function ProductDetail() {
             </div>
           </div>
 
-          {/* Tabs */}
-          <div className="mt-12">
-            <div className="flex gap-6 border-b border-gold/30">
-              {[["trust", "The provenance chain"], ["care", "Care & wear"], ["reviews", `Reviews (${reviews.length})`]].map(([k, l]) => (
-                <button key={k} onClick={() => setTab(k)} className={`pb-3 text-sm ${tab === k ? "text-maroon-deep border-b-2 border-maroon" : "text-ink-muted"}`}>
-                  {l}
-                </button>
-              ))}
-            </div>
-            <div className="mt-6 text-sm text-ink-soft leading-relaxed">
-              {tab === "trust" && (
-                <ul className="space-y-3">
-                  <li className="flex gap-3"><Certificate size={18} className="text-gold-soft shrink-0" weight="duotone" /> Lab report from a GJEPC-affiliated laboratory attached at intake.</li>
-                  <li className="flex gap-3"><HandHeart size={18} className="text-gold-soft shrink-0" weight="duotone" /> Energisation at a partner temple with a recorded pooja.</li>
-                  <li className="flex gap-3"><Fingerprint size={18} className="text-gold-soft shrink-0" weight="duotone" /> Canonical JSON hashed (SHA-256) and signed with Tredev's Ed25519 key.</li>
-                  <li className="flex gap-3"><QrCode size={18} className="text-gold-soft shrink-0" weight="duotone" /> Per-unit QR minted; only activated at dispatch.</li>
-                </ul>
-              )}
-              {tab === "care" && (
-                p.care_instructions?.length ? (
-                  <ul className="space-y-3">
-                    {p.care_instructions.map((line, i) => (
-                      <li key={i} className="flex gap-3">
-                        <HandHeart size={18} className="text-gold-soft shrink-0" weight="duotone" /> {line}
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-ink-muted">No care instructions added for this piece yet.</p>
-                )
-              )}
-              {tab === "reviews" && (
-                <div className="space-y-4">
-                  {reviews.length === 0 && <p className="text-ink-muted">No reviews yet.</p>}
-                  {reviews.map((r) => (
-                    <div key={r.review_id} className="gold-line p-4">
-                      <div className="flex items-center justify-between">
-                        <div className="text-ink font-medium">{r.author}</div>
-                        <div className="text-gold-soft text-xs">{"★".repeat(r.rating)}{"☆".repeat(5 - r.rating)}</div>
-                      </div>
-                      <div className="mt-2 text-sm text-ink-soft"><strong>{r.title}</strong> {r.body}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+        </div>
+      </div>
+      </div>
+
+      {/* ── The immersive story: specs, benefits, provenance, ritual, care,
+             reviews, consultation, policies, FAQ and related pieces. Every
+             section is data-driven, so it works for all categories. ── */}
+      <ProductStory p={p} reviews={reviews} />
+
+      {/* Sticky buy bar — mobile only */}
+      <div className="lg:hidden fixed bottom-0 inset-x-0 z-40 sticky-rise bg-ivory/95 backdrop-blur border-t border-gold/40">
+        <div className="px-4 py-3 flex items-center gap-3">
+          <div className="min-w-0">
+            <div className="font-display text-xl text-maroon-deep leading-none">{formatINR(unitPrice)}</div>
+            {off > 0 && <div className="text-[10px] text-ink-muted line-through">{formatINR(p.mrp)}</div>}
           </div>
+          <button
+            onClick={addToCart}
+            disabled={soldOut}
+            data-testid="sticky-add-to-cart"
+            className="ml-auto brand-gradient text-ivory px-5 py-3 text-xs uppercase tracking-widest inline-flex items-center gap-2 disabled:opacity-40"
+          >
+            <ShoppingBag size={14} weight="duotone" /> {soldOut ? "Sold out" : "Add to cart"}
+          </button>
+          <button
+            onClick={buyNow}
+            disabled={soldOut}
+            className="bg-maroon text-ivory px-5 py-3 text-xs uppercase tracking-widest inline-flex items-center gap-2 disabled:opacity-40"
+          >
+            <Lightning size={14} weight="fill" /> Buy
+          </button>
         </div>
       </div>
     </div>
