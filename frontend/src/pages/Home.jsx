@@ -9,6 +9,9 @@ import ConsultMarquee from "@/components/gemora/ConsultMarquee";
 import EventsSection from "@/components/gemora/EventsSection";
 import AmbassadorHero from "@/components/gemora/AmbassadorHero";
 import { OrnamentHeader } from "@/components/gemora/Ornament";
+import {
+  Reveal, DropCap, PullQuote, CountUp, MantraDivider, Parallax, YantraWatermark, toDeva,
+} from "@/components/gemora/Editorial";
 import { useSiteAssets } from "@/context/SiteAssetsContext";
 
 const HERO_IMG = "https://images.unsplash.com/photo-1669256335723-1fa03d5123c0?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NDh8MHwxfHNlYXJjaHwyfHxJbmRpYW4lMjB0ZW1wbGUlMjBhcmNoaXRlY3R1cmUlMjBnb2xkJTIwZGV0YWlsc3xlbnwwfHx8fDE3ODM3Njc4NDd8MA&ixlib=rb-4.1.0&q=85";
@@ -147,7 +150,10 @@ export default function Home() {
 
       {/* HERO carousel */}
       <section data-testid={HOME.hero} className="relative overflow-hidden">
-        <div className="mx-auto max-w-7xl px-6 lg:px-10 pt-14 pb-20 grid lg:grid-cols-12 gap-14 items-center">
+        {/* a slowly turning shri-yantra, set into the page like a watermark on paper */}
+        <YantraWatermark className="pointer-events-none absolute -left-40 -top-28 w-[560px] h-[560px] text-gold/[0.13] hidden md:block" />
+        <div className="grain absolute inset-0 pointer-events-none" />
+        <div className="relative mx-auto max-w-7xl px-6 lg:px-10 pt-14 pb-20 grid lg:grid-cols-12 gap-14 items-center">
           <div className="lg:col-span-7 fade-up" key={heroIdx}>
             <div className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-maroon border border-gold/50 px-3 py-1.5">
               <Sparkle size={14} weight="duotone" /> {slide.tag}
@@ -178,7 +184,7 @@ export default function Home() {
           </div>
           <div className="lg:col-span-5 relative" key={`img-${heroIdx}`}>
             <div className="relative aspect-[4/5] overflow-hidden gold-line-strong fade-up">
-              <img src={slide.img} alt="" className="w-full h-full object-cover" />
+              <img src={slide.img} alt="" className="w-full h-full object-cover ken-burns" />
               <div className="absolute inset-x-0 bottom-0 p-6 bg-gradient-to-t from-maroon-deep/80 to-transparent">
                 <div className="font-deva text-2xl text-ivory">"{slide.deva}"</div>
                 <div className="text-xs text-ivory/80 mt-1 tracking-widest uppercase">{slide.devaSub}</div>
@@ -214,24 +220,51 @@ export default function Home() {
         </div>
       </section>
 
+      {/* LEDGER — the numbers, set like a colophon */}
+      <section className="bg-ivory border-b border-gold/30 py-14" aria-label="Tredev in numbers">
+        <div className="mx-auto max-w-7xl px-6 lg:px-10 grid grid-cols-2 lg:grid-cols-4 gap-y-10 gap-x-6">
+          {[
+            [<CountUp to={1200} suffix="+" />, "Verified reviews", "समीक्षा"],
+            [<CountUp to={4.9} decimals={1} />, "Average rating", "औसत"],
+            [<CountUp to={9} />, "Navagraha stones", "नवग्रह"],
+            [<CountUp to={100} suffix="%" />, "Signed & serialised", "प्रमाणित"],
+          ].map(([val, label, deva], i) => (
+            <Reveal key={label} delay={i * 0.08}>
+              <div className="relative lg:pl-6 lg:border-l lg:border-gold/30 first:lg:border-0 first:lg:pl-0">
+                <div className="font-display text-5xl md:text-6xl text-maroon-deep leading-none">{val}</div>
+                <div className="mt-2 font-deva text-sm text-gold-soft">{deva}</div>
+                <div className="text-xs uppercase tracking-widest text-ink-muted mt-0.5">{label}</div>
+              </div>
+            </Reveal>
+          ))}
+        </div>
+      </section>
+
       {/* CATEGORY TILES */}
       <section className="mx-auto max-w-7xl px-6 lg:px-10 py-20">
         <OrnamentHeader eyebrow="Product Range · अन्वेषण" title="Our Premium Categories" />
         <div className="mt-12 grid grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-          {cats.map((c) => (
-            <Link
-              key={c.key}
-              to={`/shop?category=${c.key}`}
-              data-testid={`${HOME.categoryCard}-${c.key}`}
-              className="relative group overflow-hidden gold-line aspect-[4/5]"
-            >
-              <img src={c.img} alt={c.label} className="w-full h-full object-cover img-hover" loading="lazy" />
-              <div className="absolute inset-0 bg-gradient-to-t from-maroon-deep/70 via-transparent to-transparent" />
-              <div className="absolute bottom-6 left-6">
-                <div className="font-deva text-gold-soft text-base">{c.hindi}</div>
-                <div className="font-display text-2xl md:text-3xl text-ivory mt-1">{c.label}</div>
-              </div>
-            </Link>
+          {cats.map((c, i) => (
+            <Reveal key={c.key} delay={(i % 3) * 0.08}>
+              <Link
+                to={`/shop?category=${c.key}`}
+                data-testid={`${HOME.categoryCard}-${c.key}`}
+                className="relative group block overflow-hidden gold-line aspect-[4/5]"
+              >
+                <img src={c.img} alt={c.label} className="w-full h-full object-cover img-hover" loading="lazy" />
+                <div className="absolute inset-0 bg-gradient-to-t from-maroon-deep/75 via-maroon-deep/10 to-transparent" />
+                {/* plate number, the way a catalogue marks a figure */}
+                <div className="absolute top-4 right-4 font-deva text-sm text-ivory/60 group-hover:text-gold transition-colors">
+                  {toDeva(String(i + 1).padStart(2, "0"))}
+                </div>
+                <div className="absolute bottom-6 left-6 right-6">
+                  <div className="font-deva text-gold-soft text-base">{c.hindi}</div>
+                  <div className="font-display text-2xl md:text-3xl text-ivory mt-1">{c.label}</div>
+                  {/* rule that runs out under the label on hover */}
+                  <div className="mt-2 h-[1px] w-0 bg-gold group-hover:w-16 transition-all duration-500" />
+                </div>
+              </Link>
+            </Reveal>
           ))}
         </div>
       </section>
@@ -417,28 +450,36 @@ export default function Home() {
 
       {/* CRAFTSMANSHIP BAND */}
       <section className="mx-auto max-w-7xl px-6 lg:px-10 py-24 grid lg:grid-cols-2 gap-14 items-center">
-        <div className="relative overflow-hidden gold-line-strong aspect-[4/3]">
-          <img src={craftPoster} alt="Artisan at work" className="w-full h-full object-cover" />
-          <div className="absolute inset-0 bg-gradient-to-tr from-maroon-deep/40 to-transparent" />
+        <div className="relative gold-line-strong aspect-[4/3] overflow-hidden group">
+          {/* the plate drifts against its frame as you scroll */}
+          <Parallax distance={28} className="absolute inset-0 -m-8">
+            <img src={craftPoster} alt="Artisan at work" className="w-full h-full object-cover" />
+          </Parallax>
+          <div className="absolute inset-0 bg-gradient-to-tr from-maroon-deep/40 to-transparent pointer-events-none" />
           <button className="absolute inset-0 flex items-center justify-center text-ivory" aria-label="Play brand video">
-            <span className="w-16 h-16 bg-ivory/90 flex items-center justify-center text-maroon-deep border border-gold">
+            <span className="w-16 h-16 bg-ivory/90 flex items-center justify-center text-maroon-deep border border-gold group-hover:scale-105 transition-transform duration-300">
               <Play size={22} weight="fill" />
             </span>
           </button>
+          <figcaption className="absolute bottom-3 left-4 text-[10px] uppercase tracking-widest text-ivory/70 font-mono">
+            Plate {toDeva("01")} · Kanchi atelier
+          </figcaption>
         </div>
-        <div>
+        <Reveal>
           <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">The house · घर</div>
           <h2 className="font-display text-4xl md:text-5xl text-ink mt-3 leading-tight">Sourced by hand.<br />Signed by us.</h2>
-          <p className="mt-5 text-ink-soft leading-relaxed">
+          <DropCap className="mt-5">
             Our team walks the same mines in Ceylon, the same tantric ateliers in Kanchi, the same forests of Kathmandu that families have visited for generations. Every unit is intake-photographed, weighed, X-rayed where needed, and stored in the Tredev vault before it's ever offered for sale.
-          </p>
+          </DropCap>
           <ul className="mt-6 space-y-3 text-sm text-ink-soft">
             <li className="flex gap-2"><Package size={16} className="text-gold-soft shrink-0" weight="duotone" /> First-party: we own every SKU we sell.</li>
             <li className="flex gap-2"><Fingerprint size={16} className="text-gold-soft shrink-0" weight="duotone" /> Serialised: every unit gets a fingerprint.</li>
             <li className="flex gap-2"><HandHeart size={16} className="text-gold-soft shrink-0" weight="duotone" /> Reverent: priests, not marketers, do the pooja.</li>
           </ul>
-        </div>
+        </Reveal>
       </section>
+
+      <MantraDivider />
 
       {/* SOCIAL PROOF */}
       <section className="bg-cream border-y border-gold/30 py-20">
@@ -527,13 +568,14 @@ export default function Home() {
         />
       </section>
 
-      {/* SMALL PROMISE */}
-      <section className="mx-auto max-w-4xl px-6 py-20 text-center">
-        <div className="font-deva text-2xl text-gold-soft">"न हि सत्यात् परो धर्मः"</div>
-        <div className="mt-3 text-xs tracking-widest uppercase text-ink-muted">There is no greater dharma than truth</div>
-        <p className="mt-8 text-ink-soft leading-relaxed">
-          Tredev is not a marketplace. We source. We serialise. We certify. We ship. If a stone we sold is ever proven inauthentic, we make it right — no exceptions.
-        </p>
+      {/* PROMISE — set as a magazine pull quote */}
+      <section className="mx-auto max-w-4xl px-6 lg:px-10 py-24">
+        <Reveal>
+          <PullQuote deva="न हि सत्यात् परो धर्मः" cite="The Tredev promise · There is no greater dharma than truth">
+            Tredev is not a marketplace. We source. We serialise. We certify. We ship — and if a
+            stone we sold is ever proven inauthentic, we make it right. No exceptions.
+          </PullQuote>
+        </Reveal>
       </section>
 
       {/* HOW IT WORKS */}
