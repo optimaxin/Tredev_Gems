@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api, formatINR } from "@/lib/api";
 import { toast } from "sonner";
-import { PaperPlaneTilt, X } from "@phosphor-icons/react";
+import { PaperPlaneTilt, X, User, ClockCounterClockwise, MapPin, Package } from "@phosphor-icons/react";
 
 const STATUSES = ["pending_payment", "paid", "shipped", "delivered", "cancelled", "refunded"];
 
@@ -25,6 +25,8 @@ export default function AdminOrders() {
   const [dispatchFor, setDispatchFor] = useState(null); // order being dispatched
   const [dform, setDform] = useState(dispatchDefaults());
   const [sending, setSending] = useState(false);
+  const [customer, setCustomer] = useState(null); // { profile, orders } for dispatchFor's buyer
+  const [customerLoading, setCustomerLoading] = useState(false);
 
   const refresh = () => api.get("/admin/orders").then((r) => setOrders(r.data));
   useEffect(() => { refresh(); }, []);
@@ -53,7 +55,20 @@ export default function AdminOrders() {
     } catch (e) { toast.error(e.response?.data?.detail); }
   };
 
-  const openDispatch = (order) => { setDispatchFor(order); setDform(dispatchDefaults()); };
+  const openDispatch = (order) => {
+    setDispatchFor(order);
+    setDform(dispatchDefaults());
+    setCustomer(null);
+    // Buyer profile + order history — staff need this to confirm who/what they're
+    // shipping before certifying and dispatching.
+    if (order.user_id) {
+      setCustomerLoading(true);
+      api.get(`/admin/customers/${order.user_id}`)
+        .then((r) => setCustomer(r.data))
+        .catch(() => setCustomer(false)) // false = failed to load, distinct from null = loading
+        .finally(() => setCustomerLoading(false));
+    }
+  };
 
   const submitDispatch = async (e) => {
     e.preventDefault();
@@ -97,7 +112,12 @@ export default function AdminOrders() {
               <div>
                 <div className="font-mono text-xs text-ink-muted">{o.order_id}</div>
                 <div className="text-sm text-ink">{new Date(o.created_at).toLocaleString()}</div>
-                <div className="text-xs text-ink-muted mt-1">{o.shipping?.shipping_name} · {o.shipping?.shipping_city}</div>
+                <div className="text-xs text-ink-muted mt-1">
+                  {o.shipping?.shipping_name} · {o.shipping?.shipping_phone}
+                </div>
+                <div className="text-xs text-ink-muted">
+                  {[o.shipping?.shipping_address, o.shipping?.shipping_city, o.shipping?.shipping_state, o.shipping?.shipping_pincode].filter(Boolean).join(", ")}
+                </div>
               </div>
               <div className="text-right">
                 <div className="font-display text-2xl text-maroon-deep">{formatINR(o.total)}</div>
@@ -147,7 +167,7 @@ export default function AdminOrders() {
       {/* Dispatch form — captures provenance + ETA, then certifies every assigned unit */}
       {dispatchFor && (
         <div className="fixed inset-0 z-50 bg-ink/40 flex items-center justify-center p-4" onClick={() => setDispatchFor(null)}>
-          <form onClick={(e) => e.stopPropagation()} onSubmit={submitDispatch} className="bg-ivory gold-line-strong max-w-lg w-full max-h-[90vh] overflow-y-auto p-6">
+          <form onClick={(e) => e.stopPropagation()} onSubmit={submitDispatch} className="bg-ivory gold-line-strong max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6">
             <div className="flex items-baseline justify-between">
               <div>
                 <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">Fulfilment</div>
@@ -155,10 +175,89 @@ export default function AdminOrders() {
               </div>
               <button type="button" onClick={() => setDispatchFor(null)} className="text-ink-muted hover:text-revoked"><X size={20} /></button>
             </div>
-            <p className="mt-2 text-xs text-ink-muted">
+
+            {/* Customer — who we're shipping to, and their order history */}
+            <div className="mt-5 gold-line bg-cream p-4">
+              <div className="text-xs uppercase tracking-widest text-ink-muted flex items-center gap-1.5 mb-2">
+                <User size={14} weight="duotone" /> Customer
+              </div>
+              {customerLoading && <div className="text-sm text-ink-muted animate-pulse">Loading profile…</div>}
+              {customer === false && <div className="text-sm text-revoked">Could not load customer profile.</div>}
+              {customer && (
+                <>
+                  <div className="text-sm">
+                    <span className="font-serifd text-base">{customer.profile.name}</span>
+                    {customer.profile.role !== "customer" && (
+                      <span className="ml-2 text-[10px] uppercase tracking-widest text-maroon">{customer.profile.role}</span>
+                    )}
+                  </div>
+                  <div className="text-xs text-ink-muted mt-0.5">
+                    {customer.profile.email} · {customer.profile.phone || "no phone on file"}
+                  </div>
+                  <div className="text-[10px] text-ink-muted mt-0.5">
+                    Customer since {new Date(customer.profile.created_at).toLocaleDateString()}
+                  </div>
+                  <div className="mt-3 text-xs uppercase tracking-widest text-ink-muted flex items-center gap-1.5">
+                    <ClockCounterClockwise size={13} weight="duotone" /> Order history ({customer.orders.length})
+                  </div>
+                  <div className="mt-1.5 space-y-1 max-h-32 overflow-y-auto">
+                    {customer.orders.map((ho) => (
+                      <div key={ho.order_id} className={`flex items-center justify-between text-xs px-2 py-1 ${ho.order_id === dispatchFor.order_id ? "bg-gold/20" : ""}`}>
+                        <span className="text-ink-soft">
+                          {new Date(ho.created_at).toLocaleDateString()} · {ho.item_count} item{ho.item_count === 1 ? "" : "s"}
+                          {ho.order_id === dispatchFor.order_id && <span className="ml-1 text-maroon">(this order)</span>}
+                        </span>
+                        <span className="flex items-center gap-2">
+                          <span className="uppercase text-[10px] text-ink-muted">{ho.status}</span>
+                          <span className="font-mono">{formatINR(ho.total)}</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Delivery — the address filled in at checkout */}
+            <div className="mt-3 gold-line bg-cream p-4">
+              <div className="text-xs uppercase tracking-widest text-ink-muted flex items-center gap-1.5 mb-2">
+                <MapPin size={14} weight="duotone" /> Delivery address
+              </div>
+              <div className="text-sm">{dispatchFor.shipping?.shipping_name} · {dispatchFor.shipping?.shipping_phone}</div>
+              <div className="text-sm text-ink-soft mt-0.5">{dispatchFor.shipping?.shipping_address}</div>
+              <div className="text-sm text-ink-soft">
+                {[dispatchFor.shipping?.shipping_city, dispatchFor.shipping?.shipping_state, dispatchFor.shipping?.shipping_pincode].filter(Boolean).join(", ")}
+              </div>
+              <div className="text-xs text-ink-muted mt-1">{dispatchFor.shipping?.email}</div>
+            </div>
+
+            {/* Items — what's actually being shipped */}
+            <div className="mt-3 gold-line bg-cream p-4">
+              <div className="text-xs uppercase tracking-widest text-ink-muted flex items-center gap-1.5 mb-2">
+                <Package size={14} weight="duotone" /> Items on this order
+              </div>
+              <div className="space-y-2">
+                {dispatchFor.items.map((li) => (
+                  <div key={li.line_id} className="flex items-center gap-3 text-sm">
+                    {li.image && <img src={li.image} alt="" className="w-10 h-10 object-cover gold-line shrink-0" />}
+                    <div className="flex-1 min-w-0">
+                      <div className="truncate">{li.name} <span className="text-ink-muted">× {li.qty}</span></div>
+                      {li.serials?.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-0.5">
+                          {li.serials.map((s) => <span key={s} className="text-[10px] font-mono bg-ivory gold-line px-1 py-0.5">{s}</span>)}
+                        </div>
+                      )}
+                    </div>
+                    <span className="font-mono text-xs shrink-0">{formatINR(li.price * li.qty)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <p className="mt-4 text-xs text-ink-muted">
               A signed certificate (lab report · temple energisation · Ed25519 signature) is issued for every piece on this order, then its QR is activated.
             </p>
-            <div className="mt-5 grid grid-cols-2 gap-3">
+            <div className="mt-3 grid grid-cols-2 gap-3">
               {[
                 ["lab_name", "Lab name"], ["lab_report_no", "Lab report no."],
                 ["temple_name", "Temple"], ["temple_devanagari", "Temple (Devanagari)"],

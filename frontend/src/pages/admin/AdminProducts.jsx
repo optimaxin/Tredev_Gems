@@ -3,7 +3,7 @@ import { api, formatINR } from "@/lib/api";
 import { toast } from "sonner";
 import { PencilSimple, PlusCircle, Trash } from "@phosphor-icons/react";
 
-const EMPTY = { name: "", slug: "", category: "gemstone", description: "", price: "", mrp: "", images: "", devanagari_name: "", attrs: "{}", quantity: "" };
+const EMPTY = { name: "", slug: "", category: "gemstone", description: "", price: "", mrp: "", images: "", devanagari_name: "", attrs: "{}", quantity: "", care_instructions: "" };
 
 export default function AdminProducts() {
   const [products, setProducts] = useState([]);
@@ -27,6 +27,7 @@ export default function AdminProducts() {
       mrp: p.mrp != null ? (p.mrp / 100).toString() : "",
       images: (p.images || []).join("\n"),
       attrs: JSON.stringify(p.attrs || {}, null, 2),
+      care_instructions: (p.care_instructions || []).join("\n"),
     });
   };
   const startNew = () => { setEditing("new"); setForm(EMPTY); };
@@ -49,6 +50,8 @@ export default function AdminProducts() {
         attrs: JSON.parse(form.attrs || "{}"),
         // Number of pieces in stock — backend auto-generates a serial per unit.
         quantity: form.quantity ? Math.max(0, parseInt(form.quantity, 10) || 0) : 0,
+        // One bullet point per line — shown on the product page under "Care & wear".
+        care_instructions: form.care_instructions.split("\n").map((s) => s.trim()).filter(Boolean),
       };
       if (editing === "new") {
         await api.post("/admin/products", payload);
@@ -143,6 +146,17 @@ export default function AdminProducts() {
           <label className="block md:col-span-2">
             <div className="text-xs text-ink-muted mb-1">Attributes (JSON — e.g. graha, purpose, mukhi, origin)</div>
             <textarea rows={3} value={form.attrs} onChange={(e) => setForm({ ...form, attrs: e.target.value })} className="w-full gold-line px-3 py-2 outline-none focus:border-maroon font-mono text-xs" />
+          </label>
+          <label className="block md:col-span-2">
+            <div className="text-xs text-ink-muted mb-1">Care & wear instructions (one bullet point per line)</div>
+            <textarea
+              rows={4} value={form.care_instructions}
+              onChange={(e) => setForm({ ...form, care_instructions: e.target.value })}
+              placeholder={"e.g.\nWear on the correct finger and metal as advised.\nCleanse in raw milk on the first Monday of every month.\nNever share the stone."}
+              data-testid="product-care-instructions-input"
+              className="w-full gold-line px-3 py-2 outline-none focus:border-maroon"
+            />
+            <div className="text-[10px] text-ink-muted mt-1">Shown as bullet points on the product page.</div>
           </label>
           <div className="md:col-span-2 flex gap-3">
             <button type="submit" className="brand-gradient text-ivory px-5 py-3 text-xs uppercase tracking-widest">Save</button>

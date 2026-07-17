@@ -478,6 +478,7 @@ class ProductIn(BaseModel):
     devanagari_name: Optional[str] = None
     is_serialized: bool = True  # if False, non-unit-based
     quantity: int = 0  # serialized only: auto-generate this many units with serial numbers
+    care_instructions: List[str] = []  # rendered as bullet points on the product page
 
 
 class UnitIn(BaseModel):
@@ -951,6 +952,7 @@ _PRODUCT_SELECT = """
            p.is_serialized                         AS is_serialized,
            (p.status = 'active')                   AS is_active,
            p.attributes                            AS attributes,
+           COALESCE(p.care_instructions, ARRAY[]::text[]) AS care_instructions,
            p.created_at                            AS created_at,
            COALESCE(m.urls, ARRAY[]::text[])       AS images,
            g.planet_graha::text                    AS g_graha,
@@ -1150,12 +1152,14 @@ async def admin_create_product(p: ProductIn, user_id: str = Depends(require_admi
             await conn.execute(
                 """INSERT INTO products (id, category_id, category_key, title,
                         title_devanagari, slug, description, base_price, compare_at_price,
-                        currency, is_serialized, attributes, status, published_at)
+                        currency, is_serialized, attributes, care_instructions, status,
+                        published_at)
                    VALUES ($1,$2,$3::category_key,$4,$5,$6::citext,$7,$8,$9,'INR',$10,
-                           $11,'active', now())""",
+                           $11,$12,'active', now())""",
                 pid, cat_id, ck, p.name, p.devanagari_name, p.slug, p.description,
                 db.to_amount(p.price), db.to_amount(p.mrp), p.is_serialized,
-                p.attrs or {})
+                p.attrs or {},
+                [s.strip() for s in p.care_instructions if s and s.strip()])
             # cart_items/order_items require a variant, so every product needs one.
             variant_id = uuid.uuid4()
             await conn.execute(
@@ -2295,6 +2299,31 @@ async def admin_list_orders(user_id: str = Depends(require_admin)):
     return await _shape_orders(rows)
 
 
+@api.get("/admin/customers/{user_id}")
+async def admin_customer_detail(user_id: str, _: str = Depends(require_admin)):
+    """Buyer profile + order history — surfaced on the dispatch panel so staff can see
+    who they're shipping to and what else this buyer has ordered before they dispatch
+    a package. require_admin (not require_owner): dispatch is an operational task any
+    admin/staff performs, so this needs the same access as /admin/orders and /admin/dispatch.
+    """
+    profile = await _load_user(user_id=user_id)
+    if not profile:
+        raise HTTPException(404, "Customer not found")
+    rows = await db.fetch_all(
+        _ORDER_SELECT + " WHERE o.user_id = $1::uuid ORDER BY o.created_at DESC LIMIT 20",
+        user_id)
+    orders = await _shape_orders(rows)
+    return {
+        "profile": {k: v for k, v in profile.items() if k != "password_hash"},
+        "orders": [
+            {"order_id": o["order_id"], "order_no": o.get("order_no"),
+             "status": o["status"], "total": o["total"],
+             "created_at": o["created_at"], "item_count": len(o["items"])}
+            for o in orders
+        ],
+    }
+
+
 @api.get("/admin/units")
 async def admin_units(user_id: str = Depends(require_admin), product_id: Optional[str] = None):
     sql = """
@@ -2604,6 +2633,7 @@ class ProductUpdateIn(BaseModel):
     devanagari_name: Optional[str] = None
     is_active: Optional[bool] = None
     stock_qty: Optional[int] = None  # for non-serialised items
+    care_instructions: Optional[List[str]] = None
 
 
 class CategoryIn(BaseModel):
@@ -3031,6 +3061,8 @@ _PRODUCT_PATCH_COLS = {
     "mrp": ("compare_at_price", db.to_amount),
     "is_serialized": ("is_serialized", lambda v: v),
     "attrs": ("attributes", lambda v: v),
+    "care_instructions": ("care_instructions",
+                          lambda v: [s.strip() for s in v if s and s.strip()]),
 }
 
 

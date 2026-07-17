@@ -196,7 +196,19 @@ export default function ProductDetail() {
                   <li className="flex gap-3"><QrCode size={18} className="text-gold-soft shrink-0" weight="duotone" /> Per-unit QR minted; only activated at dispatch.</li>
                 </ul>
               )}
-              {tab === "care" && <p>Wear on the correct finger and metal as advised. Cleanse in raw milk on the first Monday of every month. Never share the stone.</p>}
+              {tab === "care" && (
+                p.care_instructions?.length ? (
+                  <ul className="space-y-3">
+                    {p.care_instructions.map((line, i) => (
+                      <li key={i} className="flex gap-3">
+                        <HandHeart size={18} className="text-gold-soft shrink-0" weight="duotone" /> {line}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-ink-muted">No care instructions added for this piece yet.</p>
+                )
+              )}
               {tab === "reviews" && (
                 <div className="space-y-4">
                   {reviews.length === 0 && <p className="text-ink-muted">No reviews yet.</p>}
