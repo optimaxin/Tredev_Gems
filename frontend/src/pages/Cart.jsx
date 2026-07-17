@@ -1,7 +1,7 @@
 import React from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useCart } from "@/context/CartContext";
-import { formatINR } from "@/lib/api";
+import { formatINR, describeOptions } from "@/lib/api";
 import { TrashSimple, ShieldCheck, ShoppingBag, Plus, Minus } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
@@ -47,6 +47,9 @@ export default function Cart() {
                   <div className="mt-1 flex items-center gap-2 text-xs text-verified">
                     <ShieldCheck size={12} weight="duotone" /> Certified pieces assigned at dispatch
                   </div>
+                  {describeOptions(li.options_list) && (
+                    <div className="mt-1 text-xs text-ink-muted">{describeOptions(li.options_list)}</div>
+                  )}
                   <div className="mt-3 inline-flex items-center gold-line bg-cream">
                     <button
                       onClick={() => changeQty(li, li.qty - 1)}

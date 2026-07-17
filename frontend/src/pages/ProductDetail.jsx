@@ -15,6 +15,8 @@ export default function ProductDetail() {
   const [qty, setQty] = useState(1);
   const [tab, setTab] = useState("trust");
   const [active, setActive] = useState(0); // selected gallery image
+  // {group_key: choice_label} — which option the buyer picked in each selector.
+  const [picked, setPicked] = useState({});
   const cart = useCart();
   const nav = useNavigate();
 
@@ -26,10 +28,15 @@ export default function ProductDetail() {
     else setP((cur) => (cur && cur.slug === slug ? cur : null)); // never flash a different product
     setQty(1);
     setActive(0); // reset gallery to the first photo for the new product
+    setPicked({});
 
     api.get(`/products/${slug}`).then(({ data }) => {
       if (cancelled) return;
       setP(data);
+      // Which selectors exist is category-driven, so defaults can only be set once the
+      // product is loaded: every group starts on its first (free) choice.
+      const groups = data.variant_options?.groups || [];
+      setPicked(Object.fromEntries(groups.map((g) => [g.key, g.choices[0]?.label])));
       api.get(`/reviews/${data.product_id}`).then((r) => { if (!cancelled) setReviews(r.data); }).catch(() => {});
     }).catch(() => { if (!cancelled) setP((cur) => (cur && cur.slug === slug ? cur : false)); });
     return () => { cancelled = true; };
@@ -44,9 +51,44 @@ export default function ProductDetail() {
   const soldOut = p.is_serialized && stock != null && stock <= 0;
   const maxQty = p.is_serialized && stock != null ? stock : 99;
 
+  // Option groups come from the product's category (rudraksha gets certification/
+  // style/size, gemstone gets pooja/form/metal/designs/ring-size, everything gets
+  // Mantra Jaap...). Mirrors the backend's _visible_groups: a group with show_if only
+  // renders once its controlling group holds a matching value, so Metal/Designs/Size
+  // appear only after Ring or Pendant is chosen. Same additive surcharge math too, so
+  // the displayed price never lags the real one.
+  const allGroups = p.variant_options?.groups || [];
+  const visible = [];
+  const resolved = {}; // group key -> effective value, for evaluating later show_ifs
+  for (const g of allGroups) {
+    const si = g.show_if;
+    if (si && !(si.values || []).includes(resolved[si.group])) continue;
+    // A design restricted to certain metals only shows in those metals.
+    const choices = (g.choices || []).filter(
+      (c) => !c.metals?.length || c.metals.includes(resolved.metal)
+    );
+    if (!choices.length) continue;
+    visible.push({ ...g, choices });
+    const pick = picked[g.key];
+    if (pick != null && choices.some((c) => c.label === pick)) resolved[g.key] = pick;
+    else if (!g.optional) resolved[g.key] = choices[0].label;
+  }
+
+  const surchargeOf = (g) => {
+    const c = g.choices.find((x) => x.label === resolved[g.key]);
+    if (!c) return 0;
+    // Making charges are a % of the stone's base price, not the running total.
+    return (c.surcharge || 0) + Math.round((p.price * (c.surcharge_pct || 0)) / 100);
+  };
+  const unitPrice = visible.reduce((sum, g) => sum + surchargeOf(g), p.price);
+
   const addToCart = async () => {
     try {
-      await cart.add({ product_id: p.product_id, qty });
+      // Send only what's actually visible — a stale pick from a hidden group (e.g. a
+      // ring size after switching back to Loose Gemstone) must not reach the cart.
+      const options = {};
+      for (const g of visible) if (resolved[g.key] != null) options[g.key] = resolved[g.key];
+      await cart.add({ product_id: p.product_id, qty, options });
       toast.success(`${qty} × ${p.name} added to your cart`);
       nav("/cart");
     } catch (e) {
@@ -135,9 +177,12 @@ export default function ProductDetail() {
           {p.devanagari_name && <div className="font-deva text-2xl text-maroon-deep mt-2">{p.devanagari_name}</div>}
           <h1 className="font-display text-4xl md:text-5xl text-ink mt-2 leading-tight">{p.name}</h1>
           <div className="mt-6 flex items-baseline gap-4">
-            <div className="font-display text-4xl text-maroon-deep">{formatINR(p.price)}</div>
-            {p.mrp && p.mrp > p.price && <div className="text-ink-muted line-through">{formatINR(p.mrp)}</div>}
+            <div className="font-display text-4xl text-maroon-deep" data-testid="product-unit-price">{formatINR(unitPrice)}</div>
+            {p.mrp && p.mrp > unitPrice && <div className="text-ink-muted line-through">{formatINR(p.mrp)}</div>}
           </div>
+          {unitPrice !== p.price && (
+            <div className="text-xs text-ink-muted mt-1">Base price {formatINR(p.price)} + your selected options</div>
+          )}
           <p className="mt-6 text-ink-soft leading-relaxed">{p.description}</p>
 
           {/* Attributes */}
@@ -147,6 +192,95 @@ export default function ProductDetail() {
                 <div key={k} className="gold-line px-4 py-3">
                   <div className="text-[10px] uppercase tracking-widest text-ink-muted">{k}</div>
                   <div className="text-ink font-medium capitalize">{String(v)}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Option groups — which ones appear is driven by the product's category.
+              Price updates live as these change. Pre-made categories (jewellery,
+              malas, yantras) only carry Mantra Jaap; some carry nothing at all. */}
+          {visible.length > 0 && (
+            <div className="mt-8 space-y-5">
+              {visible.map((g) => (
+                <div key={g.key} data-testid={`option-group-${g.key}`}>
+                  <div className="text-xs uppercase tracking-widest text-ink-muted mb-2">
+                    {g.label}{g.key === "form" && resolved.form ? `: ${resolved.form}` : ""}
+                  </div>
+                  {g.type === "images" ? (
+                    <div className="grid grid-cols-3 sm:grid-cols-5 gap-3 max-h-[26rem] overflow-y-auto pr-1">
+                      {g.choices.map((c) => {
+                        const on = resolved[g.key] === c.label;
+                        return (
+                          <button
+                            key={c.label}
+                            type="button"
+                            onClick={() => setPicked((s) => ({ ...s, [g.key]: c.label }))}
+                            aria-pressed={on}
+                            data-testid={`option-${g.key}-${c.label}`}
+                            className={`text-center border p-1.5 transition-colors ${
+                              on ? "border-maroon bg-cream" : "border-gold/30 hover:border-maroon"
+                            }`}
+                          >
+                            <div className="aspect-square overflow-hidden bg-ivory">
+                              {c.image
+                                ? <img src={c.image} alt={c.label} loading="lazy" className="w-full h-full object-contain" />
+                                : <div className="w-full h-full flex items-center justify-center text-[10px] text-ink-muted">No image</div>}
+                            </div>
+                            <div className="mt-1 text-[11px] leading-tight">
+                              <div className="font-medium">{c.label}</div>
+                              {c.note && <div className="text-ink-muted">{c.note}</div>}
+                              {c.surcharge_pct > 0 && (
+                                <div className="text-ink-muted">+{c.surcharge_pct}% Making Charges</div>
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : g.type === "buttons" ? (
+                    <div className="flex flex-wrap gap-2">
+                      {g.choices.map((c) => {
+                        const on = resolved[g.key] === c.label;
+                        return (
+                          <button
+                            key={c.label}
+                            type="button"
+                            onClick={() => setPicked((s) => ({ ...s, [g.key]: c.label }))}
+                            aria-pressed={on}
+                            data-testid={`option-${g.key}-${c.label}`}
+                            className={`px-4 py-2.5 border text-sm transition-colors ${
+                              on ? "border-maroon bg-cream text-maroon-deep" : "border-gold/40 text-ink-soft hover:border-maroon"
+                            }`}
+                          >
+                            {c.label}
+                            {c.surcharge > 0 && <span className="text-xs text-ink-muted"> +{formatINR(c.surcharge)}</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <select
+                      value={resolved[g.key] ?? ""}
+                      onChange={(e) => setPicked((s) => ({ ...s, [g.key]: e.target.value }))}
+                      data-testid={`option-${g.key}`}
+                      className="w-full sm:max-w-md gold-line px-3 py-2.5 bg-ivory outline-none focus:border-maroon"
+                    >
+                      {/* Optional groups start unselected — e.g. "Select Ring System" */}
+                      {g.optional && <option value="">Select {g.label.replace(/^Select /, "")}</option>}
+                      {g.choices.map((c) => (
+                        <option key={c.label} value={c.label}>
+                          {c.label}{c.surcharge > 0 ? ` (+${formatINR(c.surcharge)})` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  {/* The escape hatch: staff will call to get the size. */}
+                  {g.key === "ring_size_system" && resolved.ring_size_system === "I don't know" && (
+                    <div className="mt-2 text-xs text-ink-soft gold-line bg-cream px-3 py-2">
+                      No problem — we'll contact you to confirm your ring size before we make it.
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

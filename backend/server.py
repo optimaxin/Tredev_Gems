@@ -5,6 +5,7 @@ Single-file FastAPI app. Prefixes all routes with /api.
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import hmac
 import json
@@ -12,12 +13,13 @@ import logging
 import os
 import re
 import secrets
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from datetime import time as dtime
 from datetime import date
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 import bcrypt
 import jwt as pyjwt
@@ -466,10 +468,47 @@ class LoginIn(BaseModel):
     password: str
 
 
+class OptionChoiceIn(BaseModel):
+    label: str
+    surcharge: int = 0  # paise, added to base price when this choice is selected
+    # Jewellery making charges are quoted as a % of the stone's base price ("+15%
+    # Making Charges"), not a flat amount. Both can be set; both are added.
+    surcharge_pct: float = 0.0
+
+
+class OptionShowIfIn(BaseModel):
+    """Renders this group only when `group`'s selected value is one of `values` —
+    e.g. Metal/Designs only appear once the buyer picks Ring or Pendant. Chains: a
+    group whose parent is itself hidden is hidden too."""
+    group: str
+    values: List[str] = []
+
+
+class OptionGroupIn(BaseModel):
+    """One buyer-facing selector on the product page. `key` is the stable id stored in
+    selected_options; `type` decides how it renders. The FIRST choice is the default
+    and is always free — see _normalize_variant_options."""
+    key: str
+    label: str
+    type: str = "dropdown"  # "dropdown" | "buttons" | "images"
+    choices: List[OptionChoiceIn] = []
+    show_if: Optional[OptionShowIfIn] = None
+    # Optional groups have no default: nothing is preselected and the buyer may leave
+    # them blank (the Ring Size System starts on "Select Ring System").
+    optional: bool = False
+
+
+class VariantOptionsIn(BaseModel):
+    """The product's selectors. Which groups a product gets is seeded from its
+    category's template (CATEGORY_OPTION_TEMPLATES); the ₹ surcharges are then set
+    per product by an admin."""
+    groups: List[OptionGroupIn] = []
+
+
 class ProductIn(BaseModel):
     name: str
     slug: str
-    category: str  # gemstone, rudraksha, bracelet, yantra, idol, pooja_kit, prashad, book, digital
+    category: str  # gemstone, rudraksha, bracelet, gemstone_jewellery, mala, yantra, idol, pooja_kit, prashad, book, digital
     description: str = ""
     price: int  # in paise
     mrp: Optional[int] = None
@@ -479,6 +518,8 @@ class ProductIn(BaseModel):
     is_serialized: bool = True  # if False, non-unit-based
     quantity: int = 0  # serialized only: auto-generate this many units with serial numbers
     care_instructions: List[str] = []  # rendered as bullet points on the product page
+    # Omitted -> the category's template is used as-is (all surcharges at 0).
+    variant_options: Optional[VariantOptionsIn] = None
 
 
 class UnitIn(BaseModel):
@@ -511,6 +552,10 @@ class CartAddIn(BaseModel):
     product_id: str
     unit_id: Optional[str] = None  # required for serialized items
     qty: int = 1
+    # {group_key: choice_label} — the buyer's picks. Always validated and priced
+    # server-side against the product's variant_options; the client never asserts a
+    # price. Missing groups fall back to their (free) default choice.
+    options: Dict[str, str] = {}
 
 
 class CheckoutIn(BaseModel):
@@ -953,6 +998,7 @@ _PRODUCT_SELECT = """
            (p.status = 'active')                   AS is_active,
            p.attributes                            AS attributes,
            COALESCE(p.care_instructions, ARRAY[]::text[]) AS care_instructions,
+           p.variant_options                       AS variant_options,
            p.created_at                            AS created_at,
            COALESCE(m.urls, ARRAY[]::text[])       AS images,
            g.planet_graha::text                    AS g_graha,
@@ -1058,6 +1104,11 @@ async def get_product(slug: str):
             p["product_id"])
     else:
         p["in_stock"] = None
+    # Merge in the selectors that aren't stored per product (shared designs catalog,
+    # standard ring sizes) so the page renders the complete option set.
+    p["variant_options"] = _effective_variant_options(
+        db.CATEGORY_TO_DB.get(p["category"], p["category"]), p.get("variant_options"),
+        await _get_design_groups())
     return p
 
 
@@ -1137,6 +1188,363 @@ async def _generate_units(conn, product_id: str, slug: str, category_key: str,
     return created
 
 
+# ── Product option groups (the buyer-facing selectors) ────────────────────────
+# What a product offers is decided by its CATEGORY; the ₹ surcharges on each choice
+# are then set per product by an admin. The first choice of every group is the
+# default and is always free, so a buyer who touches nothing pays exactly base_price.
+#
+# Mantra Jaap is an add-on ritual that applies to every category, so it's appended
+# to every template by _category_option_template() rather than repeated below.
+_MANTRA_JAAP_GROUP = {
+    "key": "mantra_jaap", "label": "Mantra Jaap", "type": "dropdown",
+    "choices": [
+        {"label": "No Mantra Jaap", "surcharge": 0},
+        {"label": "111 Mantra Jaap", "surcharge": 0},
+        {"label": "2100 Mantra Jaap", "surcharge": 0},
+        {"label": "5100 Mantra Jaap", "surcharge": 0},
+        {"label": "11000 Mantra Jaap", "surcharge": 0},
+        {"label": "21000 Mantra Jaap", "surcharge": 0},
+        {"label": "51000 Mantra Jaap", "surcharge": 0},
+    ],
+}
+
+_METALS = ["18k Gold", "22k Gold", "Silver", "Panchdhatu"]
+
+# Keyed by DB category_key. Categories absent here (books, idols, prashad, digital,
+# gemstone_jewellery, mala, yantra) intentionally get Mantra Jaap only — jewellery and
+# malas are pre-made, and yantras have no variants.
+_CATEGORY_OPTION_TEMPLATES: dict[str, list[dict]] = {
+    "rudraksha": [
+        {"key": "certification", "label": "Certification", "type": "dropdown",
+         "choices": [{"label": "Without certification", "surcharge": 0},
+                     {"label": "With certification", "surcharge": 0}]},
+        {"key": "style", "label": "Style", "type": "dropdown",
+         "choices": [{"label": "Without silver pendant", "surcharge": 0},
+                     {"label": "With silver pendant", "surcharge": 0}]},
+        {"key": "size", "label": "Size", "type": "dropdown",
+         "choices": [{"label": "Regular", "surcharge": 0}]},
+    ],
+    "gemstone": [
+        {"key": "pooja_energization", "label": "Pooja Energization", "type": "dropdown",
+         "choices": [
+             {"label": "SHUDH - Basic Energization", "surcharge": 0},
+             {"label": "SHUDH - Vedic Pooja with Video (Extra 2 Day)", "surcharge": 0},
+             {"label": "SHUDH - Prana Pratishta Pooja with Video (Extra 2 Day)", "surcharge": 0},
+         ]},
+        {"key": "form", "label": "Form", "type": "buttons",
+         "choices": [{"label": "Loose Gemstone", "surcharge": 0},
+                     {"label": "Ring", "surcharge": 0},
+                     {"label": "Pendant", "surcharge": 0}]},
+        # A loose stone isn't mounted, so metal only matters once it's a Ring/Pendant.
+        {"key": "metal", "label": "Metal", "type": "buttons",
+         "show_if": {"group": "form", "values": ["Ring", "Pendant"]},
+         "choices": [{"label": m, "surcharge": 0} for m in _METALS]},
+    ],
+    "gem_bracelet": [
+        {"key": "size", "label": "Size", "type": "dropdown",
+         "choices": [{"label": "8mm", "surcharge": 0}, {"label": "10mm", "surcharge": 0}]},
+    ],
+}
+
+_OPTION_GROUP_TYPES = {"dropdown", "buttons", "images"}
+
+# Ring sizing is an international standard, not per-product data, so the scales are
+# fixed here. "I don't know" is a deliberate escape hatch: the buyer isn't blocked from
+# ordering, the order is flagged instead and staff follow up (see _line_flags).
+_RING_SIZE_UNKNOWN = "I don't know"
+_RING_SIZE_SYSTEMS = ["Indian", "US", _RING_SIZE_UNKNOWN]
+_INDIAN_RING_SIZES = [str(n) for n in range(1, 31)]           # 1–30
+# 3–13 in half steps, rendered as "3", "3.5", … (not "3.0").
+_US_RING_SIZES = [f"{x / 2:g}" for x in range(6, 27)]
+
+
+def _category_option_template(category_key: str) -> dict:
+    """The default variant_options for a category — its own groups plus Mantra Jaap
+    (which every category offers). Returned with all surcharges at 0 for the admin to
+    price. Deep-copied so callers can mutate freely."""
+    groups = copy.deepcopy(_CATEGORY_OPTION_TEMPLATES.get(category_key, []))
+    groups.append(copy.deepcopy(_MANTRA_JAAP_GROUP))
+    return {"groups": groups}
+
+
+def _normalize_variant_options(vo: dict) -> dict:
+    """Raw variant_options dict (from VariantOptionsIn.model_dump(), used both at create
+    and via the PATCH path) -> the jsonb dict stored on products.variant_options.
+
+    Surcharges are clamped non-negative and stored in paise (the API's money unit —
+    jsonb has no numeric type of its own, so this keeps the same convention as every
+    other price field); surcharge_pct is a percentage of the base price, for jewellery
+    making charges. The first choice of each group is forced free because it's the
+    default a buyer lands on — the base price already covers it — except for `optional`
+    groups, which preselect nothing. Groups with fewer than two choices are dropped: a
+    selector with one option isn't a choice, it's noise.
+    """
+    groups = []
+    for g in (vo.get("groups") or []):
+        key = (g.get("key") or "").strip()
+        label = (g.get("label") or "").strip()
+        if not key or not label:
+            continue
+        choices = []
+        for c in (g.get("choices") or []):
+            clabel = (c.get("label") or "").strip()
+            if not clabel:
+                continue
+            choice = {"label": clabel,
+                      "surcharge": max(0, int(c.get("surcharge") or 0)),
+                      "surcharge_pct": max(0.0, round(float(c.get("surcharge_pct") or 0), 2))}
+            for extra in ("image", "note"):  # carried through for the images grid
+                if c.get(extra):
+                    choice[extra] = c[extra]
+            choices.append(choice)
+        # Drop duplicate labels — selected_options stores the label, so it must be unique.
+        seen, deduped = set(), []
+        for c in choices:
+            if c["label"] not in seen:
+                seen.add(c["label"])
+                deduped.append(c)
+        if len(deduped) < 2:
+            continue
+        optional = bool(g.get("optional"))
+        if not optional:
+            deduped[0]["surcharge"] = 0  # the default is always free
+            deduped[0]["surcharge_pct"] = 0.0
+        gtype = g.get("type") if g.get("type") in _OPTION_GROUP_TYPES else "dropdown"
+        out = {"key": key, "label": label, "type": gtype, "choices": deduped}
+        if optional:
+            out["optional"] = True
+        si = g.get("show_if")
+        if si and (si.get("group") or "").strip():
+            out["show_if"] = {"group": si["group"].strip(), "values": list(si.get("values") or [])}
+        groups.append(out)
+    return {"groups": groups}
+
+
+def _visible_groups(groups: list[dict], selected: Dict[str, str]) -> list[dict]:
+    """The groups that actually apply given the buyer's picks so far.
+
+    A group with `show_if` only counts when its controlling group is itself visible AND
+    currently holds one of the listed values — so Metal/Designs vanish for a Loose
+    Gemstone, and the Indian size list vanishes unless the Indian system is chosen.
+    Evaluated in declaration order, so a group can only depend on an earlier one.
+    """
+    visible: list[dict] = []
+    values: Dict[str, str] = {}
+    for g in groups:
+        si = g.get("show_if")
+        if si:
+            parent = si["group"]
+            if parent not in values or values[parent] not in (si.get("values") or []):
+                continue  # parent hidden, unset, or holding a value that doesn't apply
+        visible.append(g)
+        choices = g.get("choices") or []
+        picked = selected.get(g["key"])
+        if picked is not None and any(c["label"] == picked for c in choices):
+            values[g["key"]] = picked
+        elif not g.get("optional") and choices:
+            values[g["key"]] = choices[0]["label"]  # its default
+    return visible
+
+
+def _compute_variant_price(base_price: Decimal, variant_options: Optional[dict],
+                           options: Dict[str, str]) -> tuple[Decimal, dict]:
+    """base price + the surcharge of each selected choice, across the groups that apply.
+
+    Returns (unit_price, resolved_options) where resolved_options is the buyer's picks
+    filled in with each group's default for anything they didn't choose — so what gets
+    stored on the cart/order line is always complete and self-describing. Hidden groups
+    are skipped entirely: a Loose Gemstone can't be charged for a ring's metal, no
+    matter what the client sends. Always run server-side: the client supplies *choices*,
+    never a price, so this is the only place a cart/order line's price is decided.
+    """
+    total = base_price
+    resolved: dict[str, str] = {}
+    for g in _visible_groups(((variant_options or {}).get("groups") or []), options):
+        choices = g.get("choices") or []
+        if not choices:
+            continue
+        picked_label = options.get(g["key"])
+        if picked_label is None or picked_label == "":
+            if g.get("optional"):
+                continue  # nothing picked and nothing required — e.g. ring size left blank
+            choice = choices[0]  # untouched selector -> its free default
+        else:
+            choice = next((c for c in choices if c["label"] == picked_label), None)
+            if choice is None:
+                raise HTTPException(
+                    400, f"Unknown {g.get('label', g['key'])} option: {picked_label}")
+        resolved[g["key"]] = choice["label"]
+        total += db.to_amount(choice.get("surcharge") or 0)
+        pct = float(choice.get("surcharge_pct") or 0)
+        if pct:
+            # Making charges are quoted against the stone's own price, not the running
+            # total — so metal/pooja add-ons don't inflate the making charge.
+            total += (base_price * Decimal(str(pct)) / 100).quantize(Decimal("0.01"))
+    return total, resolved
+
+
+def _shape_selected_options(selected: Optional[dict], variant_options: Optional[dict]) -> list[dict]:
+    """selected_options map -> an ordered [{key,label,value,is_default}] list.
+
+    selected_options is a jsonb object, so it has no reliable key order and the labels
+    alone don't say which pick was the free default. Resolving against the product's
+    groups here gives both: customer views hide the defaults ("Without certification"
+    on every line is noise), while the admin/dispatch view shows all of them — staff
+    still need to know it's a "Loose Gemstone" even though that's the default.
+    Only groups that applied to this line are listed.
+    """
+    sel = selected or {}
+    out = []
+    for g in _visible_groups(((variant_options or {}).get("groups") or []), sel):
+        choices = g.get("choices") or []
+        if not choices:
+            continue
+        default = None if g.get("optional") else choices[0]["label"]
+        value = sel.get(g["key"], default)
+        if value is None:
+            continue  # optional group the buyer left blank
+        out.append({"key": g["key"], "label": g["label"], "value": value,
+                    "is_default": value == default})
+    return out
+
+
+async def _jewellery_design_groups(conn=None) -> list[dict]:
+    """The Designs pickers, built from the shared jewellery_designs catalog.
+
+    Designs live in one catalog rather than on each product, so a new design shows up
+    across every gemstone at once. Rings and pendants get separate groups because they
+    draw from different design sets. `metals` narrows a design to certain metals (empty
+    = all); the client filters the grid by the chosen metal.
+    """
+    sql = """SELECT code, applies_to, image_url, making_charge_pct, metals, note
+               FROM jewellery_designs WHERE is_active
+              ORDER BY applies_to, sort_order, code"""
+    rows = db._rows(await conn.fetch(sql)) if conn else await db.fetch_all(sql)
+    groups = []
+    for form, key, label in (("ring", "ring_design", "Designs"),
+                             ("pendant", "pendant_design", "Designs")):
+        choices = []
+        for r in rows:
+            if r["applies_to"] != form:
+                continue
+            c = {"label": r["code"], "surcharge": 0,
+                 "surcharge_pct": float(r["making_charge_pct"] or 0)}
+            if r["image_url"]:
+                c["image"] = r["image_url"]
+            if r["note"]:
+                c["note"] = r["note"]
+            if r["metals"]:
+                c["metals"] = list(r["metals"])
+            choices.append(c)
+        if len(choices) < 2:
+            continue  # nothing meaningful to choose between
+        groups.append({
+            "key": key, "label": label, "type": "images", "optional": True,
+            "show_if": {"group": "form", "values": [form.capitalize()]},
+            "choices": choices,
+        })
+    return groups
+
+
+def _ring_size_groups() -> list[dict]:
+    """Ring Size System + the two scale-specific size lists. All optional: nothing is
+    preselected, and "I don't know" lets the buyer through without a size (the order is
+    flagged for a callback instead — see _line_flags)."""
+    free = lambda labels: [{"label": l, "surcharge": 0, "surcharge_pct": 0.0} for l in labels]
+    return [
+        {"key": "ring_size_system", "label": "Ring Size System", "type": "dropdown",
+         "optional": True, "show_if": {"group": "form", "values": ["Ring"]},
+         "choices": free(_RING_SIZE_SYSTEMS)},
+        {"key": "indian_ring_size", "label": "Select Indian Ring Size", "type": "dropdown",
+         "optional": True, "show_if": {"group": "ring_size_system", "values": ["Indian"]},
+         "choices": free(_INDIAN_RING_SIZES)},
+        {"key": "us_ring_size", "label": "Select US Ring Size", "type": "dropdown",
+         "optional": True, "show_if": {"group": "ring_size_system", "values": ["US"]},
+         "choices": free(_US_RING_SIZES)},
+    ]
+
+
+_DESIGNS_CACHE: dict = {"at": 0.0, "groups": None}
+_DESIGNS_TTL = 60.0  # seconds
+
+
+async def _get_design_groups(conn=None) -> list[dict]:
+    """Design groups, memoised. Every product page, cart render and order shaping needs
+    them, but the catalog changes rarely — without this, shaping a page of orders would
+    re-query it once per line. Writes call _invalidate_designs() so the admin sees their
+    edit immediately."""
+    ts = time.monotonic()
+    if _DESIGNS_CACHE["groups"] is not None and ts - _DESIGNS_CACHE["at"] < _DESIGNS_TTL:
+        return _DESIGNS_CACHE["groups"]
+    groups = await _jewellery_design_groups(conn)
+    _DESIGNS_CACHE.update(at=ts, groups=groups)
+    return groups
+
+
+def _invalidate_designs() -> None:
+    _DESIGNS_CACHE.update(at=0.0, groups=None)
+
+
+def _effective_variant_options(category_key: str, variant_options: Optional[dict],
+                               design_groups: Optional[list[dict]] = None) -> dict:
+    """The product's stored groups plus the ones that aren't per-product data.
+
+    Designs come from a shared catalog and ring sizes are fixed standards, so neither is
+    stored on the product — they're merged in here instead, which keeps a single source
+    of truth and means every read path (product page, cart pricing, order shaping) sees
+    the same option set. Injected after Metal so the page reads Form → Metal → Designs →
+    Ring Size, as designed. Pure/sync so the per-line shapers can call it freely; pass
+    design_groups from _get_design_groups().
+    """
+    groups = copy.deepcopy((variant_options or {}).get("groups") or [])
+    if category_key != "gemstone":
+        return {"groups": groups}
+    dynamic = copy.deepcopy(design_groups or []) + _ring_size_groups()
+    idx = next((i + 1 for i, g in enumerate(groups) if g["key"] == "metal"), None)
+    if idx is None:
+        idx = next((i for i, g in enumerate(groups) if g["key"] == "mantra_jaap"), len(groups))
+    groups[idx:idx] = dynamic
+    return {"groups": groups}
+
+
+def _assert_design_metal_ok(variant_options: dict, selected: Dict[str, str]) -> None:
+    """A design may be restricted to certain metals. Group-by-group pricing can't catch
+    that (it's a cross-group rule), so it's checked here — the UI hides the mismatch,
+    this stops a hand-crafted request from ordering, say, a gold-only design in silver."""
+    metal = selected.get("metal")
+    if not metal:
+        return
+    for g in (variant_options.get("groups") or []):
+        if g["key"] not in ("ring_design", "pendant_design"):
+            continue
+        picked = selected.get(g["key"])
+        if not picked:
+            continue
+        choice = next((c for c in g["choices"] if c["label"] == picked), None)
+        allowed = (choice or {}).get("metals") or []
+        if allowed and metal not in allowed:
+            raise HTTPException(400, f"Design {picked} isn't available in {metal}.")
+
+
+def _line_flags(selected: Optional[dict], variant_options: Optional[dict]) -> list[str]:
+    """Fulfilment warnings for a cart/order line.
+
+    `ring_size_unknown` fires when a ring is ordered without a usable size — either the
+    buyer picked "I don't know" or left the size blank. Staff can't dispatch a ring they
+    can't size, so the admin panel surfaces this as a red tag to trigger a callback.
+    """
+    sel = selected or {}
+    flags = []
+    visible = _visible_groups(((variant_options or {}).get("groups") or []), sel)
+    keys = {g["key"] for g in visible}
+    if "ring_size_system" in keys:
+        system = sel.get("ring_size_system")
+        sized = sel.get("indian_ring_size") or sel.get("us_ring_size")
+        if system == _RING_SIZE_UNKNOWN or not system or not sized:
+            flags.append("ring_size_unknown")
+    return flags
+
+
 @api.post("/admin/products")
 async def admin_create_product(p: ProductIn, user_id: str = Depends(require_admin)):
     ck = db.CATEGORY_TO_DB.get(p.category)
@@ -1152,14 +1560,21 @@ async def admin_create_product(p: ProductIn, user_id: str = Depends(require_admi
             await conn.execute(
                 """INSERT INTO products (id, category_id, category_key, title,
                         title_devanagari, slug, description, base_price, compare_at_price,
-                        currency, is_serialized, attributes, care_instructions, status,
-                        published_at)
+                        currency, is_serialized, attributes, care_instructions,
+                        variant_options, status, published_at)
                    VALUES ($1,$2,$3::category_key,$4,$5,$6::citext,$7,$8,$9,'INR',$10,
-                           $11,$12,'active', now())""",
+                           $11,$12,$13,'active', now())""",
                 pid, cat_id, ck, p.name, p.devanagari_name, p.slug, p.description,
                 db.to_amount(p.price), db.to_amount(p.mrp), p.is_serialized,
                 p.attrs or {},
-                [s.strip() for s in p.care_instructions if s and s.strip()])
+                [s.strip() for s in p.care_instructions if s and s.strip()],
+                # No variant_options sent -> fall back to the category's template, so a
+                # product always offers the right selectors even via a bare API call.
+                # Normalized either way, so both paths behave identically (notably:
+                # single-choice groups get dropped).
+                _normalize_variant_options(
+                    p.variant_options.model_dump() if p.variant_options is not None
+                    else _category_option_template(ck)))
             # cart_items/order_items require a variant, so every product needs one.
             variant_id = uuid.uuid4()
             await conn.execute(
@@ -1478,6 +1893,9 @@ async def _cart_items(cart_id: str, conn=None) -> list[dict]:
                ci.product_unit_id::text          AS unit_id,
                ci.qty                            AS qty,
                ci.unit_price_snapshot            AS unit_price_snapshot,
+               ci.selected_options               AS options,
+               p.variant_options                 AS variant_options,
+               p.category_key::text              AS category_key,
                p.title                           AS name,
                (SELECT ma.object_key FROM product_media pm
                   JOIN media_assets ma ON ma.id = pm.media_id
@@ -1489,8 +1907,16 @@ async def _cart_items(cart_id: str, conn=None) -> list[dict]:
          ORDER BY ci.created_at
     """
     rows = db._rows(await conn.fetch(sql, cart_id)) if conn else await db.fetch_all(sql, cart_id)
-    return [{**{k: v for k, v in r.items() if k != "unit_price_snapshot"},
-             "price": db.to_paise(r["unit_price_snapshot"])} for r in rows]
+    designs = await _get_design_groups(conn)  # once, not per line
+    out = []
+    for r in rows:
+        effective = _effective_variant_options(r["category_key"], r["variant_options"], designs)
+        out.append({**{k: v for k, v in r.items()
+                       if k not in ("unit_price_snapshot", "variant_options", "category_key")},
+                    "options_list": _shape_selected_options(r["options"], effective),
+                    "flags": _line_flags(r["options"], effective),
+                    "price": db.to_paise(r["unit_price_snapshot"])})
+    return out
 
 
 async def _shape_cart(row: dict, conn=None) -> dict:
@@ -1540,6 +1966,7 @@ async def _get_or_create_cart(user_id: Optional[str], anon_key: Optional[str]) -
 async def cart_add(body: CartAddIn, request: Request, response: Response, user_id: Optional[str] = Depends(get_user_id_optional)):
     product = await db.fetch_one(
         """SELECT p.id::text AS product_id, p.title, p.base_price, p.is_serialized,
+                  p.variant_options AS variant_options, p.category_key::text AS category_key,
                   v.id::text AS variant_id
              FROM products p
              JOIN product_variants v ON v.product_id = p.id AND v.is_active
@@ -1547,6 +1974,15 @@ async def cart_add(body: CartAddIn, request: Request, response: Response, user_i
             ORDER BY v.created_at LIMIT 1""", body.product_id)
     if not product:
         raise HTTPException(404, "Product not found")
+
+    # Price is decided here, from the product's admin-configured surcharges — the
+    # client only ever supplies which choices it wants, never a price. Priced against
+    # the effective options so shared designs / ring sizes are honoured too.
+    effective = _effective_variant_options(
+        product["category_key"], product["variant_options"], await _get_design_groups())
+    unit_price, selected = _compute_variant_price(
+        product["base_price"], effective, body.options)
+    _assert_design_metal_ok(effective, selected)
 
     anon_key = request.cookies.get("gemora_anon")
     if not user_id and not anon_key:
@@ -1558,39 +1994,49 @@ async def cart_add(body: CartAddIn, request: Request, response: Response, user_i
     add_qty = max(1, body.qty)
 
     # Quantity-based cart: no serial is chosen here and nothing is reserved. Adds for
-    # the same product merge into one line so the +/- stepper works on a single row.
-    # Specific units are auto-assigned only when payment is captured (_mark_paid).
+    # the same product AND the same selected options merge into one line (so the +/-
+    # stepper works on a single row); a different certification/pendant/size choice is
+    # a distinct line, since it's priced differently. Specific units are auto-assigned
+    # only when payment is captured (_mark_paid) — all option combinations of a product
+    # draw from the same physical stock pool.
     async with db.transaction() as conn:
         existing = await conn.fetchrow(
             """SELECT id::text AS id, qty FROM cart_items
                 WHERE cart_id = $1::uuid AND variant_id = $2::uuid
-                  AND product_unit_id IS NULL
+                  AND product_unit_id IS NULL AND selected_options = $3::jsonb
                 ORDER BY created_at LIMIT 1""",
-            cart["cart_id"], product["variant_id"])
-        new_qty = (existing["qty"] if existing else 0) + add_qty
+            cart["cart_id"], product["variant_id"], selected)
+        line_new_qty = (existing["qty"] if existing else 0) + add_qty
 
-        # For serialized products, never let the cart exceed pieces actually in stock.
+        # For serialized products, never let the cart (summed across every options
+        # combination of this product) exceed pieces actually in stock.
         if product["is_serialized"]:
+            other_qty = await conn.fetchval(
+                """SELECT COALESCE(sum(qty),0) FROM cart_items
+                    WHERE cart_id = $1::uuid AND variant_id = $2::uuid
+                      AND product_unit_id IS NULL AND id IS DISTINCT FROM $3::uuid""",
+                cart["cart_id"], product["variant_id"],
+                existing["id"] if existing else None)
             available = await conn.fetchval(
                 """SELECT count(*) FROM product_units
                     WHERE product_id = $1::uuid AND status = 'in_stock'""",
                 product["product_id"])
             if available < 1:
                 raise HTTPException(409, "Out of stock.")
-            if new_qty > available:
+            if other_qty + line_new_qty > available:
                 raise HTTPException(
                     409, f"Only {available} in stock — can't add more.")
 
         if existing:
             await conn.execute(
-                "UPDATE cart_items SET qty = $2 WHERE id = $1::uuid", existing["id"], new_qty)
+                "UPDATE cart_items SET qty = $2 WHERE id = $1::uuid", existing["id"], line_new_qty)
         else:
             await conn.execute(
                 """INSERT INTO cart_items (id, cart_id, variant_id, product_unit_id, qty,
-                                           unit_price_snapshot)
-                   VALUES ($1,$2::uuid,$3::uuid,NULL,$4,$5)""",
-                uuid.uuid4(), cart["cart_id"], product["variant_id"], new_qty,
-                product["base_price"])
+                                           unit_price_snapshot, selected_options)
+                   VALUES ($1,$2::uuid,$3::uuid,NULL,$4,$5,$6::jsonb)""",
+                uuid.uuid4(), cart["cart_id"], product["variant_id"], line_new_qty,
+                unit_price, selected)
         await conn.execute(
             "UPDATE carts SET updated_at = now() WHERE id = $1::uuid", cart["cart_id"])
 
@@ -1645,12 +2091,20 @@ async def cart_set_qty(body: SetQtyIn, request: Request, user_id: Optional[str] 
             await conn.execute("DELETE FROM cart_items WHERE id = $1::uuid", body.line_id)
         else:
             if line["is_serialized"]:
+                # Sum every other line of this product (different options = different
+                # lines, same shared stock pool) so the cap holds across the whole cart.
+                other_qty = await conn.fetchval(
+                    """SELECT COALESCE(sum(ci.qty),0) FROM cart_items ci
+                         JOIN product_variants v ON v.id = ci.variant_id
+                        WHERE v.product_id = $1::uuid AND ci.cart_id = $2::uuid
+                          AND ci.id != $3::uuid""",
+                    line["product_id"], cart["cart_id"], body.line_id)
                 available = await conn.fetchval(
                     """SELECT count(*) FROM product_units
                         WHERE product_id = $1::uuid AND status = 'in_stock'""",
                     line["product_id"])
-                if body.qty > available:
-                    raise HTTPException(409, f"Only {available} in stock.")
+                if other_qty + body.qty > available:
+                    raise HTTPException(409, f"Only {available - other_qty} more in stock.")
             await conn.execute(
                 "UPDATE cart_items SET qty = $2 WHERE id = $1::uuid", body.line_id, body.qty)
         await conn.execute(
@@ -1715,6 +2169,9 @@ _ORDER_ITEMS_COLS = """
                oi.qty                 AS qty,
                oi.unit_price          AS unit_price,
                oi.title_snapshot      AS name,
+               oi.selected_options    AS options,
+               p.variant_options      AS variant_options,
+               p.category_key::text   AS category_key,
                p.is_serialized        AS is_serialized,
                -- Units assigned to this line at payment: many units can share one
                -- order_item (product_units.sold_order_item_id), so a qty-3 line lists
@@ -1728,9 +2185,14 @@ _ORDER_ITEMS_COLS = """
           JOIN products p ON p.id = oi.product_id"""
 
 
-def _shape_order_item(i: dict) -> dict:
-    return {**{k: v for k, v in i.items() if k not in ("unit_price", "order_id")},
+def _shape_order_item(i: dict, design_groups: Optional[list[dict]] = None) -> dict:
+    effective = _effective_variant_options(
+        i.get("category_key"), i.get("variant_options"), design_groups)
+    return {**{k: v for k, v in i.items()
+               if k not in ("unit_price", "order_id", "variant_options", "category_key")},
             "serials": list(i.get("serials") or []),
+            "options_list": _shape_selected_options(i.get("options"), effective),
+            "flags": _line_flags(i.get("options"), effective),
             "price": db.to_paise(i["unit_price"])}
 
 
@@ -1744,9 +2206,10 @@ async def _order_items_by_id(order_ids: list[str]) -> dict[str, list[dict]]:
     rows = await db.fetch_all(
         _ORDER_ITEMS_COLS + " WHERE oi.order_id = ANY($1::uuid[]) ORDER BY oi.created_at",
         order_ids)
+    designs = await _get_design_groups()
     grouped: dict[str, list[dict]] = {}
     for i in rows:
-        grouped.setdefault(i["order_id"], []).append(_shape_order_item(i))
+        grouped.setdefault(i["order_id"], []).append(_shape_order_item(i, designs))
     return grouped
 
 
@@ -1764,7 +2227,8 @@ async def _shape_order(row: Optional[dict], conn=None, items: Optional[list] = N
     if items is None:
         sql = _ORDER_ITEMS_COLS + " WHERE oi.order_id = $1::uuid ORDER BY oi.created_at"
         rows = db._rows(await conn.fetch(sql, r["order_id"])) if conn else await db.fetch_all(sql, r["order_id"])
-        items = [_shape_order_item(i) for i in rows]
+        designs = await _get_design_groups(conn)
+        items = [_shape_order_item(i, designs) for i in rows]
     shipping = {k: r.pop(f"shipping_{k}") for k in
                 ("name", "phone", "address", "city", "state", "pincode")}
     shipping = {f"shipping_{k}": v for k, v in shipping.items()}
@@ -1793,18 +2257,24 @@ async def checkout(body: CheckoutIn, request: Request, user_id: Optional[str] = 
     if not items:
         raise HTTPException(400, "Cart is empty")
 
-    # Stock guard before we create a payable order. Units are only assigned at capture,
-    # so this is a best-effort early check — _mark_paid re-checks atomically under lock.
+    # Stock guard before we create a payable order. Sums quantities across every line
+    # of the same product — different certification/pendant/size choices are different
+    # cart lines, but they draw from the one shared stock pool. Units are only assigned
+    # at capture, so this is a best-effort early check — _mark_paid re-checks atomically.
+    qty_by_product: dict[str, int] = {}
     for li in items:
+        qty_by_product[li["product_id"]] = qty_by_product.get(li["product_id"], 0) + li["qty"]
+    for pid, total_qty in qty_by_product.items():
         chk = await db.fetch_one(
             """SELECT p.is_serialized,
                       (SELECT count(*) FROM product_units pu
                         WHERE pu.product_id = p.id AND pu.status = 'in_stock') AS avail
-                 FROM products p WHERE p.id = $1::uuid""", li["product_id"])
-        if chk and chk["is_serialized"] and chk["avail"] < li["qty"]:
+                 FROM products p WHERE p.id = $1::uuid""", pid)
+        if chk and chk["is_serialized"] and chk["avail"] < total_qty:
+            name = next((li["name"] for li in items if li["product_id"] == pid), "An item")
             raise HTTPException(
-                409, f"“{li['name']}” is out of stock — only {chk['avail']} of "
-                     f"{li['qty']} available.")
+                409, f"“{name}” is out of stock — only {chk['avail']} of "
+                     f"{total_qty} available.")
 
     subtotal = sum(li["price"] * li["qty"] for li in items)
     gst = int(round(subtotal * 0.03))  # 3% GST on gemstones (illustrative)
@@ -1883,14 +2353,15 @@ async def checkout(body: CheckoutIn, request: Request, user_id: Optional[str] = 
             await conn.execute(
                 """INSERT INTO order_items (id, order_id, product_id, variant_id,
                         product_unit_id, title_snapshot, qty, unit_price, line_total,
-                        fulfillment_status)
+                        fulfillment_status, selected_options)
                    VALUES ($1,$2,$3::uuid,
                            (SELECT id FROM product_variants WHERE product_id=$3::uuid
                              ORDER BY created_at LIMIT 1),
-                           $4::uuid,$5,$6,$7,$8,'pending')""",
+                           $4::uuid,$5,$6,$7,$8,'pending',$9::jsonb)""",
                 uuid.uuid4(), order_id, li["product_id"], li["unit_id"], li["name"],
                 li["qty"], db.to_amount(li["price"]),
-                db.to_amount(li["price"] * li["qty"]))
+                db.to_amount(li["price"] * li["qty"]),
+                li.get("options") or {})
 
         await conn.execute(
             """INSERT INTO payments (id, order_id, gateway, gateway_ref, amount, currency,
@@ -2035,16 +2506,21 @@ async def checkout_pay(order_id: str, request: Request,
 
     # Nothing is held for a pending order — units are assigned at capture (_mark_paid).
     # Guard here so the buyer isn't sent to pay for something already out of stock.
+    # Sums across lines of the same product (different options = different lines,
+    # same shared stock pool) — an order can hold e.g. both a certified and an
+    # uncertified line for the same product.
+    qty_by_product: dict[str, int] = {}
     for li in order.get("items", []):
-        if not li.get("is_serialized"):
-            continue
+        if li.get("is_serialized"):
+            qty_by_product[li["product_id"]] = qty_by_product.get(li["product_id"], 0) + (li.get("qty") or 1)
+    for pid, total_qty in qty_by_product.items():
         available = await db.fetch_val(
             """SELECT count(*) FROM product_units
-                WHERE product_id = $1::uuid AND status = 'in_stock'""", li["product_id"])
-        if available < (li.get("qty") or 1):
+                WHERE product_id = $1::uuid AND status = 'in_stock'""", pid)
+        if available < total_qty:
+            name = next((li.get("name") for li in order["items"] if li["product_id"] == pid), "This item")
             raise HTTPException(
-                409, f"“{li.get('name', 'This item')}” is out of stock — "
-                     f"only {available} of {li.get('qty') or 1} left.")
+                409, f"“{name}” is out of stock — only {available} of {total_qty} left.")
 
     rp_key = os.environ.get("RAZORPAY_KEY_ID", "")
     rp_secret = os.environ.get("RAZORPAY_KEY_SECRET", "")
@@ -2210,30 +2686,45 @@ async def admin_dispatch(body: DispatchIn, user_id: str = Depends(require_admin)
 
     async with db.transaction() as conn:
         # Every unit assigned to this order at payment (many units can hang off one line).
+        # The cert lookup only counts a *live* (non-revoked) certificate — a unit that
+        # was returned/refunded and had its cert revoked must get a fresh one here, and
+        # the LATERAL + LIMIT 1 keeps this to one row per unit even if it has several
+        # certs in its history (original + reissued after a revoke).
         units = db._rows(await conn.fetch(
             """SELECT pu.id::text AS unit_id, pu.serial_no AS serial,
                       pu.product_id::text AS product_id, p.title AS product_name,
-                      ac.id::text AS cert_id
+                      ac.cert_id AS cert_id
                  FROM product_units pu
                  JOIN order_items oi ON oi.id = pu.sold_order_item_id
                  LEFT JOIN products p ON p.id = pu.product_id
-                 LEFT JOIN authenticity_certificates ac ON ac.product_unit_id = pu.id
+                 LEFT JOIN LATERAL (
+                       SELECT id::text AS cert_id FROM authenticity_certificates
+                        WHERE product_unit_id = pu.id AND revoked_at IS NULL
+                        ORDER BY issued_at DESC LIMIT 1
+                 ) ac ON true
                 WHERE oi.order_id = $1::uuid""", body.order_id))
         if not units:
             raise HTTPException(400, "No paid units on this order — capture payment first.")
 
-        # Issue a signed certificate for any unit that doesn't already have one.
+        # Issue a signed certificate for any unit that doesn't already have a live one.
         for u in units:
             if not u["cert_id"]:
                 await _issue_certificate_tx(conn, u, body, user_id)
 
-        # Activate every QR on this order's units — this is what makes a public scan verify.
+        # Activate only the QR on each unit's LIVE certificate — this is what makes a
+        # public scan verify. Scoping to authenticity_certificate_id (not just
+        # product_unit_id) matters: a unit re-dispatched after a revoke has an old,
+        # already-revoked QR sitting in the same table, and reactivating that one would
+        # let a stale label out in the wild start verifying as AUTHENTIC again.
         await conn.execute(
             """UPDATE qr_codes SET status='active', activated_at=now()
-                WHERE product_unit_id IN (
-                    SELECT pu.id FROM product_units pu
-                     JOIN order_items oi ON oi.id = pu.sold_order_item_id
-                    WHERE oi.order_id = $1::uuid)""", body.order_id)
+                WHERE authenticity_certificate_id IN (
+                    SELECT ac.id
+                      FROM product_units pu
+                      JOIN order_items oi ON oi.id = pu.sold_order_item_id
+                      JOIN authenticity_certificates ac ON ac.product_unit_id = pu.id
+                                                        AND ac.revoked_at IS NULL
+                     WHERE oi.order_id = $1::uuid)""", body.order_id)
 
         # Shipment carries tracking + the buyer-facing ETA; orders only carries status.
         await conn.execute(
@@ -2250,14 +2741,17 @@ async def admin_dispatch(body: DispatchIn, user_id: str = Depends(require_admin)
             """INSERT INTO order_events (id, order_id, actor_id, from_status, to_status, reason)
                VALUES ($1,$2::uuid,$3::uuid,'paid','shipped','dispatched')""",
             uuid.uuid4(), body.order_id, user_id)
-        # Add every dispatched unit to the buyer's verified vault.
+        # Add every dispatched unit to the buyer's verified vault — via the same live
+        # (non-revoked) certificate's QR, for the reasons above.
         if order.get("user_id"):
             await conn.execute(
                 """INSERT INTO verified_items (user_id, product_unit_id, qr_code_id, product_id)
                    SELECT $2::uuid, pu.id, q.id, pu.product_id
                      FROM product_units pu
                      JOIN order_items oi ON oi.id = pu.sold_order_item_id
-                     LEFT JOIN qr_codes q ON q.product_unit_id = pu.id
+                     JOIN authenticity_certificates ac ON ac.product_unit_id = pu.id
+                                                       AND ac.revoked_at IS NULL
+                     JOIN qr_codes q ON q.authenticity_certificate_id = ac.id
                     WHERE oi.order_id = $1::uuid
                    ON CONFLICT (user_id, product_unit_id) DO NOTHING""",
                 body.order_id, order["user_id"])
@@ -2634,6 +3128,7 @@ class ProductUpdateIn(BaseModel):
     is_active: Optional[bool] = None
     stock_qty: Optional[int] = None  # for non-serialised items
     care_instructions: Optional[List[str]] = None
+    variant_options: Optional[VariantOptionsIn] = None
 
 
 class CategoryIn(BaseModel):
@@ -3063,6 +3558,7 @@ _PRODUCT_PATCH_COLS = {
     "attrs": ("attributes", lambda v: v),
     "care_instructions": ("care_instructions",
                           lambda v: [s.strip() for s in v if s and s.strip()]),
+    "variant_options": ("variant_options", _normalize_variant_options),
 }
 
 
@@ -3121,6 +3617,99 @@ async def admin_delete_product(product_id: str, _: str = Depends(require_perm("p
 @api.get("/admin/categories")
 async def admin_list_categories(_: str = Depends(require_perm("categories"))):
     return await _list_categories()
+
+
+class DesignIn(BaseModel):
+    code: str                       # R14, P01 …
+    applies_to: str                 # "ring" | "pendant"
+    image_url: Optional[str] = None
+    making_charge_pct: float = 0.0  # % of the stone's base price
+    metals: List[str] = []          # empty = every metal
+    note: Optional[str] = None      # e.g. "21k Advance only"
+    is_active: bool = True
+    sort_order: int = 0
+
+
+@api.get("/admin/designs")
+async def admin_list_designs(_: str = Depends(require_perm("products"))):
+    return await db.fetch_all(
+        """SELECT id::text AS design_id, code, applies_to, image_url,
+                  making_charge_pct::float AS making_charge_pct, metals, note,
+                  is_active, sort_order
+             FROM jewellery_designs ORDER BY applies_to, sort_order, code""")
+
+
+@api.post("/admin/designs")
+async def admin_create_design(body: DesignIn, actor: str = Depends(require_perm("products"))):
+    if body.applies_to not in ("ring", "pendant"):
+        raise HTTPException(400, "applies_to must be 'ring' or 'pendant'")
+    bad = [m for m in body.metals if m not in _METALS]
+    if bad:
+        raise HTTPException(400, f"Unknown metal(s): {', '.join(bad)}")
+    did = uuid.uuid4()
+    try:
+        await db.execute(
+            """INSERT INTO jewellery_designs (id, code, applies_to, image_url,
+                    making_charge_pct, metals, note, is_active, sort_order)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)""",
+            did, body.code.strip(), body.applies_to, body.image_url,
+            max(0.0, body.making_charge_pct), body.metals, body.note,
+            body.is_active, body.sort_order)
+    except asyncpg.exceptions.UniqueViolationError:
+        raise HTTPException(400, f"Design {body.code} already exists for {body.applies_to}")
+    _invalidate_designs()
+    await audit_log(actor, "design.create", str(did), {"code": body.code})
+    return {"design_id": str(did)}
+
+
+@api.patch("/admin/designs/{design_id}")
+async def admin_update_design(design_id: str, body: DesignIn,
+                              actor: str = Depends(require_perm("products"))):
+    bad = [m for m in body.metals if m not in _METALS]
+    if bad:
+        raise HTTPException(400, f"Unknown metal(s): {', '.join(bad)}")
+    got = await db.fetch_val(
+        """UPDATE jewellery_designs SET code=$2, applies_to=$3, image_url=$4,
+               making_charge_pct=$5, metals=$6, note=$7, is_active=$8, sort_order=$9,
+               updated_at=now()
+            WHERE id=$1::uuid RETURNING id::text""",
+        design_id, body.code.strip(), body.applies_to, body.image_url,
+        max(0.0, body.making_charge_pct), body.metals, body.note,
+        body.is_active, body.sort_order)
+    if not got:
+        raise HTTPException(404, "Design not found")
+    _invalidate_designs()
+    await audit_log(actor, "design.update", design_id, {"code": body.code})
+    return {"ok": True}
+
+
+@api.delete("/admin/designs/{design_id}")
+async def admin_delete_design(design_id: str, actor: str = Depends(require_perm("products"))):
+    # Hard delete is safe: orders snapshot the chosen design code in selected_options,
+    # so past orders keep reading correctly even once a design is retired.
+    got = await db.fetch_val(
+        "DELETE FROM jewellery_designs WHERE id=$1::uuid RETURNING code", design_id)
+    if not got:
+        raise HTTPException(404, "Design not found")
+    _invalidate_designs()
+    await audit_log(actor, "design.delete", design_id, {"code": got})
+    return {"ok": True}
+
+
+@api.get("/admin/metals")
+async def admin_metals(_: str = Depends(require_perm("products"))):
+    return {"metals": _METALS}
+
+
+@api.get("/admin/category-options/{category}")
+async def admin_category_option_template(category: str, _: str = Depends(require_perm("products"))):
+    """The default option groups for a category, all surcharges at 0. The product form
+    calls this when the admin picks a category so the right selectors appear ready to
+    be priced."""
+    ck = db.CATEGORY_TO_DB.get(category)
+    if not ck:
+        raise HTTPException(400, f"Unknown category: {category}")
+    return _category_option_template(ck)
 
 
 @api.post("/admin/categories")

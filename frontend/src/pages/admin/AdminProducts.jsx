@@ -3,7 +3,21 @@ import { api, formatINR } from "@/lib/api";
 import { toast } from "sonner";
 import { PencilSimple, PlusCircle, Trash } from "@phosphor-icons/react";
 
-const EMPTY = { name: "", slug: "", category: "gemstone", description: "", price: "", mrp: "", images: "", devanagari_name: "", attrs: "{}", quantity: "", care_instructions: "" };
+const EMPTY = {
+  name: "", slug: "", category: "gemstone", description: "", price: "", mrp: "",
+  images: "", devanagari_name: "", attrs: "{}", quantity: "", care_instructions: "",
+  groups: [], // option groups, seeded from the category template
+};
+
+// Surcharges travel as paise; the form edits rupees.
+const groupsToForm = (groups) =>
+  (groups || []).map((g) => ({
+    ...g, // keeps show_if / optional intact for the round-trip back to the API
+    choices: (g.choices || []).map((c) => ({
+      ...c,
+      surcharge: c.surcharge ? (c.surcharge / 100).toString() : "",
+    })),
+  }));
 
 export default function AdminProducts() {
   const [products, setProducts] = useState([]);
@@ -17,6 +31,18 @@ export default function AdminProducts() {
   };
   useEffect(() => { refresh(); }, []);
 
+  // What a product offers is category-driven, so the form pulls that category's
+  // template and the admin just fills in the ₹. Used for new products and whenever
+  // the category changes.
+  const loadTemplate = async (category) => {
+    try {
+      const { data } = await api.get(`/admin/category-options/${category}`);
+      setForm((f) => ({ ...f, groups: groupsToForm(data.groups) }));
+    } catch (e) {
+      toast.error("Could not load category options");
+    }
+  };
+
   const startEdit = (p) => {
     setEditing(p);
     setForm({
@@ -28,9 +54,15 @@ export default function AdminProducts() {
       images: (p.images || []).join("\n"),
       attrs: JSON.stringify(p.attrs || {}, null, 2),
       care_instructions: (p.care_instructions || []).join("\n"),
+      groups: groupsToForm(p.variant_options?.groups),
     });
   };
-  const startNew = () => { setEditing("new"); setForm(EMPTY); };
+  const startNew = () => { setEditing("new"); setForm(EMPTY); loadTemplate(EMPTY.category); };
+
+  const changeCategory = (category) => {
+    setForm((f) => ({ ...f, category }));
+    loadTemplate(category); // different category -> different selectors
+  };
 
   const save = async (e) => {
     e.preventDefault();
@@ -42,8 +74,17 @@ export default function AdminProducts() {
         if (isNaN(n) || n < 0) throw new Error("Enter a valid price in rupees");
         return Math.round(n * 100);
       };
+      // Same conversion but optional fields default to 0 (no surcharge), not null —
+      // variant_options surcharges are plain (non-optional) ints on the backend.
+      const surchargeToPaise = (v) => {
+        if (v === "" || v == null) return 0;
+        const n = Number(v);
+        if (isNaN(n) || n < 0) throw new Error("Enter a valid surcharge in rupees");
+        return Math.round(n * 100);
+      };
+      const { groups, ...rest } = form;
       const payload = {
-        ...form,
+        ...rest,
         price: rupeesToPaise(form.price) || 0,
         mrp: form.mrp ? rupeesToPaise(form.mrp) : null,
         images: form.images.split("\n").map((s) => s.trim()).filter(Boolean),
@@ -52,6 +93,27 @@ export default function AdminProducts() {
         quantity: form.quantity ? Math.max(0, parseInt(form.quantity, 10) || 0) : 0,
         // One bullet point per line — shown on the product page under "Care & wear".
         care_instructions: form.care_instructions.split("\n").map((s) => s.trim()).filter(Boolean),
+        // The product page's selectors. Which groups exist came from the category
+        // template; the admin sets each choice's ₹ surcharge. The first choice of a
+        // group is the free default (the backend enforces that too). show_if/optional
+        // are carried through untouched — they're what makes Metal appear only for a
+        // Ring/Pendant, so dropping them here would silently break the product page.
+        variant_options: {
+          groups: groups.map((g) => ({
+            key: g.key,
+            label: g.label,
+            type: g.type,
+            ...(g.show_if ? { show_if: g.show_if } : {}),
+            ...(g.optional ? { optional: true } : {}),
+            choices: (g.choices || [])
+              .map((c) => ({
+                label: c.label.trim(),
+                surcharge: surchargeToPaise(c.surcharge),
+                ...(c.surcharge_pct ? { surcharge_pct: Number(c.surcharge_pct) } : {}),
+              }))
+              .filter((c) => c.label),
+          })),
+        },
       };
       if (editing === "new") {
         await api.post("/admin/products", payload);
@@ -69,6 +131,27 @@ export default function AdminProducts() {
     await api.delete(`/admin/products/${p.product_id}`);
     toast.success("Deactivated"); refresh();
   };
+
+  // Option-group editor. Groups come from the category template; the admin prices the
+  // choices and can add/remove extra ones (e.g. another size).
+  const setChoice = (gi, ci, key, val) =>
+    setForm((f) => ({
+      ...f,
+      groups: f.groups.map((g, i) => (i !== gi ? g : {
+        ...g,
+        choices: g.choices.map((c, j) => (j === ci ? { ...c, [key]: val } : c)),
+      })),
+    }));
+  const addChoice = (gi) =>
+    setForm((f) => ({
+      ...f,
+      groups: f.groups.map((g, i) => (i !== gi ? g : { ...g, choices: [...g.choices, { label: "", surcharge: "" }] })),
+    }));
+  const removeChoice = (gi, ci) =>
+    setForm((f) => ({
+      ...f,
+      groups: f.groups.map((g, i) => (i !== gi ? g : { ...g, choices: g.choices.filter((_, j) => j !== ci) })),
+    }));
 
   return (
     <div>
@@ -117,7 +200,7 @@ export default function AdminProducts() {
           ))}
           <label className="block">
             <div className="text-xs text-ink-muted mb-1">Category</div>
-            <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className="w-full gold-line px-3 py-2 bg-ivory">
+            <select value={form.category} onChange={(e) => changeCategory(e.target.value)} data-testid="product-category-select" className="w-full gold-line px-3 py-2 bg-ivory">
               {cats.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
             </select>
           </label>
@@ -135,6 +218,77 @@ export default function AdminProducts() {
               </div>
             </label>
           )}
+
+          {/* Pricing options — which selectors appear is driven by the category */}
+          <div className="md:col-span-2 pt-2 border-t border-gold/20">
+            <div className="text-xs uppercase tracking-widest text-gold-soft mt-3 mb-2">Pricing options</div>
+            <div className="text-[10px] text-ink-muted mb-3">
+              These selectors come from the <strong>{cats.find((c) => c.key === form.category)?.label || form.category}</strong> category
+              and appear on the product page. The first choice in each is the free default the buyer starts on; set what each
+              paid choice adds to the base price. A selector with only one choice isn't shown to buyers.
+            </div>
+
+            {form.groups.length === 0 ? (
+              <div className="gold-line bg-cream px-3 py-4 text-xs text-ink-muted">
+                This category has no buyer-selectable options — the product is sold exactly as listed.
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {form.groups.map((g, gi) => (
+                  <div key={g.key} className="gold-line bg-cream p-3" data-testid={`product-group-${g.key}`}>
+                    <div className="flex items-baseline justify-between mb-2 gap-2 flex-wrap">
+                      <div className="text-xs uppercase tracking-widest text-maroon">{g.label}</div>
+                      <div className="text-[10px] font-mono text-ink-muted">
+                        {g.show_if && `shown only for ${g.show_if.values.join(" / ")} · `}{g.type}
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      {g.choices.map((c, ci) => {
+                        const isDefault = ci === 0;
+                        return (
+                          <div key={ci} className="flex gap-2 items-center">
+                            <input
+                              value={c.label}
+                              onChange={(e) => setChoice(gi, ci, "label", e.target.value)}
+                              placeholder="Option label"
+                              data-testid={`product-${g.key}-label-${ci}`}
+                              className="flex-1 gold-line bg-ivory px-3 py-2 outline-none focus:border-maroon text-sm"
+                            />
+                            <div className="flex gold-line bg-ivory overflow-hidden focus-within:border-maroon w-36 shrink-0">
+                              <span className="px-2 py-2 bg-cream text-ink-soft border-r border-gold/30 font-serifd text-sm">₹</span>
+                              {isDefault ? (
+                                <span className="flex-1 px-2 py-2 text-xs text-ink-muted self-center">Included</span>
+                              ) : (
+                                <input
+                                  type="number" min="0" step="0.01" inputMode="decimal"
+                                  value={c.surcharge}
+                                  onChange={(e) => setChoice(gi, ci, "surcharge", e.target.value)}
+                                  placeholder="0"
+                                  data-testid={`product-${g.key}-surcharge-${ci}`}
+                                  className="flex-1 px-2 py-2 outline-none text-sm"
+                                />
+                              )}
+                            </div>
+                            {!isDefault ? (
+                              <button type="button" onClick={() => removeChoice(gi, ci)} className="text-ink-muted hover:text-revoked shrink-0">
+                                <Trash size={14} />
+                              </button>
+                            ) : (
+                              <span className="w-[14px] shrink-0" />
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <button type="button" onClick={() => addChoice(gi)} data-testid={`product-${g.key}-add`} className="mt-2 text-xs text-maroon underline inline-flex items-center gap-1">
+                      <PlusCircle size={12} /> Add option
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           <label className="block md:col-span-2">
             <div className="text-xs text-ink-muted mb-1">Description</div>
             <textarea rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="w-full gold-line px-3 py-2 outline-none focus:border-maroon" />

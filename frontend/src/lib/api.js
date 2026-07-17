@@ -64,3 +64,19 @@ export const formatINR = (paise) => {
   const rupees = Math.round(paise) / 100;
   return `₹${rupees.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
 };
+
+// Human-readable summary of a cart/order line's options_list — the server-resolved
+// [{key,label,value,is_default}] for that line, in the product's own group order.
+// e.g. "With certification · 111 Mantra Jaap".
+//
+// By default only non-default picks are shown: printing "Without certification · No
+// Mantra Jaap" on every line is noise. Pass {all: true} for fulfilment views, where
+// staff need every pick spelled out ("Loose Gemstone" matters even though it's the
+// default). Returns null when there's nothing worth showing.
+export const describeOptions = (optionsList, { all = false } = {}) => {
+  if (!Array.isArray(optionsList)) return null;
+  const parts = optionsList
+    .filter((o) => (all || !o.is_default) && o.value)
+    .map((o) => o.value);
+  return parts.length ? parts.join(" · ") : null;
+};

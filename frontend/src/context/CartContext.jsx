@@ -21,8 +21,8 @@ export function CartProvider({ children }) {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  const add = async ({ product_id, unit_id, qty = 1 }) => {
-    const { data } = await api.post("/cart/add", { product_id, unit_id, qty });
+  const add = async ({ product_id, unit_id, qty = 1, options }) => {
+    const { data } = await api.post("/cart/add", { product_id, unit_id, qty, options });
     setCart(data);
     return data;
   };

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { motion, useReducedMotion } from "framer-motion";
-import { api, formatINR } from "@/lib/api";
+import { api, formatINR, describeOptions } from "@/lib/api";
 import {
   ShieldCheck, QrCode, Truck, HandHeart, ArrowRight, Package, Sparkle, Certificate,
 } from "@phosphor-icons/react";
@@ -158,7 +158,12 @@ export default function OrderConfirmed() {
                 <div key={li.line_id || i} className="flex items-center justify-between text-sm">
                   <span className="flex items-center gap-2 min-w-0">
                     <Package size={14} weight="duotone" className="text-gold-soft shrink-0" />
-                    <span className="truncate">{li.name}{li.qty > 1 ? ` × ${li.qty}` : ""}</span>
+                    <span className="truncate">
+                      {li.name}{li.qty > 1 ? ` × ${li.qty}` : ""}
+                      {describeOptions(li.options_list) && (
+                        <span className="block text-xs text-ink-muted">{describeOptions(li.options_list)}</span>
+                      )}
+                    </span>
                   </span>
                   <span className="font-mono text-ink-soft shrink-0">{formatINR(li.price * li.qty)}</span>
                 </div>

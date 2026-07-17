@@ -1,9 +1,23 @@
 import React, { useEffect, useState } from "react";
-import { api, formatINR } from "@/lib/api";
+import { api, formatINR, describeOptions } from "@/lib/api";
 import { toast } from "sonner";
-import { PaperPlaneTilt, X, User, ClockCounterClockwise, MapPin, Package } from "@phosphor-icons/react";
+import { PaperPlaneTilt, X, User, ClockCounterClockwise, MapPin, Package, Phone } from "@phosphor-icons/react";
 
 const STATUSES = ["pending_payment", "paid", "shipped", "delivered", "cancelled", "refunded"];
+
+// Fulfilment blockers the backend flags on a line. Rendered as a red tag so staff can
+// spot at a glance that the order needs a callback before it can be made/dispatched.
+const FLAG_LABELS = { ring_size_unknown: "Ring size needed — contact customer" };
+
+const FlagTags = ({ flags }) => (
+  <>
+    {(flags || []).map((f) => (
+      <span key={f} data-testid={`flag-${f}`} className="inline-flex items-center gap-1 bg-revoked text-ivory text-[10px] uppercase tracking-widest px-2 py-0.5">
+        <Phone size={10} weight="duotone" /> {FLAG_LABELS[f] || f}
+      </span>
+    ))}
+  </>
+);
 
 // Sensible defaults so dispatch is a quick confirm, not a full data-entry form.
 const dispatchDefaults = () => ({
@@ -108,6 +122,13 @@ export default function AdminOrders() {
         {filtered.length === 0 && <div className="gold-line p-10 text-center text-ink-muted">No orders.</div>}
         {filtered.map((o) => (
           <div key={o.order_id} data-testid={`admin-order-${o.order_id}`} className="gold-line bg-ivory p-5">
+            {o.items.some((li) => li.flags?.length) && (
+              <div className="mb-3 border border-revoked bg-revoked/5 px-3 py-2 text-xs text-revoked flex items-center gap-2 flex-wrap">
+                <Phone size={13} weight="duotone" className="shrink-0" />
+                <span className="font-medium">Needs a callback before this can be made.</span>
+                <span className="text-ink-soft">{o.shipping?.shipping_name} · {o.shipping?.shipping_phone}</span>
+              </div>
+            )}
             <div className="flex items-baseline justify-between gap-3 flex-wrap">
               <div>
                 <div className="font-mono text-xs text-ink-muted">{o.order_id}</div>
@@ -140,6 +161,12 @@ export default function AdminOrders() {
                     <div className="font-serifd">{li.name}</div>
                     <div className="text-xs text-ink-muted">Qty {li.qty}</div>
                   </div>
+                  {describeOptions(li.options_list, { all: true }) && (
+                    <div className="text-[10px] text-maroon mt-0.5">{describeOptions(li.options_list, { all: true })}</div>
+                  )}
+                  {li.flags?.length > 0 && (
+                    <div className="mt-1 flex flex-wrap gap-1"><FlagTags flags={li.flags} /></div>
+                  )}
                   {li.serials?.length > 0 ? (
                     <div className="mt-1 flex flex-wrap gap-1">
                       {li.serials.map((s) => (
@@ -242,6 +269,12 @@ export default function AdminOrders() {
                     {li.image && <img src={li.image} alt="" className="w-10 h-10 object-cover gold-line shrink-0" />}
                     <div className="flex-1 min-w-0">
                       <div className="truncate">{li.name} <span className="text-ink-muted">× {li.qty}</span></div>
+                      {describeOptions(li.options_list, { all: true }) && (
+                        <div className="text-[10px] text-maroon">{describeOptions(li.options_list, { all: true })}</div>
+                      )}
+                      {li.flags?.length > 0 && (
+                        <div className="mt-1 flex flex-wrap gap-1"><FlagTags flags={li.flags} /></div>
+                      )}
                       {li.serials?.length > 0 && (
                         <div className="flex flex-wrap gap-1 mt-0.5">
                           {li.serials.map((s) => <span key={s} className="text-[10px] font-mono bg-ivory gold-line px-1 py-0.5">{s}</span>)}

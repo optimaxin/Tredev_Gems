@@ -194,6 +194,8 @@ CATEGORY_TO_DB = {
     "gemstone": "gemstone",
     "rudraksha": "rudraksha",
     "bracelet": "gem_bracelet",
+    "gemstone_jewellery": "gemstone_jewellery",
+    "mala": "mala",
     "yantra": "yantra",
     "idol": "idol",
     "prashad": "temple_prashad",

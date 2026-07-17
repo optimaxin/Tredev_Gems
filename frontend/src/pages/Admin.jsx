@@ -6,11 +6,12 @@ import { toast } from "sonner";
 import {
   ChartBar, Package, Stack, Certificate as CertIcon, Truck, SquaresFour, Sparkle, Calendar,
   ChatCircleDots, UsersFour, ShieldStar, ArrowLeft, WhatsappLogo, Image as ImageIcon, MegaphoneSimple, PaintBrush,
-  ArrowsClockwise,
+  ArrowsClockwise, Diamond,
 } from "@phosphor-icons/react";
 
 import AdminDashboard from "@/pages/admin/AdminDashboard";
 import AdminProducts from "@/pages/admin/AdminProducts";
+import AdminDesigns from "@/pages/admin/AdminDesigns";
 import AdminInventory from "@/pages/admin/AdminInventory";
 import AdminOrders from "@/pages/admin/AdminOrders";
 import AdminCerts from "@/pages/admin/AdminCerts";
@@ -28,6 +29,7 @@ import AdminEvents from "@/pages/admin/AdminEvents";
 const NAV_ITEMS = [
   { to: "dashboard", label: "Dashboard", Icon: ChartBar, ownerOnly: true },
   { to: "products", label: "Products", Icon: Package, perm: "products" },
+  { to: "designs", label: "Designs", Icon: Diamond, perm: "products" },
   { to: "inventory", label: "Inventory", Icon: Stack, perm: "inventory" },
   { to: "certificates", label: "Certificates", Icon: CertIcon, perm: "certificates" },
   { to: "orders", label: "Orders", Icon: Truck, perm: "orders" },
@@ -121,6 +123,7 @@ export default function Admin() {
           <Route index element={<Navigate to={defaultLanding} replace />} />
           <Route path="dashboard" element={<AdminDashboard />} />
           <Route path="products" element={<AdminProducts />} />
+          <Route path="designs" element={<AdminDesigns />} />
           <Route path="inventory" element={<AdminInventory />} />
           <Route path="certificates" element={<AdminCerts />} />
           <Route path="orders" element={<AdminOrders />} />

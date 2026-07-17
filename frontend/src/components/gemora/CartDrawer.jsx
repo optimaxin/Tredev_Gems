@@ -2,7 +2,7 @@ import React from "react";
 import { Link } from "react-router-dom";
 import { X } from "@phosphor-icons/react";
 import { useCart } from "@/context/CartContext";
-import { formatINR } from "@/lib/api";
+import { formatINR, describeOptions } from "@/lib/api";
 import { ShieldCheck, TrashSimple, ShoppingBag } from "@phosphor-icons/react";
 
 export default function CartDrawer({ open, onClose }) {
@@ -43,6 +43,9 @@ export default function CartDrawer({ open, onClose }) {
               <div className="flex-1 min-w-0">
                 <div className="font-serifd text-base truncate">{li.name}</div>
                 <div className="mt-1 text-[10px] text-ink-muted">Qty {li.qty}</div>
+                {describeOptions(li.options_list) && (
+                  <div className="text-[10px] text-ink-muted">{describeOptions(li.options_list)}</div>
+                )}
                 <div className="text-xs text-maroon-deep mt-1">{formatINR(li.price * li.qty)}</div>
               </div>
               <button onClick={() => remove(li.line_id)} className="text-ink-muted hover:text-revoked">
