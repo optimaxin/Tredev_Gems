@@ -2,11 +2,13 @@ import React, { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { PlusCircle, Trash } from "@phosphor-icons/react";
+import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
 
 const EMPTY = { name: "", email: "", password: "", phone: "" };
 
 export default function AdminTeam() {
   const [users, setUsers] = useState([]);
+  const [query, setQuery] = useState("");
   const [perms, setPerms] = useState([]);
   const [form, setForm] = useState(EMPTY);
   const [selPerms, setSelPerms] = useState([]);
@@ -46,7 +48,9 @@ export default function AdminTeam() {
     toast.success("Access revoked"); refresh();
   };
 
-  const staffOnly = users.filter((u) => u.role === "staff" || u.role === "owner");
+  const staffOnly = users
+    .filter((u) => u.role === "staff" || u.role === "owner")
+    .filter((u) => matchesQuery(query, [u.name, u.email, u.phone]));
 
   return (
     <div>
@@ -86,7 +90,9 @@ export default function AdminTeam() {
         </form>
       )}
 
+      <SearchBar value={query} onChange={setQuery} placeholder="Search team by name or email…" testId="team-search" className="mb-4 max-w-md" />
       <div className="space-y-3">
+        {staffOnly.length === 0 && <div className="gold-line p-10 text-center text-ink-muted">{query ? `No team members match “${query}”.` : "No staff yet."}</div>}
         {staffOnly.map((u) => (
           <div key={u.user_id} className="gold-line bg-ivory p-4">
             <div className="flex items-baseline justify-between gap-3 flex-wrap">

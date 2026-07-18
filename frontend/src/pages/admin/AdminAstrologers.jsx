@@ -3,6 +3,7 @@ import { api, formatINR } from "@/lib/api";
 import { toast } from "sonner";
 import { PlusCircle, PencilSimple, Trash, Calendar, Copy, WhatsappLogo, X, LinkSimple, ChartBar, ArrowClockwise } from "@phosphor-icons/react";
 import { copyToClipboard } from "@/lib/clipboard";
+import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
 
 const EMPTY = {
   name: "", devanagari: "", expertise: "", price: "1500", years: 10, picture: "",
@@ -10,6 +11,7 @@ const EMPTY = {
 };
 
 export default function AdminAstrologers() {
+  const [query, setQuery] = useState("");
   const [astros, setAstros] = useState([]);
   const [bookings, setBookings] = useState({});
   const [affiliates, setAffiliates] = useState({});
@@ -139,8 +141,9 @@ export default function AdminAstrologers() {
         </form>
       )}
 
+      <SearchBar value={query} onChange={setQuery} placeholder="Search astrologers by name, email or expertise…" testId="astrologers-search" className="mb-4 max-w-md" />
       <div className="grid md:grid-cols-2 gap-4">
-        {astros.map((a) => (
+        {astros.filter((a) => matchesQuery(query, [a.name, a.email, a.devanagari, a.affiliate_code, ...(a.expertise || [])])).map((a) => (
           <div key={a.astrologer_id} data-testid={`astro-card-${a.astrologer_id}`} className={`gold-line bg-ivory p-4 ${a.is_active === false ? "opacity-60" : ""}`}>
             <div className="flex gap-4">
               {a.picture ? <div className="w-20 h-20 gold-line overflow-hidden shrink-0"><img src={a.picture} alt="" className="w-full h-full object-cover" /></div> : <div className="w-20 h-20 gold-line bg-cream" />}

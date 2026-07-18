@@ -4,6 +4,7 @@ import { absolutize, useSiteAssets } from "@/context/SiteAssetsContext";
 import { toast } from "sonner";
 import { PencilSimple, X, ImageSquare } from "@phosphor-icons/react";
 import MediaPicker from "@/components/gemora/MediaPicker";
+import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
 
 // Registry of editable slots across the site. Grouped for a friendly admin UI.
 export const SITE_SLOTS = [
@@ -48,6 +49,7 @@ const FLAT_SLOTS = SITE_SLOTS.flatMap((g) => g.items);
 export default function AdminSiteAssets() {
   const [byslot, setByslot] = useState({}); // slot -> {media_id, url}
   const [pickerFor, setPickerFor] = useState(null); // slot key or null
+  const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const { refresh: refreshPublic } = useSiteAssets();
 
@@ -87,11 +89,15 @@ export default function AdminSiteAssets() {
         <p className="text-sm text-ink-muted mt-1">Swap any image on the website. Changes go live instantly for all visitors.</p>
       </div>
 
+      <SearchBar value={query} onChange={setQuery} placeholder="Search image slots by name or section…" testId="site-assets-search" className="mb-6 max-w-md" />
       {loading ? (
         <div className="text-ink-muted">Loading…</div>
       ) : (
         <div className="space-y-10">
-          {SITE_SLOTS.map((group) => (
+          {SITE_SLOTS
+            .map((group) => ({ ...group, items: group.items.filter((s) => matchesQuery(query, [s.label, s.key, group.group])) }))
+            .filter((group) => group.items.length > 0)
+            .map((group) => (
             <div key={group.group}>
               <div className="text-xs uppercase tracking-[0.3em] text-maroon-deep border-b border-gold/30 pb-2 mb-4">{group.group}</div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

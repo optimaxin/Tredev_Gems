@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { api, formatINR, describeOptions } from "@/lib/api";
 import { toast } from "sonner";
 import { PaperPlaneTilt, X, User, ClockCounterClockwise, MapPin, Package, Phone } from "@phosphor-icons/react";
+import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
 
 const STATUSES = ["pending_payment", "paid", "shipped", "delivered", "cancelled", "refunded"];
 
@@ -36,6 +37,7 @@ const dispatchDefaults = () => ({
 export default function AdminOrders() {
   const [orders, setOrders] = useState([]);
   const [filter, setFilter] = useState("");
+  const [query, setQuery] = useState("");
   const [dispatchFor, setDispatchFor] = useState(null); // order being dispatched
   const [dform, setDform] = useState(dispatchDefaults());
   const [sending, setSending] = useState(false);
@@ -96,7 +98,13 @@ export default function AdminOrders() {
   };
   const dset = (k) => (e) => setDform((f) => ({ ...f, [k]: e.target.value }));
 
-  const filtered = filter ? orders.filter((o) => o.status === filter) : orders;
+  const filtered = orders
+    .filter((o) => (filter ? o.status === filter : true))
+    .filter((o) => matchesQuery(query, [
+      o.order_id, o.order_no, o.status,
+      o.shipping?.shipping_name, o.shipping?.shipping_phone, o.shipping?.email, o.shipping?.shipping_city,
+      ...(o.items || []).flatMap((li) => [li.name, ...(li.serials || [])]),
+    ]));
 
   return (
     <div>
@@ -110,6 +118,7 @@ export default function AdminOrders() {
         </button>
       </div>
 
+      <SearchBar value={query} onChange={setQuery} placeholder="Search orders by id, customer, phone, product or serial…" testId="orders-search" className="mb-4 max-w-xl" />
       <div className="flex flex-wrap items-center gap-2 mb-4">
         {["", ...STATUSES].map((s) => (
           <button key={s || "all"} onClick={() => setFilter(s)} className={`text-xs px-3 py-1.5 border ${filter === s ? "bg-maroon text-ivory border-maroon" : "border-gold/40 text-ink-soft hover:border-maroon"}`}>
@@ -119,7 +128,7 @@ export default function AdminOrders() {
       </div>
 
       <div className="space-y-4">
-        {filtered.length === 0 && <div className="gold-line p-10 text-center text-ink-muted">No orders.</div>}
+        {filtered.length === 0 && <div className="gold-line p-10 text-center text-ink-muted">{query || filter ? "No matching orders." : "No orders."}</div>}
         {filtered.map((o) => (
           <div key={o.order_id} data-testid={`admin-order-${o.order_id}`} className="gold-line bg-ivory p-5">
             {o.items.some((li) => li.flags?.length) && (

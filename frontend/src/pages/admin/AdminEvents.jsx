@@ -4,6 +4,7 @@ import { absolutize } from "@/context/SiteAssetsContext";
 import { toast } from "sonner";
 import { Plus, PencilSimple, TrashSimple, MegaphoneSimple, Image as ImageIcon, X } from "@phosphor-icons/react";
 import MediaPicker from "@/components/gemora/MediaPicker";
+import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
 
 const EMPTY = {
   title: "", subtitle: "", description: "", image_url: "",
@@ -27,6 +28,7 @@ function localToIso(local) {
 
 export default function AdminEvents() {
   const [events, setEvents] = useState([]);
+  const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
   const [showPicker, setShowPicker] = useState(false);
@@ -97,6 +99,9 @@ export default function AdminEvents() {
         </button>
       </div>
 
+      {events.length > 0 && (
+        <SearchBar value={query} onChange={setQuery} placeholder="Search events by title or coupon code…" testId="events-search" className="mb-4 max-w-md" />
+      )}
       {loading ? (
         <div className="text-ink-muted">Loading…</div>
       ) : events.length === 0 ? (
@@ -107,7 +112,10 @@ export default function AdminEvents() {
         </div>
       ) : (
         <div className="space-y-3">
-          {events.map((ev) => (
+          {events.filter((ev) => matchesQuery(query, [ev.title, ev.subtitle, ev.coupon_code, ev.cta_text])).length === 0 && (
+            <div className="gold-line p-10 text-center text-ink-muted">No events match “{query}”.</div>
+          )}
+          {events.filter((ev) => matchesQuery(query, [ev.title, ev.subtitle, ev.coupon_code, ev.cta_text])).map((ev) => (
             <div key={ev.event_id} data-testid={`event-row-${ev.event_id}`} className="gold-line bg-ivory p-4 flex gap-4 items-start">
               <div className="w-32 h-20 bg-cream overflow-hidden shrink-0 border border-gold/30">
                 {ev.image_url ? (

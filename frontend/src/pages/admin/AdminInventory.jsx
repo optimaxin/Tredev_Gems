@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from "react";
 import { api, formatINR } from "@/lib/api";
 import { toast } from "sonner";
-import { PlusCircle, ShieldCheck, MagnifyingGlass } from "@phosphor-icons/react";
+import { PlusCircle, ShieldCheck } from "@phosphor-icons/react";
 import { useAuth } from "@/context/AuthContext";
+import SearchBar from "@/components/gemora/SearchBar";
 
 export default function AdminInventory() {
   const { user } = useAuth();
@@ -79,15 +80,7 @@ export default function AdminInventory() {
       </div>
 
       <div className="flex flex-wrap items-center gap-3 mb-4">
-        <div className="relative flex-1 min-w-[240px] max-w-md">
-          <MagnifyingGlass size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted" />
-          <input
-            value={query} onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search by serial or product…"
-            data-testid="inventory-search"
-            className="w-full gold-line pl-9 pr-3 py-2.5 bg-ivory outline-none focus:border-maroon"
-          />
-        </div>
+        <SearchBar value={query} onChange={setQuery} placeholder="Search by serial or product…" testId="inventory-search" className="flex-1 min-w-[240px] max-w-md" />
         <div className="flex items-center gap-2">
           <span className="text-xs uppercase tracking-widest text-ink-muted">Product</span>
           <select value={sel} onChange={(e) => setSel(e.target.value)} className="gold-line px-3 py-2 text-sm bg-ivory">

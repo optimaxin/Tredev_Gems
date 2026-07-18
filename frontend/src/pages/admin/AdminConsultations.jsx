@@ -1,14 +1,18 @@
 import React, { useEffect, useState } from "react";
 import { api, formatINR } from "@/lib/api";
 import { toast } from "sonner";
+import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
 
 const STATUSES = ["requested", "confirmed", "completed", "cancelled"];
 
 export default function AdminConsultations() {
   const [bookings, setBookings] = useState([]);
   const [filter, setFilter] = useState("");
+  const [query, setQuery] = useState("");
   const refresh = () => api.get("/admin/consultations", { params: filter ? { status: filter } : {} }).then((r) => setBookings(r.data));
   useEffect(() => { refresh(); }, [filter]);
+
+  const shown = bookings.filter((b) => matchesQuery(query, [b.astrologer_name, b.name, b.phone, b.email, b.concern]));
 
   const setStatus = async (id, status) => {
     await api.patch(`/admin/consultations/${id}`, { status });
@@ -19,6 +23,7 @@ export default function AdminConsultations() {
     <div>
       <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">Bookings</div>
       <h1 className="font-display text-4xl text-ink mt-1 mb-6">Consultations</h1>
+      <SearchBar value={query} onChange={setQuery} placeholder="Search by astrologer, customer, phone or email…" testId="consultations-search" className="mb-4 max-w-md" />
       <div className="flex gap-2 mb-4 flex-wrap">
         {["", ...STATUSES].map((s) => (
           <button key={s || "all"} onClick={() => setFilter(s)} className={`text-xs px-3 py-1.5 border ${filter === s ? "bg-maroon text-ivory border-maroon" : "border-gold/40 text-ink-soft hover:border-maroon"}`}>
@@ -27,8 +32,8 @@ export default function AdminConsultations() {
         ))}
       </div>
       <div className="space-y-3">
-        {bookings.length === 0 && <div className="gold-line p-10 text-center text-ink-muted">No bookings.</div>}
-        {bookings.map((b) => (
+        {shown.length === 0 && <div className="gold-line p-10 text-center text-ink-muted">{query ? `No bookings match “${query}”.` : "No bookings."}</div>}
+        {shown.map((b) => (
           <div key={b.booking_id} className="gold-line bg-ivory p-4">
             <div className="flex items-baseline justify-between gap-3 flex-wrap">
               <div>

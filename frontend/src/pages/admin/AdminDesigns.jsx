@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { api, formatINR } from "@/lib/api";
 import { toast } from "sonner";
 import { PencilSimple, PlusCircle, Trash, Diamond } from "@phosphor-icons/react";
+import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
 
 // Designs belong to one gemstone: pick Sapphire and you see Sapphire's designs, not
 // every stone's. There's one row per metal, each carrying that mounting's full price —
@@ -17,6 +18,7 @@ export default function AdminDesigns() {
   const [products, setProducts] = useState([]);
   const [metals, setMetals] = useState([]);
   const [filter, setFilter] = useState(""); // product_id filter
+  const [query, setQuery] = useState("");
   const [editing, setEditing] = useState(null); // design | "new" | null
   const [form, setForm] = useState(EMPTY);
 
@@ -82,7 +84,9 @@ export default function AdminDesigns() {
     } catch (e) { toast.error(e.response?.data?.detail); }
   };
 
-  const shown = filter ? designs.filter((d) => d.product_id === filter) : designs;
+  const shown = designs
+    .filter((d) => (filter ? d.product_id === filter : true))
+    .filter((d) => matchesQuery(query, [d.code, d.product_name, d.metal, d.note]));
   const byForm = (f) => shown.filter((d) => d.applies_to === f);
 
   return (
@@ -102,7 +106,8 @@ export default function AdminDesigns() {
         full mounting cost and gets added to that gemstone's price at checkout.
       </p>
 
-      <div className="flex items-center gap-2 mb-6">
+      <div className="flex flex-wrap items-center gap-3 mb-6">
+        <SearchBar value={query} onChange={setQuery} placeholder="Search designs by code, gemstone or metal…" testId="designs-search" className="flex-1 min-w-[240px] max-w-md" />
         <span className="text-xs uppercase tracking-widest text-ink-muted">Gemstone</span>
         <select value={filter} onChange={(e) => setFilter(e.target.value)} data-testid="design-product-filter"
           className="gold-line px-3 py-2 text-sm bg-ivory">

@@ -2,17 +2,21 @@ import React, { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { EnvelopeSimple } from "@phosphor-icons/react";
+import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
 
 const STATUSES = ["open", "in_progress", "resolved", "closed"];
 
 export default function AdminQueries() {
   const [queries, setQueries] = useState([]);
   const [filter, setFilter] = useState("");
+  const [query, setQuery] = useState("");
   const [openId, setOpenId] = useState(null);
   const [note, setNote] = useState("");
 
   const refresh = () => api.get("/admin/queries", { params: filter ? { status: filter } : {} }).then((r) => setQueries(r.data));
   useEffect(() => { refresh(); }, [filter]);
+
+  const shown = queries.filter((q) => matchesQuery(query, [q.subject, q.name, q.email, q.phone, q.message]));
 
   const update = async (id, patch) => {
     await api.patch(`/admin/queries/${id}`, patch);
@@ -23,6 +27,7 @@ export default function AdminQueries() {
     <div>
       <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">Support inbox</div>
       <h1 className="font-display text-4xl text-ink mt-1 mb-6">User queries</h1>
+      <SearchBar value={query} onChange={setQuery} placeholder="Search queries by subject, name, email or message…" testId="queries-search" className="mb-4 max-w-md" />
       <div className="flex gap-2 mb-4 flex-wrap">
         {["", ...STATUSES].map((s) => (
           <button key={s || "all"} onClick={() => setFilter(s)} className={`text-xs px-3 py-1.5 border ${filter === s ? "bg-maroon text-ivory border-maroon" : "border-gold/40 text-ink-soft hover:border-maroon"}`}>
@@ -31,8 +36,8 @@ export default function AdminQueries() {
         ))}
       </div>
       <div className="space-y-3">
-        {queries.length === 0 && <div className="gold-line p-10 text-center text-ink-muted">No queries.</div>}
-        {queries.map((q) => (
+        {shown.length === 0 && <div className="gold-line p-10 text-center text-ink-muted">{query ? `No queries match “${query}”.` : "No queries."}</div>}
+        {shown.map((q) => (
           <div key={q.query_id} className="gold-line bg-ivory p-4">
             <div className="flex items-baseline justify-between gap-3 flex-wrap">
               <div className="min-w-0 flex-1">

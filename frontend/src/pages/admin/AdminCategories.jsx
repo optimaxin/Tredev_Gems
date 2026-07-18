@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { PlusCircle, Trash, PencilSimple } from "@phosphor-icons/react";
+import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
 
 // Icons the storefront banner can render for a step (mirrors CategoryBanner's ICONS).
 const STEP_ICONS = ["sparkle", "drop", "sun", "moon", "leaf", "lotus", "hand", "shield",
@@ -31,6 +32,7 @@ const inputCls = "w-full gold-line px-3 py-2 outline-none focus:border-maroon";
 
 export default function AdminCategories() {
   const [cats, setCats] = useState([]);
+  const [query, setQuery] = useState("");
   const [editing, setEditing] = useState(null); // "new" | cat | null
   const [form, setForm] = useState(EMPTY);
 
@@ -77,7 +79,13 @@ export default function AdminCategories() {
     setForm((f) => ({ ...f, banner: { ...f.banner, faqs: f.banner.faqs.filter((_, j) => j !== i) } }));
 
   const parents = cats.filter((c) => !c.parent_category_id);
-  const asTree = parents.map((p) => ({ ...p, subs: cats.filter((c) => c.parent_category_id === p.category_id) }));
+  const matchC = (c) => matchesQuery(query, [c.label, c.key, c.hindi, c.slug]);
+  // Keep a parent if it matches (show all its subs) or if any sub matches (show only
+  // the matching subs), so search never orphans a subcategory from its group.
+  const asTree = parents
+    .map((p) => ({ ...p, subs: cats.filter((c) => c.parent_category_id === p.category_id) }))
+    .filter((p) => !query || matchC(p) || p.subs.some(matchC))
+    .map((p) => ({ ...p, subs: !query || matchC(p) ? p.subs : p.subs.filter(matchC) }));
   const isSub = !!form.parent_id; // creating/editing a subcategory
 
   // Repeatable icon+title+body editor for How to Wear / How to Care / Benefits.
@@ -208,7 +216,9 @@ export default function AdminCategories() {
         </form>
       )}
 
+      <SearchBar value={query} onChange={setQuery} placeholder="Search categories by name or key…" testId="categories-search" className="mb-4 max-w-md" />
       <div className="space-y-3">
+        {asTree.length === 0 && <div className="gold-line p-10 text-center text-ink-muted">{query ? `No categories match “${query}”.` : "No categories."}</div>}
         {asTree.map((c) => (
           <div key={c.category_id} className="gold-line bg-ivory p-4">
             <div className="flex items-baseline justify-between">

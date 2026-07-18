@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { api, formatINR } from "@/lib/api";
 import { toast } from "sonner";
-import { PencilSimple, PlusCircle, Trash, MagnifyingGlass, Stack } from "@phosphor-icons/react";
+import { PencilSimple, PlusCircle, Trash, Stack } from "@phosphor-icons/react";
+import SearchBar from "@/components/gemora/SearchBar";
 
 const EMPTY = {
   name: "", slug: "", category: "gemstone", subcategory_id: "", description: "", price: "", mrp: "",
@@ -197,15 +198,7 @@ export default function AdminProducts() {
         </button>
       </div>
 
-      <div className="relative mb-6 max-w-md">
-        <MagnifyingGlass size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted" />
-        <input
-          value={query} onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search products by name, slug or category…"
-          data-testid="product-search"
-          className="w-full gold-line pl-9 pr-3 py-2.5 bg-ivory outline-none focus:border-maroon"
-        />
-      </div>
+      <SearchBar value={query} onChange={setQuery} placeholder="Search products by name, slug or category…" testId="product-search" className="mb-6 max-w-md" />
 
       {editing && (
         <form onSubmit={save} className="gold-line-strong bg-ivory p-6 mb-8 grid md:grid-cols-2 gap-4">

@@ -4,6 +4,7 @@ import { absolutize } from "@/context/SiteAssetsContext";
 import { toast } from "sonner";
 import { UploadSimple, TrashSimple, Copy, Image as ImageIcon } from "@phosphor-icons/react";
 import { copyToClipboard } from "@/lib/clipboard";
+import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
 
 // Client-side resize + WebP re-encode before upload. A phone photo is often
 // 3–8MB at 4000px+; the site never displays media wider than ~1920px, so shrinking
@@ -35,6 +36,7 @@ async function compressImage(file) {
 
 export default function AdminMedia() {
   const [items, setItems] = useState([]);
+  const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const fileRef = useRef(null);
@@ -129,6 +131,9 @@ export default function AdminMedia() {
         />
       </div>
 
+      {items.length > 0 && (
+        <SearchBar value={query} onChange={setQuery} placeholder="Search images by filename…" testId="media-search" className="mb-4 max-w-md" />
+      )}
       {loading ? (
         <div className="text-ink-muted">Loading…</div>
       ) : items.length === 0 ? (
@@ -139,7 +144,7 @@ export default function AdminMedia() {
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-          {items.map((m) => (
+          {items.filter((m) => matchesQuery(query, [m.original_filename, m.url])).map((m) => (
             <div key={m.media_id} data-testid={`admin-media-item-${m.media_id}`} className="gold-line bg-ivory overflow-hidden group">
               <div className="aspect-square bg-cream overflow-hidden">
                 <img src={absolutize(m.url)} alt={m.original_filename} className="w-full h-full object-cover" loading="lazy" />
