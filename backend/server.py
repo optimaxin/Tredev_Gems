@@ -510,6 +510,9 @@ class ProductIn(BaseModel):
     name: str
     slug: str
     category: str  # gemstone, rudraksha, bracelet, gemstone_jewellery, mala, yantra, idol, pooja_kit, prashad, book, digital
+    # Optional: a subcategory (category_id) under the chosen top-level category. Files
+    # the product precisely under the sub while it keeps the parent's type/behaviour.
+    subcategory_id: Optional[str] = None
     description: str = ""
     price: int  # in paise
     mrp: Optional[int] = None
@@ -993,6 +996,11 @@ _PRODUCT_SELECT = """
            p.title_devanagari                      AS devanagari_name,
            p.description                           AS description,
            p.category_key::text                    AS category_key,
+           p.category_id::text                     AS category_id,
+           -- The subcategory this product is filed under, if any (a category row with a
+           -- parent). Top-level placement leaves these null.
+           CASE WHEN cat.parent_id IS NOT NULL THEN cat.id::text END AS subcategory_id,
+           CASE WHEN cat.parent_id IS NOT NULL THEN cat.name END     AS subcategory,
            p.base_price                            AS base_price,
            p.compare_at_price                      AS compare_at_price,
            p.is_serialized                         AS is_serialized,
@@ -1009,6 +1017,7 @@ _PRODUCT_SELECT = """
            r.ruling_planet::text                   AS r_graha,
            r.origin::text                          AS r_origin
       FROM products p
+      LEFT JOIN categories cat ON cat.id = p.category_id
       LEFT JOIN LATERAL (
             SELECT array_agg(ma.object_key ORDER BY pm.position) AS urls
               FROM product_media pm JOIN media_assets ma ON ma.id = pm.media_id
@@ -1161,13 +1170,19 @@ def _normalize_category_banner(b: Optional[dict]) -> dict:
 
 
 async def _list_categories() -> list[dict]:
-    """Flat category dicts in the legacy shape. `key`/`hindi`/`order` are the API
-    names for category_key/name_devanagari/sort_order."""
+    """Flat category dicts. `key`/`hindi`/`order` are the API names for
+    category_key/name_devanagari/sort_order.
+
+    `key` is the *type* (the category_key enum) and is NOT unique — a subcategory shares
+    its parent's type/key. `category_id` and `slug` are the stable identifiers; a product
+    is mapped to a specific row by category_id. `parent_category_id` gives the tree."""
     rows = await db.fetch_all(
         """SELECT c.id::text                 AS category_id,
                   c.category_key::text       AS category_key,
                   c.name                     AS label,
+                  c.slug::text               AS slug,
                   COALESCE(c.name_devanagari, '') AS hindi,
+                  c.parent_id::text          AS parent_category_id,
                   pc.category_key::text      AS parent_key_db,
                   c.sort_order               AS "order",
                   COALESCE(c.banner, '{}'::jsonb) AS banner,
@@ -1175,12 +1190,13 @@ async def _list_categories() -> list[dict]:
              FROM categories c
              LEFT JOIN categories pc ON pc.id = c.parent_id
             WHERE c.is_active
-            ORDER BY c.sort_order""")
+            ORDER BY c.sort_order, c.name""")
     out = []
     for r in rows:
         pk = r.pop("parent_key_db", None)
         out.append({**r,
                     "key": db.CATEGORY_FROM_DB.get(r.pop("category_key"), None),
+                    "is_sub": r["parent_category_id"] is not None,
                     "parent_key": db.CATEGORY_FROM_DB.get(pk) if pk else None})
     return out
 
@@ -1582,24 +1598,40 @@ def _line_flags(selected: Optional[dict], variant_options: Optional[dict]) -> li
     return flags
 
 
+async def _resolve_category_id(ck: str, subcategory_id: Optional[str]) -> str:
+    """The category row a product files under: the sub if given & valid, else the
+    top-level. `ck` (the enum type) can match several rows now that subs share it, so
+    the top-level is the one with parent_id NULL, and a sub must be its child."""
+    top = await db.fetch_val(
+        "SELECT id::text FROM categories WHERE category_key = $1::category_key "
+        "AND parent_id IS NULL", ck)
+    if not top:
+        raise HTTPException(400, "Category not configured")
+    if not subcategory_id:
+        return top
+    sub = await db.fetch_val(
+        "SELECT id::text FROM categories WHERE id = $1::uuid AND parent_id = $2::uuid",
+        subcategory_id, top)
+    if not sub:
+        raise HTTPException(400, "That subcategory doesn't belong to the chosen category.")
+    return sub
+
+
 @api.post("/admin/products")
 async def admin_create_product(p: ProductIn, user_id: str = Depends(require_admin)):
     ck = db.CATEGORY_TO_DB.get(p.category)
     if not ck:
         raise HTTPException(400, f"Unknown category: {p.category}")
+    cat_id = await _resolve_category_id(ck, p.subcategory_id)
     pid = uuid.uuid4()
     try:
         async with db.transaction() as conn:
-            cat_id = await conn.fetchval(
-                "SELECT id FROM categories WHERE category_key = $1::category_key", ck)
-            if not cat_id:
-                raise HTTPException(400, f"Category {p.category} not configured")
             await conn.execute(
                 """INSERT INTO products (id, category_id, category_key, title,
                         title_devanagari, slug, description, base_price, compare_at_price,
                         currency, is_serialized, attributes, care_instructions,
                         variant_options, status, published_at)
-                   VALUES ($1,$2,$3::category_key,$4,$5,$6::citext,$7,$8,$9,'INR',$10,
+                   VALUES ($1,$2::uuid,$3::category_key,$4,$5,$6::citext,$7,$8,$9,'INR',$10,
                            $11,$12,$13,'active', now())""",
                 pid, cat_id, ck, p.name, p.devanagari_name, p.slug, p.description,
                 db.to_amount(p.price), db.to_amount(p.mrp), p.is_serialized,
@@ -2858,6 +2890,16 @@ async def admin_customer_detail(user_id: str, _: str = Depends(require_admin)):
     }
 
 
+@api.get("/admin/products/stock")
+async def admin_product_stock(_: str = Depends(require_perm("products"))):
+    """In-stock unit count per product, so the Products screen can show live stock and
+    add-units without pulling every unit row. One grouped query, not an N+1."""
+    rows = await db.fetch_all(
+        """SELECT product_id::text AS product_id, count(*) AS in_stock
+             FROM product_units WHERE status = 'in_stock' GROUP BY product_id""")
+    return {r["product_id"]: r["in_stock"] for r in rows}
+
+
 @api.get("/admin/units")
 async def admin_units(user_id: str = Depends(require_admin), product_id: Optional[str] = None):
     sql = """
@@ -3159,6 +3201,8 @@ async def dev_seed():
 # ── Admin: extended management ───────────────────────────────────────────────
 class ProductUpdateIn(BaseModel):
     name: Optional[str] = None
+    category: Optional[str] = None        # top-level category key (the type)
+    subcategory_id: Optional[str] = None  # sub under it; null files under the top-level
     description: Optional[str] = None
     price: Optional[int] = None
     mrp: Optional[int] = None
@@ -3172,10 +3216,13 @@ class ProductUpdateIn(BaseModel):
 
 
 class CategoryIn(BaseModel):
-    key: str
+    # Top-level: `key` is one of the fixed category_key enum values (the type).
+    # Subcategory: send `parent_id` instead; it inherits the parent's type, so `key`
+    # isn't needed (and is ignored).
+    key: Optional[str] = None
     label: str
     hindi: Optional[str] = ""
-    parent_key: Optional[str] = None
+    parent_id: Optional[str] = None
     order: int = 100
     banner: Optional[dict] = None  # collection-banner content; see _normalize_category_banner
 
@@ -3183,7 +3230,7 @@ class CategoryIn(BaseModel):
 class CategoryUpdateIn(BaseModel):
     label: Optional[str] = None
     hindi: Optional[str] = None
-    parent_key: Optional[str] = None
+    parent_id: Optional[str] = None
     order: Optional[int] = None
     banner: Optional[dict] = None
 
@@ -3624,20 +3671,27 @@ _PRODUCT_PATCH_COLS = {
 
 @api.patch("/admin/products/{product_id}")
 async def admin_update_product(product_id: str, body: ProductUpdateIn, _: str = Depends(require_perm("products"))):
-    updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
-    if not updates:
+    sent = body.model_dump(exclude_unset=True)  # keeps explicit nulls (e.g. clearing the sub)
+    updates = {k: v for k, v in sent.items() if v is not None}
+    if not sent:
         raise HTTPException(400, "Nothing to update")
     sets, args = [], []
-    for k, v in updates.items():
-        if k == "category":
-            ck = db.CATEGORY_TO_DB.get(v)
+    # Placement (category + optional subcategory) is computed together, since the sub
+    # decides the exact category_id and the top-level decides the type/category_key.
+    if "category" in sent or "subcategory_id" in sent:
+        if sent.get("category"):
+            ck = db.CATEGORY_TO_DB.get(sent["category"])
             if not ck:
-                raise HTTPException(400, f"Unknown category: {v}")
-            args.append(ck)
-            sets.append(f"category_key = ${len(args)}::category_key")
-            args.append(ck)
-            sets.append(f"category_id = (SELECT id FROM categories "
-                        f"WHERE category_key = ${len(args)}::category_key)")
+                raise HTTPException(400, f"Unknown category: {sent['category']}")
+        else:  # subcategory changed without touching the top-level — keep current type
+            ck = await db.fetch_val(
+                "SELECT category_key::text FROM products WHERE id=$1::uuid", product_id)
+        cat_id = await _resolve_category_id(ck, sent.get("subcategory_id"))
+        args.append(ck); sets.append(f"category_key = ${len(args)}::category_key")
+        args.append(cat_id); sets.append(f"category_id = ${len(args)}::uuid")
+    for k, v in updates.items():
+        if k in ("category", "subcategory_id"):
+            continue  # placement handled above
         elif k == "is_active":
             args.append("active" if v else "archived")
             sets.append(f"status = ${len(args)}::product_status")
@@ -3848,28 +3902,45 @@ async def admin_category_option_template(category: str, _: str = Depends(require
     return _category_option_template(ck)
 
 
+def _slugify(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", (s or "").lower()).strip("-")
+
+
 @api.post("/admin/categories")
 async def admin_create_category(body: CategoryIn, _: str = Depends(require_perm("categories"))):
-    # category_key is an enum here, so categories can't be invented freely the way
-    # Mongo's free-text key allowed.
-    ck = db.CATEGORY_TO_DB.get(body.key)
-    if not ck:
-        raise HTTPException(
-            400, f"Unknown category key '{body.key}'. Allowed: {sorted(db.CATEGORY_TO_DB)}")
-    if await db.fetch_val(
-            "SELECT id FROM categories WHERE category_key = $1::category_key", ck):
-        raise HTTPException(400, "Category key already exists")
+    slug = _slugify(body.label)
+    if not slug:
+        raise HTTPException(400, "Label is required")
+    if await db.fetch_val("SELECT id FROM categories WHERE slug = $1::citext", slug):
+        raise HTTPException(400, f"A category with slug '{slug}' already exists")
+
+    if body.parent_id:
+        # Subcategory: inherit the parent's type (category_key). No enum key needed.
+        parent = await db.fetch_one(
+            "SELECT id, category_key::text AS ck FROM categories WHERE id = $1::uuid",
+            body.parent_id)
+        if not parent:
+            raise HTTPException(404, "Parent category not found")
+        ck, parent_id = parent["ck"], parent["id"]
+    else:
+        # Top-level: `key` must be one of the fixed category_key enum values.
+        ck = db.CATEGORY_TO_DB.get(body.key)
+        if not ck:
+            raise HTTPException(
+                400, f"Unknown category key '{body.key}'. Allowed: {sorted(db.CATEGORY_TO_DB)}")
+        if await db.fetch_val(
+                "SELECT id FROM categories WHERE category_key = $1::category_key "
+                "AND parent_id IS NULL", ck):
+            raise HTTPException(400, "A top-level category with this key already exists")
+        parent_id = None
+
     cid = uuid.uuid4()
     await db.execute(
         """INSERT INTO categories (id, category_key, name, name_devanagari, slug,
                 parent_id, sort_order, banner, is_active)
-           VALUES ($1,$2::category_key,$3,$4,$5::citext,
-                   (SELECT id FROM categories WHERE category_key = $6::category_key),
-                   $7, $8, true)""",
-        cid, ck, body.label, body.hindi,
-        re.sub(r"[^a-z0-9]+", "-", body.label.lower()).strip("-"),
-        db.CATEGORY_TO_DB.get(body.parent_key) if body.parent_key else None,
-        body.order, _normalize_category_banner(body.banner))
+           VALUES ($1,$2::category_key,$3,$4,$5::citext,$6::uuid,$7,$8,true)""",
+        cid, ck, body.label, body.hindi, slug, parent_id, body.order,
+        _normalize_category_banner(body.banner))
     return next((c for c in await _list_categories() if c["category_id"] == str(cid)), None)
 
 
@@ -3886,10 +3957,13 @@ async def admin_update_category(category_id: str, body: CategoryUpdateIn, _: str
     if "banner" in updates:
         args.append(_normalize_category_banner(updates["banner"]))
         sets.append(f"banner = ${len(args)}::jsonb")
-    if "parent_key" in updates:
-        args.append(db.CATEGORY_TO_DB.get(updates["parent_key"]))
-        sets.append(f"parent_id = (SELECT id FROM categories "
-                    f"WHERE category_key = ${len(args)}::category_key)")
+    if "parent_id" in updates:
+        # Re-parenting also re-inherits the parent's type, so a moved subcategory keeps
+        # behaving like its (new) parent.
+        args.append(updates["parent_id"])
+        sets.append(f"parent_id = ${len(args)}::uuid")
+        sets.append(f"category_key = (SELECT category_key FROM categories "
+                    f"WHERE id = ${len(args)}::uuid)")
     args.append(category_id)
     got = await db.fetch_val(
         f"UPDATE categories SET {', '.join(sets)}, updated_at = now() "

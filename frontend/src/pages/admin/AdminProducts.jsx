@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { PencilSimple, PlusCircle, Trash } from "@phosphor-icons/react";
 
 const EMPTY = {
-  name: "", slug: "", category: "gemstone", description: "", price: "", mrp: "",
+  name: "", slug: "", category: "gemstone", subcategory_id: "", description: "", price: "", mrp: "",
   images: "", devanagari_name: "", attrs: "{}", quantity: "", care_instructions: "",
   groups: [], // option groups, seeded from the category template
 };
@@ -22,14 +22,38 @@ const groupsToForm = (groups) =>
 export default function AdminProducts() {
   const [products, setProducts] = useState([]);
   const [cats, setCats] = useState([]);
+  const [stock, setStock] = useState({}); // {product_id: in_stock count}
+  const [addQty, setAddQty] = useState({}); // {product_id: qty being typed}
+  const [query, setQuery] = useState("");
   const [editing, setEditing] = useState(null); // product or "new" or null
   const [form, setForm] = useState(EMPTY);
 
   const refresh = () => {
     api.get("/products?limit=500").then((r) => setProducts(r.data));
     api.get("/categories").then((r) => setCats(r.data.categories));
+    api.get("/admin/products/stock").then((r) => setStock(r.data)).catch(() => {});
   };
   useEffect(() => { refresh(); }, []);
+
+  // Add more units to an existing serialized product, right from this page — serials
+  // are auto-generated, so there's no re-entering them one by one.
+  const addUnits = async (p) => {
+    const qty = Math.max(0, parseInt(addQty[p.product_id], 10) || 0);
+    if (!qty) { toast.error("Enter how many pieces to add"); return; }
+    try {
+      const { data } = await api.post("/admin/units/bulk", { product_id: p.product_id, quantity: qty });
+      toast.success(`${data.count} piece${data.count === 1 ? "" : "s"} added to ${p.name}`);
+      setAddQty((s) => ({ ...s, [p.product_id]: "" }));
+      api.get("/admin/products/stock").then((r) => setStock(r.data)).catch(() => {});
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not add units"); }
+  };
+
+  // Client-side product search over name, slug and category.
+  const shown = products.filter((p) => {
+    const q = query.trim().toLowerCase();
+    if (!q) return true;
+    return [p.name, p.slug, p.category, p.subcategory].filter(Boolean).some((s) => s.toLowerCase().includes(q));
+  });
 
   // What a product offers is category-driven, so the form pulls that category's
   // template and the admin just fills in the ₹. Used for new products and whenever
@@ -48,6 +72,7 @@ export default function AdminProducts() {
     setForm({
       ...EMPTY,
       ...p,
+      subcategory_id: p.subcategory_id || "",
       // DB stores paise; UI shows rupees.
       price: p.price != null ? (p.price / 100).toString() : "",
       mrp: p.mrp != null ? (p.mrp / 100).toString() : "",
@@ -60,9 +85,15 @@ export default function AdminProducts() {
   const startNew = () => { setEditing("new"); setForm(EMPTY); loadTemplate(EMPTY.category); };
 
   const changeCategory = (category) => {
-    setForm((f) => ({ ...f, category }));
+    // Subcategories belong to one parent, so switching category clears the sub.
+    setForm((f) => ({ ...f, category, subcategory_id: "" }));
     loadTemplate(category); // different category -> different selectors
   };
+
+  // Top-level categories for the Category dropdown; subs are chosen separately.
+  const topCats = cats.filter((c) => !c.parent_category_id);
+  const selectedTop = topCats.find((c) => c.key === form.category);
+  const subCats = selectedTop ? cats.filter((c) => c.parent_category_id === selectedTop.category_id) : [];
 
   const save = async (e) => {
     e.preventDefault();
@@ -202,9 +233,18 @@ export default function AdminProducts() {
           <label className="block">
             <div className="text-xs text-ink-muted mb-1">Category</div>
             <select value={form.category} onChange={(e) => changeCategory(e.target.value)} data-testid="product-category-select" className="w-full gold-line px-3 py-2 bg-ivory">
-              {cats.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+              {topCats.map((c) => <option key={c.category_id} value={c.key}>{c.label}</option>)}
             </select>
           </label>
+          {subCats.length > 0 && (
+            <label className="block">
+              <div className="text-xs text-ink-muted mb-1">Subcategory (optional)</div>
+              <select value={form.subcategory_id} onChange={(e) => setForm({ ...form, subcategory_id: e.target.value })} data-testid="product-subcategory-select" className="w-full gold-line px-3 py-2 bg-ivory">
+                <option value="">— none (file under {selectedTop?.label}) —</option>
+                {subCats.map((c) => <option key={c.category_id} value={c.category_id}>{c.label}</option>)}
+              </select>
+            </label>
+          )}
           {editing === "new" && (
             <label className="block">
               <div className="text-xs text-ink-muted mb-1">Number of pieces in stock</div>

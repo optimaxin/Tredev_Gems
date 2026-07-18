@@ -374,35 +374,54 @@ function Reviews({ reviews }) {
   );
 }
 
-/* ── 8. Consultation banner ────────────────────────────────────────── */
-function ConsultBanner() {
+/* ── 8. Consultation banner — with the guide ───────────────────────── */
+function ConsultBanner({ reduce }) {
   return (
-    <section className="relative overflow-hidden bg-maroon-deep text-ivory py-16">
+    <section className="relative overflow-hidden bg-maroon-deep text-ivory">
       <div className="absolute inset-0 geom-bg opacity-40" />
-      <div className="relative mx-auto max-w-7xl px-6 lg:px-10 grid lg:grid-cols-[1fr_auto] gap-10 items-center">
-        <div>
+      <div className="relative mx-auto max-w-7xl px-6 lg:px-10 grid lg:grid-cols-[1.3fr_1fr] gap-8 items-center min-h-[420px]">
+        <div className="py-14 order-2 lg:order-1">
           <div className="text-xs uppercase tracking-[0.3em] text-gold">Guidance · परामर्श</div>
-          <h2 className="font-display text-3xl md:text-4xl mt-2 leading-tight">
+          <h2 className="font-display text-4xl md:text-5xl mt-3 leading-tight">
             Not sure this is the right one for you?
           </h2>
-          <p className="text-sm text-ivory/80 mt-3 max-w-2xl">
-            Talk to a verified astrologer before you buy — a human, on a scheduled call. They will read your chart and tell you honestly if this piece suits you, or if something else does.
+          <p className="text-sm md:text-base text-ivory/80 mt-4 max-w-xl leading-relaxed">
+            Talk to a verified astrologer before you buy — a human, on a scheduled call. They read your
+            chart and tell you honestly if this piece suits you, or if something else does.
           </p>
-          <div className="mt-6 flex flex-wrap gap-6">
+          <div className="mt-6 flex flex-wrap gap-x-6 gap-y-3">
             {[[CalendarBlank, "Scheduled call"], [Compass, "Personalised advice"], [Sparkle, "Member discounts"]].map(([I, t]) => (
               <div key={t} className="flex items-center gap-2 text-sm text-ivory/85">
                 <I size={16} weight="duotone" className="text-gold" /> {t}
               </div>
             ))}
           </div>
+          <div className="mt-8 flex flex-wrap gap-3">
+            <Link to="/consultation" className="brand-gradient text-ivory px-7 py-3.5 text-xs uppercase tracking-widest hover-lift flex items-center justify-center gap-2">
+              <Phone size={14} weight="duotone" /> Book a consultation
+            </Link>
+            <Link to="/tools/carat-ratti" className="border border-gold text-gold px-7 py-3.5 text-xs uppercase tracking-widest hover:bg-gold hover:text-maroon-deep transition-colors text-center">
+              Free carat ↔ ratti tool
+            </Link>
+          </div>
         </div>
-        <div className="flex flex-col gap-3">
-          <Link to="/consultation" className="brand-gradient text-ivory px-7 py-3.5 text-xs uppercase tracking-widest hover-lift flex items-center justify-center gap-2">
-            <Phone size={14} weight="duotone" /> Book a consultation
-          </Link>
-          <Link to="/tools/carat-ratti" className="border border-gold text-gold px-7 py-3.5 text-xs uppercase tracking-widest hover:bg-gold hover:text-maroon-deep transition-colors text-center">
-            Free carat ↔ ratti tool
-          </Link>
+
+        {/* the guide, standing on the baseline */}
+        <div className="relative order-1 lg:order-2 flex justify-center lg:justify-end items-end self-stretch">
+          <div className={`absolute bottom-0 right-2 lg:right-10 w-[320px] h-[320px] rounded-full pointer-events-none ${reduce ? "" : "halo-breathe"}`}
+            style={{ background: "radial-gradient(circle, rgba(242,140,40,0.32) 0%, rgba(212,175,55,0.12) 45%, transparent 70%)" }} />
+          <img
+            src="/ambassador/founder.v1.webp"
+            alt="Shri Raghavendra, Tredev's founder & guide"
+            className="relative z-10 w-auto h-[280px] sm:h-[340px] lg:h-[420px] object-contain object-bottom drop-shadow-[0_20px_40px_rgba(0,0,0,0.45)]"
+            loading="lazy"
+          />
+          <div className="absolute bottom-8 left-1 lg:-left-2 z-20 bg-ivory/95 backdrop-blur border border-gold/50 px-4 py-2.5 shadow-lg">
+            <div className="font-serifd text-lg text-maroon-deep leading-none">Shri Raghavendra</div>
+            <div className="text-[10px] uppercase tracking-widest text-ink-muted mt-1 flex items-center gap-1">
+              <ShieldCheck size={11} weight="duotone" className="text-verified" /> Founder &amp; Guide
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -521,7 +540,7 @@ export default function ProductStory({ p, reviews = [] }) {
       <Ritual copy={copy} />
       <CareGuide p={p} copy={copy} />
       <Reviews reviews={reviews} />
-      <ConsultBanner />
+      <ConsultBanner reduce={reduce} />
       <Policies />
       <Faq p={p} />
       <Related p={p} />

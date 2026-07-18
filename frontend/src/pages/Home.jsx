@@ -310,24 +310,59 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ASTROLOGER PROMO BAND */}
-      <section className="relative overflow-hidden bg-maroon-deep text-ivory py-14">
+      {/* ASTROLOGER PROMO BAND — meet the guide */}
+      <section className="relative overflow-hidden bg-maroon-deep text-ivory">
         <div className="absolute inset-0 opacity-[0.08]" style={{ backgroundImage: `url('${astroBandBg}')`, backgroundSize: "cover", backgroundPosition: "center" }} />
-        <div className="relative mx-auto max-w-7xl px-6 lg:px-10 flex flex-col md:flex-row items-center justify-between gap-6">
-          <div>
+        <div className="grain absolute inset-0 pointer-events-none" />
+        <div className="relative mx-auto max-w-7xl px-6 lg:px-10 grid lg:grid-cols-2 gap-8 items-center min-h-[440px]">
+          {/* copy */}
+          <Reveal className="py-14 lg:py-16 order-2 lg:order-1">
             <div className="text-xs uppercase tracking-[0.3em] text-gold">Guidance · परामर्श</div>
-            <h3 className="font-display text-3xl md:text-4xl mt-2">Talk to a verified astrologer.</h3>
-            <p className="text-sm text-ivory/80 mt-2 max-w-2xl">Not a chatbot. A human, on a scheduled call. Personalised gemstone and rudraksha recommendations, without guesswork.</p>
-          </div>
-          <div className="flex gap-3">
-            <Link to="/consultation" className="brand-gradient text-ivory px-6 py-3 text-xs uppercase tracking-widest hover-lift flex items-center gap-2">
-              <Calendar size={14} weight="duotone" /> Book a call
-            </Link>
-            <Link to="/tools/carat-ratti" className="border border-gold text-gold px-6 py-3 text-xs uppercase tracking-widest hover:bg-gold hover:text-maroon-deep transition-colors">
-              Free tool
-            </Link>
+            <h3 className="font-display text-4xl md:text-5xl mt-3 leading-tight">
+              Talk to a real person,<br />not a chatbot.
+            </h3>
+            <p className="text-sm md:text-base text-ivory/80 mt-4 max-w-xl leading-relaxed">
+              A human, on a scheduled call — who reads your chart and tells you honestly which stone or
+              rudraksha suits you, or whether you need one at all. No guesswork, no upsell.
+            </p>
+            <div className="mt-6 flex flex-wrap gap-x-6 gap-y-3">
+              {[[Calendar, "Scheduled call"], [Compass, "Reads your chart"], [ShieldCheck, "Honest advice"]].map(([I, t]) => (
+                <div key={t} className="flex items-center gap-2 text-sm text-ivory/85">
+                  <I size={16} weight="duotone" className="text-gold" /> {t}
+                </div>
+              ))}
+            </div>
+            <div className="mt-8 flex flex-wrap gap-3">
+              <Link to="/consultation" className="brand-gradient text-ivory px-7 py-3.5 text-xs uppercase tracking-widest hover-lift flex items-center gap-2">
+                <Calendar size={14} weight="duotone" /> Book a call
+              </Link>
+              <Link to="/tools/carat-ratti" className="border border-gold text-gold px-7 py-3.5 text-xs uppercase tracking-widest hover:bg-gold hover:text-maroon-deep transition-colors">
+                Free carat ↔ ratti tool
+              </Link>
+            </div>
+          </Reveal>
+
+          {/* portrait — stands on the band's baseline */}
+          <div className="relative order-1 lg:order-2 flex justify-center lg:justify-end items-end self-stretch">
+            {/* warm glow + breathing halo behind him */}
+            <div className="halo-breathe absolute bottom-0 right-4 lg:right-16 w-[360px] h-[360px] rounded-full pointer-events-none"
+              style={{ background: "radial-gradient(circle, rgba(242,140,40,0.35) 0%, rgba(212,175,55,0.12) 45%, transparent 70%)" }} />
+            <img
+              src="/ambassador/founder.v1.webp"
+              alt="Shri Raghavendra, Tredev's founder & guide"
+              className="relative z-10 w-auto h-[300px] sm:h-[360px] lg:h-[440px] object-contain object-bottom drop-shadow-[0_20px_40px_rgba(0,0,0,0.45)]"
+              loading="lazy"
+            />
+            {/* name plate */}
+            <div className="absolute bottom-8 left-2 lg:left-auto lg:-left-4 z-20 bg-ivory/95 backdrop-blur border border-gold/50 px-4 py-2.5 shadow-lg">
+              <div className="font-serifd text-lg text-maroon-deep leading-none">Shri Raghavendra</div>
+              <div className="text-[10px] uppercase tracking-widest text-ink-muted mt-1 flex items-center gap-1">
+                <ShieldCheck size={11} weight="duotone" className="text-verified" /> Founder &amp; Guide
+              </div>
+            </div>
           </div>
         </div>
+        <div className="brand-gradient h-[2px] w-full relative" />
       </section>
 
       {/* BESTSELLERS */}

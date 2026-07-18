@@ -152,7 +152,7 @@ export default function Header() {
         className={`sticky top-0 z-40 bg-ivory/90 backdrop-blur-xl border-b border-gold/30 ${scrolled ? "shadow-sm" : ""}`}
         onMouseLeave={() => setMega(null)}
       >
-        <div className="mx-auto max-w-7xl px-6 lg:px-10 py-3 flex items-center gap-6">
+        <div className="mx-auto max-w-7xl px-6 lg:px-10 pt-3 pb-2 flex items-center gap-6">
           <Link to="/" className="flex items-baseline gap-2 shrink-0" data-testid={NAV.brand}>
             <span className={`font-display tracking-tight text-maroon-deep ${scrolled ? "text-2xl" : "text-3xl"}`}>Tredev</span>
             <span className="font-deva text-xs text-gold-soft hidden sm:inline">रत्न · प्रमाण</span>

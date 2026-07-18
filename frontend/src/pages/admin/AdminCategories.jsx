@@ -25,7 +25,7 @@ const bannerToForm = (b) => {
   };
 };
 
-const EMPTY = { key: "", label: "", hindi: "", parent_key: "", order: 100, banner: emptyBanner() };
+const EMPTY = { key: "", label: "", hindi: "", parent_id: "", order: 100, banner: emptyBanner() };
 
 const inputCls = "w-full gold-line px-3 py-2 outline-none focus:border-maroon";
 
@@ -40,13 +40,13 @@ export default function AdminCategories() {
   const startNew = () => { setEditing("new"); setForm(EMPTY); };
   const startEdit = (c) => {
     setEditing(c);
-    setForm({ ...EMPTY, ...c, parent_key: c.parent_key || "", banner: bannerToForm(c.banner) });
+    setForm({ ...EMPTY, ...c, parent_id: c.parent_category_id || "", banner: bannerToForm(c.banner) });
   };
 
   const save = async (e) => {
     e.preventDefault();
     try {
-      const payload = { ...form, order: parseInt(form.order) || 100, parent_key: form.parent_key || null };
+      const payload = { ...form, order: parseInt(form.order) || 100, parent_id: form.parent_id || null };
       if (editing === "new") await api.post("/admin/categories", payload);
       else await api.patch(`/admin/categories/${editing.category_id}`, payload);
       toast.success("Saved"); setEditing(null); refresh();
@@ -76,8 +76,9 @@ export default function AdminCategories() {
   const rmFaq = (i) =>
     setForm((f) => ({ ...f, banner: { ...f.banner, faqs: f.banner.faqs.filter((_, j) => j !== i) } }));
 
-  const parents = cats.filter((c) => !c.parent_key);
-  const asTree = parents.map((p) => ({ ...p, subs: cats.filter((c) => c.parent_key === p.key) }));
+  const parents = cats.filter((c) => !c.parent_category_id);
+  const asTree = parents.map((p) => ({ ...p, subs: cats.filter((c) => c.parent_category_id === p.category_id) }));
+  const isSub = !!form.parent_id; // creating/editing a subcategory
 
   // Repeatable icon+title+body editor for How to Wear / How to Care / Benefits.
   // A render function, not a component, so React doesn't remount it (and drop input
@@ -119,24 +120,27 @@ export default function AdminCategories() {
       {editing && (
         <form onSubmit={save} className="gold-line-strong bg-ivory p-6 mb-8 grid md:grid-cols-2 gap-4">
           <div className="md:col-span-2 font-serifd text-xl text-maroon-deep">{editing === "new" ? "New category" : `Edit · ${editing.label}`}</div>
-          <label className="block">
-            <div className="text-xs text-ink-muted mb-1">Key (slug)</div>
-            <input required disabled={editing !== "new"} value={form.key} onChange={(e) => setForm({ ...form, key: e.target.value.replace(/[^a-z0-9_]/gi, "").toLowerCase() })} className={inputCls + " font-mono disabled:bg-cream"} />
+          <label className="block md:col-span-2">
+            <div className="text-xs text-ink-muted mb-1">Parent (leave blank for a top-level category)</div>
+            <select value={form.parent_id || ""} onChange={(e) => setForm({ ...form, parent_id: e.target.value })} className="w-full gold-line px-3 py-2 bg-ivory" data-testid="category-parent-select">
+              <option value="">— none (top-level)</option>
+              {parents.filter((p) => p.category_id !== editing?.category_id).map((p) => <option key={p.category_id} value={p.category_id}>{p.label}</option>)}
+            </select>
+            {isSub && <div className="text-[10px] text-ink-muted mt-1">A subcategory inherits its parent's type &amp; product options.</div>}
           </label>
+          {!isSub && (
+            <label className="block">
+              <div className="text-xs text-ink-muted mb-1">Key (type — fixed set)</div>
+              <input required disabled={editing !== "new"} value={form.key || ""} onChange={(e) => setForm({ ...form, key: e.target.value.replace(/[^a-z0-9_]/gi, "").toLowerCase() })} className={inputCls + " font-mono disabled:bg-cream"} placeholder="e.g. gemstone" />
+            </label>
+          )}
           <label className="block">
-            <div className="text-xs text-ink-muted mb-1">Label (banner title)</div>
+            <div className="text-xs text-ink-muted mb-1">Label ({isSub ? "subcategory" : "banner"} title)</div>
             <input required value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} className={inputCls} />
           </label>
           <label className="block">
             <div className="text-xs text-ink-muted mb-1">Devanagari (shown above the title)</div>
             <input value={form.hindi || ""} onChange={(e) => setForm({ ...form, hindi: e.target.value })} className={inputCls + " font-deva"} />
-          </label>
-          <label className="block">
-            <div className="text-xs text-ink-muted mb-1">Parent (for subcategory)</div>
-            <select value={form.parent_key || ""} onChange={(e) => setForm({ ...form, parent_key: e.target.value })} className="w-full gold-line px-3 py-2 bg-ivory">
-              <option value="">— none (top-level)</option>
-              {parents.filter((p) => p.category_id !== editing?.category_id).map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
-            </select>
           </label>
           <label className="block">
             <div className="text-xs text-ink-muted mb-1">Order</div>
