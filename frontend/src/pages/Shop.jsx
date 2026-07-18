@@ -43,10 +43,12 @@ export default function Shop() {
   const showBanner = category && !q;
 
   return (
-    <div className="mx-auto max-w-7xl px-6 lg:px-10 py-12">
-      {showBanner ? (
-        <CategoryBanner category={category} />
-      ) : (
+    <div>
+      {/* Full-bleed hero collection banner (single-category view) */}
+      {showBanner && <CategoryBanner category={category} />}
+
+      <div className="mx-auto max-w-7xl px-6 lg:px-10 py-12">
+      {!showBanner && (
         <header className="mb-10">
           <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">The Store · भंडार</div>
           <h1 className="font-display text-4xl md:text-5xl text-ink mt-3">
@@ -116,6 +118,7 @@ export default function Shop() {
             </div>
           )}
         </div>
+      </div>
       </div>
     </div>
   );

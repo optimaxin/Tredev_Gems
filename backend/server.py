@@ -1113,6 +1113,53 @@ async def get_product(slug: str):
     return p
 
 
+# The collection banner an admin can set per category. Anything left blank falls back
+# to the frontend's built-in copy, so a bare category still renders fully.
+_BANNER_ICONS = ["drop", "sun", "moon", "leaf", "lotus", "hand", "shield", "qr",
+                 "sparkle", "compass", "ruler", "package", "clock", "scroll"]
+_BANNER_TEXT_FIELDS = ("image", "badge_label", "intro", "about", "who_should_wear",
+                       "quality", "price")
+_BANNER_STEP_FIELDS = ("how_to_wear", "how_to_care", "benefits")
+
+
+def _normalize_category_banner(b: Optional[dict]) -> dict:
+    """Sanitise the banner blob before it's stored: keep only known fields, coerce the
+    repeatable sections to clean [{icon,title,body}] / [{q,a}] lists, and drop empties so
+    a blank field transparently falls through to the frontend default."""
+    b = b or {}
+    out: dict = {}
+    for f in _BANNER_TEXT_FIELDS:
+        v = (b.get(f) or "").strip() if isinstance(b.get(f), str) else b.get(f)
+        if v:
+            out[f] = v
+    for cta in ("cta_primary", "cta_secondary"):
+        c = b.get(cta) or {}
+        label = (c.get("label") or "").strip()
+        href = (c.get("href") or "").strip()
+        if label or href:
+            out[cta] = {"label": label, "href": href}
+    for f in _BANNER_STEP_FIELDS:
+        steps = []
+        for s in (b.get(f) or []):
+            title = (s.get("title") or "").strip()
+            body = (s.get("body") or "").strip()
+            if not (title or body):
+                continue
+            icon = s.get("icon") if s.get("icon") in _BANNER_ICONS else "sparkle"
+            steps.append({"icon": icon, "title": title, "body": body})
+        if steps:
+            out[f] = steps
+    faqs = []
+    for fq in (b.get("faqs") or []):
+        q = (fq.get("q") or "").strip()
+        a = (fq.get("a") or "").strip()
+        if q or a:
+            faqs.append({"q": q, "a": a})
+    if faqs:
+        out["faqs"] = faqs
+    return out
+
+
 async def _list_categories() -> list[dict]:
     """Flat category dicts in the legacy shape. `key`/`hindi`/`order` are the API
     names for category_key/name_devanagari/sort_order."""
@@ -1123,6 +1170,7 @@ async def _list_categories() -> list[dict]:
                   COALESCE(c.name_devanagari, '') AS hindi,
                   pc.category_key::text      AS parent_key_db,
                   c.sort_order               AS "order",
+                  COALESCE(c.banner, '{}'::jsonb) AS banner,
                   c.created_at               AS created_at
              FROM categories c
              LEFT JOIN categories pc ON pc.id = c.parent_id
@@ -3129,6 +3177,7 @@ class CategoryIn(BaseModel):
     hindi: Optional[str] = ""
     parent_key: Optional[str] = None
     order: int = 100
+    banner: Optional[dict] = None  # collection-banner content; see _normalize_category_banner
 
 
 class CategoryUpdateIn(BaseModel):
@@ -3136,6 +3185,7 @@ class CategoryUpdateIn(BaseModel):
     hindi: Optional[str] = None
     parent_key: Optional[str] = None
     order: Optional[int] = None
+    banner: Optional[dict] = None
 
 
 class AstrologerIn(BaseModel):
@@ -3812,14 +3862,14 @@ async def admin_create_category(body: CategoryIn, _: str = Depends(require_perm(
     cid = uuid.uuid4()
     await db.execute(
         """INSERT INTO categories (id, category_key, name, name_devanagari, slug,
-                parent_id, sort_order, is_active)
+                parent_id, sort_order, banner, is_active)
            VALUES ($1,$2::category_key,$3,$4,$5::citext,
                    (SELECT id FROM categories WHERE category_key = $6::category_key),
-                   $7, true)""",
+                   $7, $8, true)""",
         cid, ck, body.label, body.hindi,
         re.sub(r"[^a-z0-9]+", "-", body.label.lower()).strip("-"),
         db.CATEGORY_TO_DB.get(body.parent_key) if body.parent_key else None,
-        body.order)
+        body.order, _normalize_category_banner(body.banner))
     return next((c for c in await _list_categories() if c["category_id"] == str(cid)), None)
 
 
@@ -3833,6 +3883,9 @@ async def admin_update_category(category_id: str, body: CategoryUpdateIn, _: str
         if k in updates:
             args.append(updates[k])
             sets.append(f"{col} = ${len(args)}")
+    if "banner" in updates:
+        args.append(_normalize_category_banner(updates["banner"]))
+        sets.append(f"banner = ${len(args)}::jsonb")
     if "parent_key" in updates:
         args.append(db.CATEGORY_TO_DB.get(updates["parent_key"]))
         sets.append(f"parent_id = (SELECT id FROM categories "
