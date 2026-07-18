@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { api } from "@/lib/api";
-import { ShieldCheck, ShieldWarning, ShieldSlash, Certificate, QrCode, Fingerprint, HandHeart, Play, ArrowRight, Copy, CheckCircle } from "@phosphor-icons/react";
+import { ShieldCheck, ShieldWarning, ShieldSlash, Certificate, QrCode, Fingerprint, HandHeart, Play, ArrowRight } from "@phosphor-icons/react";
+import CryptoFingerprint from "@/components/gemora/CryptoFingerprint";
 
 const STATUS_MAP = {
   AUTHENTIC: { color: "text-verified", bg: "bg-verified", border: "border-verified", icon: ShieldCheck, label: "AUTHENTIC", sub: "Signature verified against Tredev's public key" },
@@ -16,18 +17,6 @@ function Field({ label, value, mono = false, deva = false }) {
       <div className="text-[10px] uppercase tracking-[0.25em] text-ink-muted">{label}</div>
       <div className={`mt-1 text-ink ${mono ? "font-mono text-sm break-all" : deva ? "font-deva text-lg" : "text-base"}`}>{value}</div>
     </div>
-  );
-}
-
-function CopyBtn({ text }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <button
-      onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
-      className="ml-2 inline-flex items-center gap-1 text-[10px] text-ink-muted hover:text-maroon"
-    >
-      {copied ? <CheckCircle size={12} weight="duotone" className="text-verified" /> : <Copy size={12} />} {copied ? "Copied" : "Copy"}
-    </button>
   );
 }
 
@@ -99,14 +88,16 @@ export default function Verify() {
           </form>
         )}
 
-        {/* Public key strip */}
-        <div className="mt-10 gold-line p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
-          <div>
-            <div className="text-[10px] uppercase tracking-[0.25em] text-ink-muted">Tredev Public Key (Ed25519)</div>
-            <div className="font-mono text-xs mt-1 break-all text-ink">{pubKey || "…"}</div>
+        {/* Public key — shown as a memorable seal, not raw hex */}
+        {pubKey && (
+          <div className="mt-10 gold-line p-5">
+            <CryptoFingerprint
+              value={pubKey}
+              label="Tredev's official seal (Ed25519 public key)"
+              description="This is Tredev's one and only signing seal — it's the same on every genuine certificate. Recognise this picture and words, and you'll know a certificate was really signed by us."
+            />
           </div>
-          {pubKey && <CopyBtn text={pubKey} />}
-        </div>
+        )}
 
         {/* Result / scanner */}
         {qrToken && (
@@ -208,21 +199,28 @@ export default function Verify() {
                       </div>
                     </div>
 
-                    {/* Ed25519 signature */}
+                    {/* Ed25519 signature — humanised */}
                     <div className="gold-line bg-maroon-deep text-ivory p-6">
-                      <div className="flex items-center gap-2"><Fingerprint size={20} weight="duotone" className="text-gold" /> <span className="font-serifd text-xl text-gold">Ed25519 Signature</span></div>
-                      <div className="mt-5 grid md:grid-cols-2 gap-6">
-                        <div>
-                          <div className="text-[10px] uppercase tracking-widest text-ivory/60">Content Hash (SHA-256)</div>
-                          <div className="font-mono text-xs mt-1 break-all">{result.cert.content_hash_sha256}<CopyBtn text={result.cert.content_hash_sha256} /></div>
-                        </div>
-                        <div>
-                          <div className="text-[10px] uppercase tracking-widest text-ivory/60">Signature</div>
-                          <div className="font-mono text-xs mt-1 break-all">{result.cert.signature_ed25519_hex}<CopyBtn text={result.cert.signature_ed25519_hex} /></div>
-                        </div>
+                      <div className="flex items-center gap-2"><Fingerprint size={20} weight="duotone" className="text-gold" /> <span className="font-serifd text-xl text-gold">This item's unique fingerprint</span></div>
+                      <p className="mt-2 text-xs text-ivory/70 leading-relaxed max-w-2xl">
+                        Every genuine piece has its own one-of-a-kind fingerprint below — no two are ever alike. Remember your item's picture and words; if anyone ever shows you a "copy", its fingerprint won't match.
+                      </p>
+                      <div className="mt-5 grid md:grid-cols-2 gap-8">
+                        <CryptoFingerprint
+                          dark
+                          value={result.cert.content_hash_sha256}
+                          label="This certificate's fingerprint"
+                          description="A unique picture of exactly what's written on this certificate. Change a single letter and the whole picture changes."
+                        />
+                        <CryptoFingerprint
+                          dark
+                          value={result.cert.signature_ed25519_hex}
+                          label="Tredev's signature on this item"
+                          description="Tredev's seal applied to this exact item — proof we personally vouched for it."
+                        />
                       </div>
-                      <div className="mt-6 text-xs text-ivory/70 leading-relaxed">
-                        Verify independently: canonicalise the certificate JSON (RFC-style sorted keys, no whitespace) and check the signature against the public key above using any Ed25519 library.
+                      <div className="mt-6 text-[11px] text-ivory/50 leading-relaxed">
+                        For the technically inclined: expand any value above to see the raw hex. Verify independently by canonicalising the certificate JSON (RFC-style sorted keys, no whitespace) and checking the signature against the public key using any Ed25519 library.
                       </div>
                     </div>
                   </>

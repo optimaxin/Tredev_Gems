@@ -4497,6 +4497,35 @@ async def my_queries(user_id: str = Depends(require_user)):
         user_id)
 
 
+@api.post("/me/queries/{query_id}/notes")
+async def add_my_query_note(query_id: str, body: QueryReplyIn, user_id: str = Depends(require_user)):
+    """Let a buyer add a follow-up note to their OWN query and see the full thread.
+
+    Author is the buyer's own user_id, so the UI can tell their replies from staff
+    ones (staff notes carry a different author_id). A reply on a resolved/closed
+    query bumps it back to in_progress so the support inbox surfaces it again.
+    """
+    owned = await db.fetch_one(
+        "SELECT id FROM queries WHERE id = $1::uuid AND user_id = $2::uuid", query_id, user_id)
+    if not owned:
+        raise HTTPException(404, "Query not found")
+    note = (body.note or "").strip()
+    if not note:
+        raise HTTPException(400, "Note is empty")
+    async with db.transaction() as conn:
+        await conn.execute(
+            """INSERT INTO query_notes (id, query_id, author_id, body)
+               VALUES ($1,$2::uuid,$3::uuid,$4)""",
+            uuid.uuid4(), query_id, user_id, note)
+        await conn.execute(
+            """UPDATE queries
+                  SET updated_at = now(),
+                      status = CASE WHEN status IN ('resolved','closed')
+                                    THEN 'in_progress'::query_status ELSE status END
+                WHERE id = $1::uuid""", query_id)
+    return await db.fetch_one(_QUERY_SELECT + " WHERE q.id = $1::uuid", query_id)
+
+
 @api.get("/admin/queries")
 async def admin_list_queries(_: str = Depends(require_perm("queries")), status: Optional[str] = None):
     sql, args = _QUERY_SELECT + " WHERE true", []
