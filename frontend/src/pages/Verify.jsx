@@ -93,8 +93,8 @@ export default function Verify() {
           <div className="mt-10 gold-line p-5">
             <CryptoFingerprint
               value={pubKey}
-              label="Tredev's official seal (Ed25519 public key)"
-              description="This is Tredev's one and only signing seal — it's the same on every genuine certificate. Recognise this picture and words, and you'll know a certificate was really signed by us."
+              label="Tredev's signing key"
+              description="This code is the same on every genuine certificate we issue. If a certificate shows a different code here, it wasn't signed by Tredev."
             />
           </div>
         )}
@@ -207,16 +207,16 @@ export default function Verify() {
                       </p>
                       <div className="mt-5 grid md:grid-cols-2 gap-8">
                         <CryptoFingerprint
-                          dark
+                          dark seal
                           value={result.cert.content_hash_sha256}
-                          label="This certificate's fingerprint"
-                          description="A unique picture of exactly what's written on this certificate. Change a single letter and the whole picture changes."
+                          label="This certificate's code"
+                          description="A unique code for exactly what's written on this certificate. Change a single letter and the code changes completely."
                         />
                         <CryptoFingerprint
-                          dark
+                          dark seal
                           value={result.cert.signature_ed25519_hex}
-                          label="Tredev's signature on this item"
-                          description="Tredev's seal applied to this exact item — proof we personally vouched for it."
+                          label="Tredev's seal on this item"
+                          description="Tredev's signature applied to this exact item — proof we personally vouched for it."
                         />
                       </div>
                       <div className="mt-6 text-[11px] text-ivory/50 leading-relaxed">

@@ -1,23 +1,7 @@
 import React, { useState } from "react";
 import { Copy, CheckCircle, CaretDown } from "@phosphor-icons/react";
-import { identicon, emojiFingerprint, wordFingerprint } from "@/lib/fingerprint";
-
-// A small 5×5 identicon rendered from the value.
-function Identicon({ value, size = 56, className = "" }) {
-  const { cells, color } = identicon(value);
-  const n = cells.length || 5;
-  const cell = size / n;
-  return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className={className} aria-hidden="true">
-      <rect width={size} height={size} rx="6" fill={color} opacity="0.08" />
-      {cells.map((row, r) =>
-        row.map((on, c) =>
-          on ? <rect key={`${r}-${c}`} x={c * cell} y={r * cell} width={cell} height={cell} rx={cell * 0.18} fill={color} /> : null
-        )
-      )}
-    </svg>
-  );
-}
+import { shortCode, formatCode } from "@/lib/fingerprint";
+import Seal from "@/components/gemora/Seal";
 
 function CopyMini({ text, dark }) {
   const [done, setDone] = useState(false);
@@ -33,33 +17,33 @@ function CopyMini({ text, dark }) {
 }
 
 /**
- * Human-friendly view of a cryptographic value. Shows a recognisable picture + emoji +
- * word phrase (understand & remember) with the raw hex tucked behind "Show technical
- * value" (for the technically inclined). `dark` styles it for a dark background.
+ * Human-friendly view of a cryptographic value: a short verification code (and, when
+ * `seal` is set, a round authenticity seal showing it), with the raw hex tucked behind
+ * "Show technical value". `dark` styles it for a dark background.
  */
-export default function CryptoFingerprint({ value, label, description, dark = false }) {
+export default function CryptoFingerprint({ value, label, description, dark = false, seal = false }) {
   const [showHex, setShowHex] = useState(false);
   if (!value) return null;
-  const emoji = emojiFingerprint(value, 5);
-  const words = wordFingerprint(value, 4);
+  const code = shortCode(value, 6);
 
   const muted = dark ? "text-ivory/60" : "text-ink-muted";
   const soft = dark ? "text-ivory/80" : "text-ink-soft";
   const line = dark ? "border-ivory/20" : "border-gold/30";
+  const codeColor = dark ? "text-ivory" : "text-maroon-deep";
 
   return (
     <div>
       <div className={`text-[10px] uppercase tracking-widest ${muted}`}>{label}</div>
-      <div className="mt-2 flex items-center gap-3">
-        <Identicon value={value} className={`shrink-0 border ${line} rounded-md`} />
+      <div className="mt-2 flex items-center gap-4">
+        {seal && <Seal code={code} dark={dark} size={112} />}
         <div className="min-w-0">
-          <div className="text-2xl leading-none tracking-wide" aria-hidden="true">{emoji.join(" ")}</div>
-          <div className={`mt-1.5 text-sm font-serifd capitalize ${dark ? "text-ivory" : "text-maroon-deep"}`}>
-            {words.join(" · ")}
+          <div className={`font-serifd tracking-[0.2em] ${codeColor} ${seal ? "text-3xl" : "text-2xl"}`} data-testid="fingerprint-code">
+            {formatCode(code)}
           </div>
+          <div className={`mt-1 text-[10px] uppercase tracking-widest ${muted}`}>Verification code</div>
+          {description && <p className={`mt-2 text-xs leading-relaxed ${soft} max-w-sm`}>{description}</p>}
         </div>
       </div>
-      {description && <p className={`mt-2 text-xs leading-relaxed ${soft}`}>{description}</p>}
 
       <button
         type="button"

@@ -1,33 +1,12 @@
-// Turn a long cryptographic hex value (public key, hash, signature) into something a
-// normal person can actually understand and remember: a little picture (identicon),
-// a handful of emoji, and a short word phrase. All are pure, deterministic functions of
-// the value — the same hex always yields the same picture/emoji/words, so a buyer can
-// recognise "mine looks like the peacock-lotus one" and spot a fake that doesn't match.
-// These are a human-recognition aid layered on top of the real proof (the full
-// signature), not a replacement for it.
+// Turn a long cryptographic hex value (public key, hash, signature) into a short,
+// professional-looking verification code a normal person can read and remember —
+// e.g. "K7M-2X9". Deterministic: the same value always yields the same code, so a buyer
+// can recognise their item's code and spot a fake whose code doesn't match. This is a
+// human-recognition aid on top of the real proof (the full signature), not a
+// replacement for it.
 
-const EMOJI = [
-  "🦚", "🪷", "🐯", "🦁", "🐘", "🦌", "🦅", "🐬", "🐢", "🐼", "🐎", "🐫",
-  "🦩", "🦉", "🕊️", "🦋", "🌸", "🌺", "🌻", "🌙", "⭐", "☀️", "💎", "👑",
-  "🔔", "🪔", "🏛️", "🌈", "⚓", "🧭", "🪶", "🎏", "🥭", "🍋", "🌿", "🍯",
-  "🌵", "🎋", "🪸", "🐚", "🔱", "☂️", "🏵️", "🪘", "🎺", "🔮", "🕯️", "🗝️",
-];
-
-const WORDS = [
-  "mango", "lotus", "river", "tiger", "gold", "moon", "star", "sun", "pearl", "coral",
-  "ivory", "amber", "jade", "ruby", "opal", "topaz", "peacock", "swan", "deer", "eagle",
-  "falcon", "dolphin", "turtle", "rabbit", "panda", "lion", "horse", "camel", "temple",
-  "bamboo", "cedar", "maple", "willow", "jasmine", "marigold", "saffron", "cardamom",
-  "ginger", "honey", "mint", "basil", "clove", "almond", "cashew", "walnut", "apricot",
-  "cherry", "plum", "peach", "lemon", "olive", "copper", "silver", "bronze", "marble",
-  "granite", "crystal", "velvet", "silk", "cotton", "linen", "canyon", "valley", "meadow",
-  "harbor", "island", "desert", "glacier", "comet", "planet", "galaxy", "thunder",
-  "breeze", "monsoon", "rainbow", "dawn", "dusk", "lantern", "candle", "palace", "garden",
-  "fountain", "bridge", "anchor", "compass", "feather", "ribbon", "drum", "flute", "bell",
-  "mirror", "crown", "throne", "petal", "ember",
-];
-
-const PALETTE = ["#722F37", "#C9A227", "#B8860B", "#8B5E3C", "#5B7B5B", "#3F5E78", "#7A4B6B", "#A85C32"];
+// Crockford-style alphabet: no 0/O/1/I/L/U to avoid look-alike confusion.
+const ALPHABET = "23456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 function hexBytes(hex) {
   const clean = String(hex || "").replace(/[^0-9a-f]/gi, "");
@@ -36,31 +15,20 @@ function hexBytes(hex) {
   return out;
 }
 
-// Pick `n` items spread across the value's bytes so the whole value influences the result.
-function pick(list, bytes, n) {
-  if (!bytes.length) return [];
-  const step = Math.max(1, Math.floor(bytes.length / n));
-  return Array.from({ length: n }, (_, i) => list[bytes[(i * step) % bytes.length] % list.length]);
-}
-
-export const emojiFingerprint = (hex, n = 5) => pick(EMOJI, hexBytes(hex), n);
-export const wordFingerprint = (hex, n = 4) => pick(WORDS, hexBytes(hex), n);
-
-// A 5×5 horizontally-mirrored grid (like a GitHub identicon) + a brand colour.
-export function identicon(hex) {
+// A `len`-char code where every byte of the value influences every character (good
+// mixing), so two different values almost never collide on the short code.
+export function shortCode(hex, len = 6) {
   const b = hexBytes(hex);
-  if (!b.length) return { cells: [], color: "#999" };
-  const color = PALETTE[b[0] % PALETTE.length];
-  let bit = 0;
-  const nextBit = () => {
-    const v = (b[(1 + Math.floor(bit / 8)) % b.length] >> (bit % 8)) & 1;
-    bit += 1;
-    return !!v;
-  };
-  const cells = [];
-  for (let r = 0; r < 5; r++) {
-    const half = [nextBit(), nextBit(), nextBit()];
-    cells.push([half[0], half[1], half[2], half[1], half[0]]); // mirror
+  if (!b.length) return "";
+  let out = "";
+  for (let i = 0; i < len; i++) {
+    let acc = (i * 2654435761) >>> 0;
+    for (let j = 0; j < b.length; j++) acc = ((acc * 31) + b[j] + ((i + 1) * (j + 3))) >>> 0;
+    out += ALPHABET[acc % ALPHABET.length];
   }
-  return { cells, color };
+  return out;
 }
+
+// "K7M2X9" -> "K7M-2X9" for readability.
+export const formatCode = (code) =>
+  !code ? "" : code.length <= 3 ? code : `${code.slice(0, Math.ceil(code.length / 2))}-${code.slice(Math.ceil(code.length / 2))}`;
