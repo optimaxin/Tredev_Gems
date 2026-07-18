@@ -2,8 +2,9 @@ import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, formatINR } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
-import { ShieldCheck, Package, Heart, Certificate as CertIcon, ArrowRight, Phone, WhatsappLogo, Gear, PencilSimple, LockKey } from "@phosphor-icons/react";
+import { ShieldCheck, Package, Heart, Certificate as CertIcon, ArrowRight, Phone, WhatsappLogo, Gear, PencilSimple, LockKey, ChatCircleDots } from "@phosphor-icons/react";
 import PhoneVerify from "@/components/gemora/PhoneVerify";
+import AccountSupport from "@/components/gemora/AccountSupport";
 import { toast } from "sonner";
 
 export default function Account() {
@@ -180,6 +181,7 @@ export default function Account() {
           ["vault", "Verified Items", ShieldCheck, vault.length],
           ["orders", "Orders", Package, orders.length],
           ["wishlist", "Wishlist", Heart, wish.length],
+          ["support", "Help & Support", ChatCircleDots, null],
           ["settings", "Settings", Gear, null],
         ].map(([k, l, Icon, count]) => (
           <button key={k} onClick={() => setTab(k)} data-testid={`account-tab-${k}`} className={`pb-3 text-sm flex items-center gap-2 ${tab === k ? "text-maroon-deep border-b-2 border-maroon" : "text-ink-muted hover:text-maroon"}`}>
@@ -272,6 +274,8 @@ export default function Account() {
             ))}
           </div>
         )}
+
+        {tab === "support" && <AccountSupport user={user} orders={orders} />}
 
         {tab === "settings" && (
           <div className="grid md:grid-cols-2 gap-6 max-w-4xl">

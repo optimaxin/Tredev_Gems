@@ -113,9 +113,9 @@ export default function CategoryBanner({ category }) {
 
   return (
     <section className="relative bg-ivory overflow-hidden border-b border-gold/30" data-testid={`category-banner-${category}`}>
-      {/* ── Hero band — full-bleed, edge to edge ── */}
-      <div className="grid lg:grid-cols-2 min-h-[62vh] lg:min-h-[68vh]">
-        <div className="relative aspect-[16/10] lg:aspect-auto overflow-hidden bg-cream group order-1">
+      {/* ── Compact rectangular band — fixed 9cm tall, never taller ── */}
+      <div className="grid lg:grid-cols-2 lg:h-[9cm] lg:max-h-[9cm]">
+        <div className="relative aspect-[16/9] lg:aspect-auto lg:h-full overflow-hidden bg-cream group order-1">
           <img
             src={image}
             alt={label}
@@ -123,28 +123,28 @@ export default function CategoryBanner({ category }) {
           />
           {/* fade the plate into the copy panel so there's no hard seam */}
           <div className="absolute inset-0 bg-gradient-to-t from-maroon-deep/25 to-transparent lg:bg-gradient-to-r lg:from-transparent lg:via-transparent lg:to-ivory pointer-events-none" />
-          <div className="absolute top-5 left-5 inline-flex items-center gap-1.5 bg-ivory/90 backdrop-blur border border-gold/40 px-3 py-1.5 text-[10px] uppercase tracking-widest text-verified">
+          <div className="absolute top-4 left-4 inline-flex items-center gap-1.5 bg-ivory/90 backdrop-blur border border-gold/40 px-2.5 py-1 text-[10px] uppercase tracking-widest text-verified">
             <ShieldCheck size={12} weight="duotone" /> {badge}
           </div>
         </div>
 
-        <div className="relative order-2 px-6 sm:px-10 lg:pl-4 lg:pr-16 py-12 lg:py-16 flex flex-col justify-center">
+        <div className="relative order-2 px-6 sm:px-10 lg:pl-6 lg:pr-12 py-7 lg:py-6 flex flex-col justify-center overflow-hidden">
           <div className="grain absolute inset-0 pointer-events-none opacity-[0.6]" />
           {/* turning yantra watermark set into the copy panel */}
-          <YantraWatermark className="pointer-events-none absolute -right-24 top-1/2 -translate-y-1/2 w-[420px] h-[420px] text-gold/[0.10] hidden lg:block" />
+          <YantraWatermark className="pointer-events-none absolute -right-20 top-1/2 -translate-y-1/2 w-[280px] h-[280px] text-gold/[0.10] hidden lg:block" />
           <div className="relative max-w-xl">
-            <div className="flex items-baseline gap-3">
-              {deva && <span className="font-deva text-2xl text-gold-soft">{deva}</span>}
-              <span className="text-xs uppercase tracking-[0.3em] text-gold-soft">The Collection</span>
+            <div className="flex items-baseline gap-2.5">
+              {deva && <span className="font-deva text-lg text-gold-soft">{deva}</span>}
+              <span className="text-[11px] uppercase tracking-[0.3em] text-gold-soft">The Collection</span>
             </div>
-            <h1 className="font-display text-5xl md:text-6xl lg:text-7xl text-ink mt-3 leading-[1.02]">{label}</h1>
-            <div className="mt-5 h-[1px] w-20 bg-gold rule-draw" />
-            <p className="mt-6 text-base md:text-lg text-ink-soft leading-relaxed">{intro}</p>
-            <div className="mt-8 flex flex-wrap gap-3">
-              <Cta href={ctaPrimary.href} className="brand-gradient text-ivory px-7 py-4 text-xs uppercase tracking-widest inline-flex items-center gap-2 hover-lift">
-                {ctaPrimary.label} <CaretRight size={13} weight="bold" />
+            <h1 className="font-display text-3xl md:text-4xl text-ink mt-1.5 leading-[1.05]">{label}</h1>
+            <div className="mt-2.5 h-[1px] w-16 bg-gold rule-draw" />
+            <p className="mt-3 text-sm text-ink-soft leading-relaxed line-clamp-3">{intro}</p>
+            <div className="mt-4 flex flex-wrap gap-2.5">
+              <Cta href={ctaPrimary.href} className="brand-gradient text-ivory px-5 py-2.5 text-[11px] uppercase tracking-widest inline-flex items-center gap-1.5 hover-lift">
+                {ctaPrimary.label} <CaretRight size={12} weight="bold" />
               </Cta>
-              <Cta href={ctaSecondary.href} className="border border-maroon text-maroon px-7 py-4 text-xs uppercase tracking-widest hover:bg-maroon hover:text-ivory transition-colors">
+              <Cta href={ctaSecondary.href} className="border border-maroon text-maroon px-5 py-2.5 text-[11px] uppercase tracking-widest hover:bg-maroon hover:text-ivory transition-colors">
                 {ctaSecondary.label}
               </Cta>
             </div>

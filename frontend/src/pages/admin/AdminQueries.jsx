@@ -16,7 +16,7 @@ export default function AdminQueries() {
   const refresh = () => api.get("/admin/queries", { params: filter ? { status: filter } : {} }).then((r) => setQueries(r.data));
   useEffect(() => { refresh(); }, [filter]);
 
-  const shown = queries.filter((q) => matchesQuery(query, [q.subject, q.name, q.email, q.phone, q.message]));
+  const shown = queries.filter((q) => matchesQuery(query, [q.subject, q.name, q.email, q.phone, q.message, q.category, q.order_no]));
 
   const update = async (id, patch) => {
     await api.patch(`/admin/queries/${id}`, patch);
@@ -41,7 +41,11 @@ export default function AdminQueries() {
           <div key={q.query_id} className="gold-line bg-ivory p-4">
             <div className="flex items-baseline justify-between gap-3 flex-wrap">
               <div className="min-w-0 flex-1">
-                <div className="font-serifd text-lg">{q.subject}</div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="font-serifd text-lg">{q.subject}</div>
+                  {q.category && <span className="text-[10px] uppercase tracking-widest bg-cream border border-gold/40 text-maroon px-2 py-0.5">{q.category}</span>}
+                  {q.order_no && <span className="text-[10px] font-mono text-ink-muted border border-gold/30 px-2 py-0.5">{q.order_no}</span>}
+                </div>
                 <div className="text-xs text-ink-muted">{q.name} · {q.email}{q.phone ? ` · ${q.phone}` : ""} · <span className="font-mono">{new Date(q.created_at).toLocaleString()}</span></div>
                 <p className="mt-2 text-sm text-ink-soft">{q.message}</p>
               </div>

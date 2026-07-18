@@ -3299,8 +3299,10 @@ class QueryIn(BaseModel):
     name: str
     email: EmailStr
     phone: Optional[str] = None
-    subject: str
+    subject: Optional[str] = None  # derived from category/order when blank
     message: str
+    category: Optional[str] = None  # order | payment | refund | return | product | other
+    order_id: Optional[str] = None  # the order this is about, if any
 
 
 class QueryReplyIn(BaseModel):
@@ -4427,6 +4429,11 @@ async def admin_update_order_status(order_id: str, body: OrderStatusIn, _: str =
 
 
 # --- User queries / support inbox (perm: queries) ----------------------------
+_QUERY_CATEGORIES = {
+    "order": "Order issue", "payment": "Payment issue", "refund": "Refund request",
+    "return": "Return request", "product": "Product issue", "other": "Other",
+}
+
 _QUERY_SELECT = """
     SELECT q.id::text      AS query_id,
            q.name          AS name,
@@ -4434,11 +4441,15 @@ _QUERY_SELECT = """
            q.phone         AS phone,
            q.subject       AS subject,
            q.message       AS message,
+           q.category      AS category,
+           q.order_id::text AS order_id,
+           o.order_no      AS order_no,
            q.user_id::text AS user_id,
            q.status::text  AS status,
            q.created_at    AS created_at,
            COALESCE(n.notes, '[]'::jsonb) AS notes
       FROM queries q
+      LEFT JOIN orders o ON o.id = q.order_id
       LEFT JOIN LATERAL (
             SELECT jsonb_agg(jsonb_build_object(
                      'by', qn.author_id::text,
@@ -4452,12 +4463,38 @@ _QUERY_SELECT = """
 
 @api.post("/queries")
 async def submit_query(body: QueryIn, user_id: Optional[str] = Depends(get_user_id_optional)):
+    category = body.category if body.category in _QUERY_CATEGORIES else None
+    # An order can only be attached if it belongs to the signed-in user — no peeking at
+    # someone else's order via its id.
+    order_id, order_no = None, None
+    if body.order_id and user_id:
+        row = await db.fetch_one(
+            "SELECT order_no FROM orders WHERE id=$1::uuid AND user_id=$2::uuid",
+            body.order_id, user_id)
+        if row:
+            order_id, order_no = body.order_id, row["order_no"]
+    # Give the support inbox a meaningful subject even if the buyer only picked a type.
+    subject = (body.subject or "").strip()
+    if not subject:
+        subject = _QUERY_CATEGORIES.get(category, "Support request")
+        if order_no:
+            subject += f" · {order_no}"
     qid = uuid.uuid4()
     await db.execute(
-        """INSERT INTO queries (id, name, email, phone, subject, message, user_id, status)
-           VALUES ($1,$2,$3::citext,$4,$5,$6,$7::uuid,'open')""",
-        qid, body.name, body.email, body.phone, body.subject, body.message, user_id)
+        """INSERT INTO queries (id, name, email, phone, subject, message, category,
+                order_id, user_id, status)
+           VALUES ($1,$2,$3::citext,$4,$5,$6,$7,$8::uuid,$9::uuid,'open')""",
+        qid, body.name, body.email, body.phone, subject, body.message, category,
+        order_id, user_id)
     return await db.fetch_one(_QUERY_SELECT + " WHERE q.id = $1::uuid", str(qid))
+
+
+@api.get("/me/queries")
+async def my_queries(user_id: str = Depends(require_user)):
+    """A buyer's own support queries, newest first — so they can track status."""
+    return await db.fetch_all(
+        _QUERY_SELECT + " WHERE q.user_id = $1::uuid ORDER BY q.created_at DESC LIMIT 100",
+        user_id)
 
 
 @api.get("/admin/queries")
