@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "@/lib/api";
 import ProductCard from "@/components/gemora/ProductCard";
+import CategoryBanner from "@/components/gemora/CategoryBanner";
 import { Funnel } from "@phosphor-icons/react";
 
 const CATS = ["gemstone", "rudraksha", "bracelet", "yantra", "idol", "pooja_kit", "prashad", "book"];
@@ -37,16 +38,24 @@ export default function Shop() {
     setSp(n);
   };
 
+  // A single-category view gets the full editorial collection banner; search and
+  // the all-goods view keep the plain header.
+  const showBanner = category && !q;
+
   return (
     <div className="mx-auto max-w-7xl px-6 lg:px-10 py-12">
-      <header className="mb-10">
-        <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">The Store · भंडार</div>
-        <h1 className="font-display text-4xl md:text-5xl text-ink mt-3">
-          {q ? <>Search — <em className="font-serifd">"{q}"</em></> : category ? category.replace("_", " ") : "All authentic goods"}
-        </h1>
-      </header>
+      {showBanner ? (
+        <CategoryBanner category={category} />
+      ) : (
+        <header className="mb-10">
+          <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">The Store · भंडार</div>
+          <h1 className="font-display text-4xl md:text-5xl text-ink mt-3">
+            {q ? <>Search — <em className="font-serifd">"{q}"</em></> : "All authentic goods"}
+          </h1>
+        </header>
+      )}
 
-      <div className="grid lg:grid-cols-[240px_1fr] gap-10">
+      <div id="collection-grid" className="grid lg:grid-cols-[240px_1fr] gap-10 scroll-mt-24">
         <aside className="lg:sticky lg:top-24 h-fit">
           <div className="gold-line p-5">
             <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-ink"><Funnel size={14} weight="duotone" /> Filters</div>

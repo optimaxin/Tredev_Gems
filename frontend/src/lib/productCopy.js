@@ -318,6 +318,124 @@ export const COMMON_FAQ = [
   { q: "Do you ship internationally?", a: "Yes, worldwide via insured logistics. Duties and taxes are borne by the buyer. Certificates travel with the parcel and the QR activates on our dispatch scan." },
 ];
 
+/* ── Category collection banner + info-bar copy ──────────────────────
+   Powers the Shop page banner (image + intro) and the expandable bar:
+   About · How to Wear · Who Should Wear · How to Care · Benefits ·
+   Quality · Price · FAQs. How-to-Wear / Benefits / Care / FAQs are reused
+   from the maps above; only the four narrative sections live here.
+   DEFAULT_BANNER keeps a brand-new category fully populated.            */
+const DEFAULT_BANNER = {
+  image: "https://images.pexels.com/photos/15286007/pexels-photo-15286007.jpeg",
+  intro:
+    "Every piece in this collection is first-party stock — sourced, serialised, lab-checked and temple-energised before it reaches you, then signed with an Ed25519 key so its authenticity can be proven by anyone, from anywhere.",
+  about:
+    "This is not a marketplace listing other people's inventory. We own every unit we sell: photographed and weighed at intake, stored in our vault, and released only once it carries a signed certificate. What you see is what ships — the same physical unit, provably.",
+  whoShouldWear:
+    "Anyone drawn to it. For a piece chosen to your birth chart rather than by eye, a short consultation with one of our astrologers will point you to the right one — including whether you need it at all.",
+  quality:
+    "Natural materials, checked by hand and by lab. Nothing is treated, dyed or reconstituted unless the listing says so in writing, and the lab report travels with the certificate so the grade can never be quietly changed after the sale.",
+  price:
+    "Price reflects the material — its rarity, size, origin and grade — plus any making or energisation you choose. Because we are first-party, there is no reseller margin stacked on top. The base price and every add-on are itemised on the product page before you pay.",
+};
+
+export const CATEGORY_BANNER = {
+  gemstone: {
+    image: "https://images.pexels.com/photos/9953656/pexels-photo-9953656.jpeg",
+    intro:
+      "Natural, untreated Navaratna and semi-precious stones, each cut for a specific graha and prized in Vedic jyotish. From Ceylon Pukhraj and Kashmir Neelam to Panna, Manik and Moonga — every stone is lab-certified, weight-verified and temple-energised before dispatch.",
+    about:
+      "A gemstone worn for jyotish is only as good as its purity and its provenance. We deal exclusively in natural, untreated stones — no heat, no glass filling, no diffusion — and bind each one to a GJEPC-affiliated lab report and an Ed25519 signature. The stone you scan is the stone you wear.",
+    whoShouldWear:
+      "A jyotish stone should be chosen for the graha your chart needs strengthened — Pukhraj for a weak Jupiter, Neelam for Saturn, and so on — not by colour or liking alone. If you are unsure, book a consultation; a wrongly chosen stone is best avoided entirely.",
+    quality:
+      "Every stone is natural and untreated unless explicitly stated. Carat weight is measured at intake, the treatment status is printed on the lab report, and both are locked into the signed certificate. Colour, clarity and origin (Ceylon, Kashmir, Burma, Zambia) are stated on each listing.",
+    price:
+      "A stone's price is driven by its rarity, origin, carat weight, colour and clarity — a Kashmir Neelam and a Bangkok one are not the same thing. On top of the stone you may add temple energisation, or a jyotish-correct ring or pendant; each is itemised before checkout.",
+  },
+  rudraksha: {
+    image: "https://images.unsplash.com/photo-1661915606983-cc9759b99343?w=1400",
+    intro:
+      "Authentic 1-to-21 Mukhi Nepal-origin rudraksha, X-ray verified for their internal chambers and energised at partner temples. From the rare 1 Mukhi to everyday 5 Mukhi malas — no Indonesian lookalikes, ever.",
+    about:
+      "A rudraksha's power lives in its mukhi — the number of faces, each answering to a deity and a graha. Indonesian beads are routinely passed off as Nepali; we X-ray every bead to confirm its chambers match its declared mukhi, and lock the result into a signed certificate.",
+    whoShouldWear:
+      "Rudraksha suits almost everyone — there is no prohibition by rashi. Match the mukhi to your intent: 5 Mukhi for health and calm, 1 Mukhi for clarity, 8 Mukhi for obstacles. Remove it during non-vegetarian meals, alcohol, and cremation rites.",
+    quality:
+      "Nepal-origin beads with deep, clearly defined mukhi lines, X-ray verified at intake. Bead size, mukhi count and origin are stated on every listing and on the certificate. We never sell Indonesian beads as Nepali, and never a bead whose chambers we haven't confirmed.",
+    price:
+      "Rudraksha price rises steeply with rarity of mukhi and size — a 5 Mukhi is everyday, a genuine 1 Mukhi is exceptional. Bead size, origin and optional silver/gold capping all factor in, and each is shown separately before you pay.",
+  },
+  bracelet: {
+    image: "https://images.unsplash.com/photo-1611591437281-460bfbe1220a?w=1400",
+    intro:
+      "Natural-stone and rudraksha bracelets that carry an intention into everyday wear — tiger eye for focus, amethyst for calm, pyrite for a prosperity mindset. Genuine beads throughout, pre-energised and ready for daily wear.",
+    about:
+      "A crystal bracelet blends everyday style with the traditional associations of natural stones. Our range spans hand-checked natural beads — amethyst, rose quartz, tiger eye, pyrite and more — each chosen for a different intention, strung to serve the stone and not just to look good.",
+    whoShouldWear:
+      "Anyone. Wear on the left wrist to draw energy inward, the right to project it outward. Choose the stone by intent — pyrite or a Dhan Yog combination for wealth, amethyst for calm, black tourmaline for protection.",
+    quality:
+      "AAA-grade natural beads, hand-checked for consistency of colour and cut, strung on durable cord and pre-energised. No dyed glass, no reconstituted powder. What's natural stone is stated plainly on every listing.",
+    price:
+      "Bracelet price reflects the stone, the bead size and grade, and whether it's a single-stone or a multi-crystal combination. Natural, higher-clarity beads cost more than commercial grade — the difference is in the material, itemised before checkout.",
+  },
+  gemstone_jewellery: {
+    image: "https://images.unsplash.com/photo-1605100804763-247f67b3557e?w=1400",
+    intro:
+      "Rings and pendants built around a jyotish-correct stone — open-base settings so the gem rests against your skin, in hallmarked silver, panchdhatu or gold. The stone lab-certified, the metal assayed, both on one certificate.",
+    about:
+      "Jyotish jewellery is made around the stone, never the stone cut down to fit the setting. We keep the gem's base open so it can touch your skin as the tradition requires, set it in the metal prescribed for its graha, and certify stone and metal together.",
+    whoShouldWear:
+      "Anyone wearing a stone for its graha who wants it set for daily wear. The finger, metal and weight follow the ruling planet — Pukhraj in gold on the index finger, Neelam in silver on the middle. A consultation confirms the combination before you commit.",
+    quality:
+      "Hallmarked, assayed metal and a lab-certified stone, joined in an open-base jyotish setting and finished by hand. Metal purity and stone grade are both printed on the certificate — one signed document for the whole piece.",
+    price:
+      "Price combines the stone (rarity, carat, grade), the metal (type and weight at the day's rate) and the making charge. Each is quoted separately on the product page, and metal is charged by weight — nothing hidden in a round number.",
+  },
+  mala: {
+    image: "https://images.unsplash.com/photo-1601315379834-3d1d1a1a3f9f?w=1400",
+    intro:
+      "Hand-knotted 108-bead japa malas in rudraksha, tulsi and sphatik, counted and finished with a sumeru for daily sadhana. Certified beads, strung with intent, energised before they reach your hands.",
+    about:
+      "A japa mala is a tool for practice, not decoration. Ours are a true 108 plus the sumeru (guru bead), knotted between beads by hand so each one stops cleanly under the thumb — machine-strung malas run and slip. Every bead is verified and the mala signed as one unit.",
+    whoShouldWear:
+      "Anyone with a daily japa or mantra practice. Match the bead to your sadhana — rudraksha for Shiva mantras, tulsi for Vishnu and Krishna, sphatik (crystal) for cooling, general and Lakshmi mantras. A mala is kept personal to your own practice.",
+    quality:
+      "108 counted beads plus sumeru, hand-knotted on silk or durable thread, with certified rudraksha, genuine tulsi or clear natural sphatik. Bead count, material and knotting are stated on the listing; the whole mala is serialised and signed.",
+    price:
+      "Mala price depends on the bead — rudraksha mukhi and size, or the clarity of sphatik — the count, and the hand-knotting. A plain 5 Mukhi mala is everyday; rarer beads and finer stringing cost more, and every factor is itemised.",
+  },
+  yantra: {
+    image: "https://images.unsplash.com/photo-1609619385076-36a873425636?w=1400",
+    intro:
+      "Geometrically exact yantras — Shri, Kuber, Navagraha and more — etched to classical proportions in the metal each deity calls for, and installed with pran-pratishtha before dispatch.",
+    about:
+      "A yantra works by its geometry; an inexact one is just a drawing. Ours are etched to shastric proportions in the correct metal, then consecrated with a recorded pooja. The installation and material are recorded on a signed certificate you can verify.",
+    whoShouldWear:
+      "Anyone establishing a deity or intention in the home or workplace — Shri and Kuber for wealth, Navagraha for planetary balance, Vastu for a space. A yantra is installed and worshipped, not worn; it suits any household that will keep it with daily attention.",
+    quality:
+      "Struck to classical geometry in the shastra-prescribed metal, with crisp, accurate lines — not a printed plate. Metal, dimensions and deity are stated on the listing, and pran-pratishtha is performed and recorded before the yantra leaves the vault.",
+    price:
+      "Price follows the metal (copper, silver, gold-plated or solid), the size, and the precision of the etching. Consecration is included; any premium metal or larger format is shown separately before checkout.",
+  },
+  idol: {
+    image: "https://images.unsplash.com/photo-1665579156897-b28f83a3fcbd?w=1400",
+    intro:
+      "Hand-finished murtis carved to shilpa-shastra proportions — brass, panchdhatu, marble and more — consecrated with pran-pratishtha and ready for your pooja room.",
+    about:
+      "A murti is worshipful because of its proportion. Ours are carved to the classical measures and finished by artisans whose families have done this work for generations, then consecrated with a recorded pooja. Material and origin travel with the signed certificate.",
+    whoShouldWear:
+      "Any household establishing a deity for daily worship. Choose the murti by the deity you keep and the space you have — East or West facing, at or above waist height, never in a bedroom or facing a bathroom.",
+    quality:
+      "Shilpa-shastra proportions, hand-finished detail, and honest material — solid brass and panchdhatu, not hollow plating passed off as solid. Material, height and weight are on the listing; pran-pratishtha is recorded before dispatch.",
+    price:
+      "Price reflects the material, the size and the depth of hand-finishing — a cast brass murti and a hand-carved marble one are worlds apart. Every factor is itemised, with no reseller margin because we make or commission first-party.",
+  },
+};
+
+export function bannerFor(category) {
+  return { ...DEFAULT_BANNER, ...(CATEGORY_BANNER[category] || {}) };
+}
+
 export function copyFor(category) {
   return { ...DEFAULT, ...(CATEGORY_COPY[category] || {}) };
 }
