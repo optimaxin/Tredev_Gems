@@ -1943,9 +1943,14 @@ async def verify(qr_token: str):
 
 
 @api.get("/verify/qr/{qr_token}.png")
-async def qr_image(qr_token: str):
-    # Encode the public verify URL, not just the token, so any camera works.
-    url = f"/verify/{qr_token}"
+async def qr_image(qr_token: str, request: Request):
+    # Encode an ABSOLUTE verify URL so a phone camera opens the page directly. A bare
+    # "/verify/..." is a relative path — scanners can't resolve it to a link and treat
+    # it as plain text (which is why a scan ends up as a web search). PUBLIC_APP_URL is
+    # the frontend origin (where the /verify/:token route lives); fall back to the
+    # request host so the QR is never relative even if the env var is unset.
+    base = os.environ.get("PUBLIC_APP_URL", "").rstrip("/") or str(request.base_url).rstrip("/")
+    url = f"{base}/verify/{qr_token}"
     img: PilImage = qrcode.make(url)
     buf = io.BytesIO()
     img.save(buf, format="PNG")

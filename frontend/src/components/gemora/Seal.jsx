@@ -69,6 +69,12 @@ export default function Seal({ code, size = 116, dark = false }) {
           <stop offset="0%" stopColor={dark ? "#FFF6DC" : "#FBF6E4"} stopOpacity={dark ? 0.16 : 0.5} />
           <stop offset="55%" stopColor={dark ? "#FFF6DC" : "#FBF6E4"} stopOpacity="0" />
         </radialGradient>
+        {/* darkens/lightens the very centre so the code reads cleanly against the engraving */}
+        <radialGradient id={`core-${uid}`} cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stopColor={dark ? "#2A1016" : "#FBF6E4"} stopOpacity={dark ? 0.72 : 0.85} />
+          <stop offset="70%" stopColor={dark ? "#2A1016" : "#FBF6E4"} stopOpacity={dark ? 0.72 : 0.85} />
+          <stop offset="100%" stopColor={dark ? "#2A1016" : "#FBF6E4"} stopOpacity="0" />
+        </radialGradient>
         <filter id={`emboss-${uid}`} x="-20%" y="-20%" width="140%" height="140%">
           <feGaussianBlur stdDeviation="0.5" result="b" />
           <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
@@ -95,8 +101,10 @@ export default function Seal({ code, size = 116, dark = false }) {
 
         {/* inner ring enclosing the medallion */}
         <circle cx={cx} cy={cy} r={R - 13} fill="none" stroke={`url(#gold-${uid})`} strokeWidth="1.3" />
-        <circle cx={cx} cy={cy} r={R - 22} fill="none" stroke={g3} strokeWidth="0.5" opacity="0.6" />
       </g>
+
+      {/* clean medallion behind the code */}
+      <circle cx={cx} cy={cy} r={R - 20} fill={`url(#core-${uid})`} />
 
       {/* curved labels */}
       <text fill={ink} fontSize={size * 0.066} fontWeight="600" letterSpacing="1.7" style={{ fontFamily: "Georgia, 'Cormorant Garamond', serif" }}>
@@ -112,16 +120,16 @@ export default function Seal({ code, size = 116, dark = false }) {
       <line x1={cx + size * 0.10} y1={cy - size * 0.055} x2={cx + size * 0.23} y2={cy - size * 0.055} stroke={bead} strokeWidth="0.7" opacity="0.85" />
 
       {/* embossed code — a soft shadow twin behind for depth */}
-      <text x={cx} y={cy + size * 0.075 + 0.7} textAnchor="middle" fill={dark ? "#000" : "#722F37"} opacity={dark ? 0.35 : 0.12}
-        fontSize={size * 0.155} fontWeight="700" letterSpacing="1.4" style={{ fontFamily: "Georgia, 'Cormorant Garamond', serif" }}>
+      <text x={cx} y={cy + size * 0.07 + 0.8} textAnchor="middle" fill={dark ? "#000" : "#722F37"} opacity={dark ? 0.4 : 0.12}
+        fontSize={size * 0.17} fontWeight="700" letterSpacing="1" style={{ fontFamily: "Georgia, 'Cormorant Garamond', serif" }}>
         {code}
       </text>
-      <text x={cx} y={cy + size * 0.075} textAnchor="middle" fill={ink}
-        fontSize={size * 0.155} fontWeight="700" letterSpacing="1.4" style={{ fontFamily: "Georgia, 'Cormorant Garamond', serif" }}>
+      <text x={cx} y={cy + size * 0.07} textAnchor="middle" fill={ink}
+        fontSize={size * 0.17} fontWeight="700" letterSpacing="1" style={{ fontFamily: "Georgia, 'Cormorant Garamond', serif" }}>
         {code}
       </text>
 
-      <text x={cx} y={cy + size * 0.17} textAnchor="middle" fill={bead} fontSize={size * 0.048} letterSpacing="2.2">VERIFY CODE</text>
+      <text x={cx} y={cy + size * 0.185} textAnchor="middle" fill={bead} fontSize={size * 0.05} letterSpacing="2.4">VERIFY CODE</text>
     </svg>
   );
 }

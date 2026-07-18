@@ -35,7 +35,7 @@ export default function CryptoFingerprint({ value, label, description, dark = fa
     <div>
       <div className={`text-[10px] uppercase tracking-widest ${muted}`}>{label}</div>
       <div className="mt-2 flex items-center gap-4">
-        {seal && <Seal code={code} dark={dark} size={112} />}
+        {seal && <Seal code={code} dark={dark} size={144} />}
         <div className="min-w-0">
           <div className={`font-serifd tracking-[0.2em] ${codeColor} ${seal ? "text-3xl" : "text-2xl"}`} data-testid="fingerprint-code">
             {formatCode(code)}
