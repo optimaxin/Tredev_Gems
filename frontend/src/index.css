@@ -249,6 +249,15 @@ body {
   .rule-draw { transform: scaleX(1); }
 }
 
+/* ===== Authenticity seal — slowly turning engraved rims ===== */
+@keyframes seal-spin { to { transform: rotate(360deg); } }
+@keyframes seal-spin-rev { to { transform: rotate(-360deg); } }
+.seal-spin { animation: seal-spin 90s linear infinite; transform-origin: 50% 50%; transform-box: fill-box; }
+.seal-spin-rev { animation: seal-spin-rev 120s linear infinite; transform-origin: 50% 50%; transform-box: fill-box; }
+@media (prefers-reduced-motion: reduce) {
+  .seal-spin, .seal-spin-rev { animation: none !important; }
+}
+
 /* Devanagari readability tweak */
 .hindi { font-family: "Tiro Devanagari Sanskrit", serif; font-weight: 400; }
 

@@ -200,27 +200,54 @@ export default function Verify() {
                     </div>
 
                     {/* Ed25519 signature — humanised */}
-                    <div className="gold-line bg-maroon-deep text-ivory p-6">
-                      <div className="flex items-center gap-2"><Fingerprint size={20} weight="duotone" className="text-gold" /> <span className="font-serifd text-xl text-gold">This item's unique fingerprint</span></div>
-                      <p className="mt-2 text-xs text-ivory/70 leading-relaxed max-w-2xl">
-                        Every genuine piece has its own one-of-a-kind fingerprint below — no two are ever alike. Remember your item's picture and words; if anyone ever shows you a "copy", its fingerprint won't match.
-                      </p>
-                      <div className="mt-5 grid md:grid-cols-2 gap-8">
-                        <CryptoFingerprint
-                          dark seal
-                          value={result.cert.content_hash_sha256}
-                          label="This certificate's code"
-                          description="A unique code for exactly what's written on this certificate. Change a single letter and the code changes completely."
-                        />
-                        <CryptoFingerprint
-                          dark seal
-                          value={result.cert.signature_ed25519_hex}
-                          label="Tredev's seal on this item"
-                          description="Tredev's signature applied to this exact item — proof we personally vouched for it."
-                        />
-                      </div>
-                      <div className="mt-6 text-[11px] text-ivory/50 leading-relaxed">
-                        For the technically inclined: expand any value above to see the raw hex. Verify independently by canonicalising the certificate JSON (RFC-style sorted keys, no whitespace) and checking the signature against the public key using any Ed25519 library.
+                    <div className="relative gold-line-strong bg-maroon-deep text-ivory p-7 lg:p-8 overflow-hidden">
+                      {/* faint sacred-geometry watermark + top seam */}
+                      <div className="grain absolute inset-0 pointer-events-none" />
+                      <div className="absolute inset-x-0 top-0 h-[2px] brand-gradient" />
+
+                      <div className="relative">
+                        <div className="flex items-center gap-2.5">
+                          <span className="w-9 h-9 rounded-full border border-gold/50 bg-gold/10 flex items-center justify-center shrink-0">
+                            <Fingerprint size={18} weight="duotone" className="text-gold" />
+                          </span>
+                          <span className="font-serifd text-2xl text-gold">This item's unique fingerprint</span>
+                        </div>
+                        <div className="mt-3 h-[1px] w-24 bg-gold/40" />
+                        <p className="mt-3 text-sm text-ivory/70 leading-relaxed max-w-2xl">
+                          Every genuine piece has its own one-of-a-kind fingerprint below — no two are ever alike. Remember your item's picture and words; if anyone ever shows you a "copy", its fingerprint won't match.
+                        </p>
+
+                        <div className="mt-7 grid md:grid-cols-2 gap-8 md:gap-0">
+                          <div className="relative md:pr-8">
+                            {/* warm glow behind the seal */}
+                            <div className="absolute -left-4 top-6 w-40 h-40 rounded-full pointer-events-none"
+                              style={{ background: "radial-gradient(circle, rgba(212,175,55,0.18) 0%, transparent 70%)" }} />
+                            <div className="relative">
+                              <CryptoFingerprint
+                                dark seal
+                                value={result.cert.content_hash_sha256}
+                                label="This certificate's code"
+                                description="A unique code for exactly what's written on this certificate. Change a single letter and the code changes completely."
+                              />
+                            </div>
+                          </div>
+                          <div className="relative md:pl-8 md:border-l md:border-gold/25">
+                            <div className="absolute -left-2 top-6 w-40 h-40 rounded-full pointer-events-none"
+                              style={{ background: "radial-gradient(circle, rgba(242,140,40,0.16) 0%, transparent 70%)" }} />
+                            <div className="relative">
+                              <CryptoFingerprint
+                                dark seal
+                                value={result.cert.signature_ed25519_hex}
+                                label="Tredev's seal on this item"
+                                description="Tredev's signature applied to this exact item — proof we personally vouched for it."
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="mt-7 pt-5 border-t border-ivory/15 text-[11px] text-ivory/50 leading-relaxed">
+                          For the technically inclined: expand any value above to see the raw hex. Verify independently by canonicalising the certificate JSON (RFC-style sorted keys, no whitespace) and checking the signature against the public key using any Ed25519 library.
+                        </div>
                       </div>
                     </div>
                   </>
