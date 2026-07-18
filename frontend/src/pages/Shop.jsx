@@ -57,47 +57,47 @@ export default function Shop() {
         </header>
       )}
 
-      <div id="collection-grid" className="grid lg:grid-cols-[240px_1fr] gap-10 scroll-mt-24">
+      <div id="collection-grid" className="grid lg:grid-cols-[320px_1fr] gap-10 scroll-mt-24">
         <aside className="lg:sticky lg:top-24 h-fit">
-          <div className="gold-line p-5">
-            <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-ink"><Funnel size={14} weight="duotone" /> Filters</div>
-            <div className="mt-5">
-              <div className="text-[10px] uppercase tracking-widest text-ink-muted mb-2">Category</div>
-              <div className="flex flex-wrap gap-2">
+          <div className="gold-line-strong p-6">
+            <div className="flex items-center gap-2 text-sm uppercase tracking-[0.2em] text-ink pb-4 border-b border-gold/20"><Funnel size={18} weight="duotone" className="text-gold-soft" /> Filters</div>
+            <div className="mt-6">
+              <div className="text-[11px] uppercase tracking-[0.2em] text-ink-muted mb-3">Category</div>
+              <div className="flex flex-wrap gap-2.5">
                 {CATS.map((c) => (
                   <button
                     key={c}
                     onClick={() => setFilter("category", category === c ? "" : c)}
                     data-testid={`filter-cat-${c}`}
-                    className={`text-xs px-2 py-1 border ${category === c ? "bg-maroon text-ivory border-maroon" : "border-gold/40 text-ink-soft hover:border-maroon"}`}
+                    className={`text-sm px-3.5 py-2 border transition-colors ${category === c ? "bg-maroon text-ivory border-maroon" : "border-gold/40 text-ink-soft hover:border-maroon"}`}
                   >
                     {c.replace("_", " ")}
                   </button>
                 ))}
               </div>
             </div>
-            <div className="mt-6">
-              <div className="text-[10px] uppercase tracking-widest text-ink-muted mb-2">Planet</div>
-              <div className="flex flex-wrap gap-2">
+            <div className="mt-7">
+              <div className="text-[11px] uppercase tracking-[0.2em] text-ink-muted mb-3">Planet</div>
+              <div className="flex flex-wrap gap-2.5">
                 {PLANETS.map((p) => (
                   <button
                     key={p}
                     onClick={() => setFilter("graha", graha === p ? "" : p)}
-                    className={`text-xs px-2 py-1 border ${graha === p ? "bg-maroon text-ivory border-maroon" : "border-gold/40 text-ink-soft hover:border-maroon"}`}
+                    className={`text-sm px-3.5 py-2 border transition-colors ${graha === p ? "bg-maroon text-ivory border-maroon" : "border-gold/40 text-ink-soft hover:border-maroon"}`}
                   >
                     {p}
                   </button>
                 ))}
               </div>
             </div>
-            <div className="mt-6">
-              <div className="text-[10px] uppercase tracking-widest text-ink-muted mb-2">Purpose</div>
-              <div className="flex flex-wrap gap-2">
+            <div className="mt-7">
+              <div className="text-[11px] uppercase tracking-[0.2em] text-ink-muted mb-3">Purpose</div>
+              <div className="flex flex-wrap gap-2.5">
                 {PURPOSES.map((p) => (
                   <button
                     key={p}
                     onClick={() => setFilter("purpose", purpose === p ? "" : p)}
-                    className={`text-xs px-2 py-1 border capitalize ${purpose === p ? "bg-maroon text-ivory border-maroon" : "border-gold/40 text-ink-soft hover:border-maroon"}`}
+                    className={`text-sm px-3.5 py-2 border capitalize transition-colors ${purpose === p ? "bg-maroon text-ivory border-maroon" : "border-gold/40 text-ink-soft hover:border-maroon"}`}
                   >
                     {p}
                   </button>

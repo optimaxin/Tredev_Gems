@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api, formatINR } from "@/lib/api";
 import { toast } from "sonner";
-import { PencilSimple, PlusCircle, Trash } from "@phosphor-icons/react";
+import { PencilSimple, PlusCircle, Trash, MagnifyingGlass, Stack } from "@phosphor-icons/react";
 
 const EMPTY = {
   name: "", slug: "", category: "gemstone", subcategory_id: "", description: "", price: "", mrp: "",
@@ -197,6 +197,16 @@ export default function AdminProducts() {
         </button>
       </div>
 
+      <div className="relative mb-6 max-w-md">
+        <MagnifyingGlass size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted" />
+        <input
+          value={query} onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search products by name, slug or category…"
+          data-testid="product-search"
+          className="w-full gold-line pl-9 pr-3 py-2.5 bg-ivory outline-none focus:border-maroon"
+        />
+      </div>
+
       {editing && (
         <form onSubmit={save} className="gold-line-strong bg-ivory p-6 mb-8 grid md:grid-cols-2 gap-4">
           <div className="md:col-span-2 font-serifd text-xl text-maroon-deep">{editing === "new" ? "New product" : `Edit · ${editing.name}`}</div>
@@ -372,18 +382,48 @@ export default function AdminProducts() {
         </form>
       )}
 
+      {shown.length === 0 && (
+        <div className="gold-line p-10 text-center text-ink-muted">
+          {query ? `No products match “${query}”.` : "No products yet."}
+        </div>
+      )}
       <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {products.map((p) => (
+        {shown.map((p) => (
           <div key={p.product_id} className="gold-line bg-ivory p-4 flex gap-4">
             {p.images?.[0] && <div className="w-24 h-24 gold-line overflow-hidden shrink-0"><img src={p.images[0]} alt="" className="w-full h-full object-cover" /></div>}
             <div className="flex-1 min-w-0">
               <div className="font-serifd text-lg truncate">{p.name}</div>
-              <div className="text-xs font-mono text-ink-muted">{p.category}</div>
+              <div className="text-xs font-mono text-ink-muted">
+                {p.category}{p.subcategory ? ` · ${p.subcategory}` : ""}
+              </div>
               <div className="text-sm text-maroon-deep">{formatINR(p.price)}</div>
+              {p.is_serialized && (
+                <div className="mt-1 text-xs text-ink-muted">In stock: <span className="text-ink font-medium">{stock[p.product_id] || 0}</span></div>
+              )}
               <div className="mt-2 flex gap-3 text-xs">
                 <button onClick={() => startEdit(p)} className="text-maroon inline-flex items-center gap-1"><PencilSimple size={12} /> Edit</button>
                 <button onClick={() => del(p)} className="text-revoked inline-flex items-center gap-1 ml-auto"><Trash size={12} /> Remove</button>
               </div>
+              {p.is_serialized && (
+                <div className="mt-3 pt-3 border-t border-gold/20 flex items-center gap-2">
+                  <input
+                    type="number" min="1" step="1" inputMode="numeric"
+                    value={addQty[p.product_id] || ""}
+                    onChange={(e) => setAddQty((s) => ({ ...s, [p.product_id]: e.target.value }))}
+                    onKeyDown={(e) => e.key === "Enter" && addUnits(p)}
+                    placeholder="Qty"
+                    data-testid={`add-units-qty-${p.product_id}`}
+                    className="w-20 gold-line px-2 py-1.5 text-sm outline-none focus:border-maroon"
+                  />
+                  <button
+                    onClick={() => addUnits(p)}
+                    data-testid={`add-units-btn-${p.product_id}`}
+                    className="text-xs uppercase tracking-widest border border-maroon text-maroon px-3 py-1.5 inline-flex items-center gap-1 hover:bg-maroon hover:text-ivory transition-colors"
+                  >
+                    <Stack size={12} weight="duotone" /> Add units
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         ))}
