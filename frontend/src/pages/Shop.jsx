@@ -7,25 +7,41 @@ import { Funnel } from "@phosphor-icons/react";
 
 const CATS = ["gemstone", "rudraksha", "bracelet", "yantra", "idol", "pooja_kit", "prashad", "book"];
 const PLANETS = ["Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Rahu", "Ketu"];
-const PURPOSES = ["wealth", "protection", "love", "career", "health"];
+// Fallback until the admin-editable taxonomy loads from /categories.
+const DEFAULT_PURPOSES = [
+  { key: "wealth", label: "Wealth" }, { key: "protection", label: "Protection" },
+  { key: "love", label: "Love" }, { key: "career", label: "Career" }, { key: "health", label: "Health" },
+];
 
 export default function Shop() {
   const [sp, setSp] = useSearchParams();
   const category = sp.get("category") || "";
   const graha = sp.get("graha") || "";
   const purpose = sp.get("purpose") || "";
+  const rashi = sp.get("rashi") || "";
   const q = sp.get("q") || "";
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [purposes, setPurposes] = useState(DEFAULT_PURPOSES);
+  const [rashiList, setRashiList] = useState([]);
+
+  useEffect(() => {
+    // Purposes & Rashi are admin-editable (Admin → Website); load the current lists.
+    api.get("/categories").then(({ data }) => {
+      if (data.purposes?.length) setPurposes(data.purposes);
+      if (data.rashi?.length) setRashiList(data.rashi);
+    }).catch(() => {});
+  }, []);
 
   const params = useMemo(() => {
     const p = new URLSearchParams();
     if (category) p.set("category", category);
     if (graha) p.set("graha", graha);
     if (purpose) p.set("purpose", purpose);
+    if (rashi) p.set("rashi", rashi);
     if (q) p.set("q", q);
     return p.toString();
-  }, [category, graha, purpose, q]);
+  }, [category, graha, purpose, rashi, q]);
 
   useEffect(() => {
     setLoading(true);
@@ -93,17 +109,33 @@ export default function Shop() {
             <div className="mt-7">
               <div className="text-[11px] uppercase tracking-[0.2em] text-ink-muted mb-3">Purpose</div>
               <div className="flex flex-wrap gap-2.5">
-                {PURPOSES.map((p) => (
+                {purposes.map((p) => (
                   <button
-                    key={p}
-                    onClick={() => setFilter("purpose", purpose === p ? "" : p)}
-                    className={`text-sm px-3.5 py-2 border capitalize transition-colors ${purpose === p ? "bg-maroon text-ivory border-maroon" : "border-gold/40 text-ink-soft hover:border-maroon"}`}
+                    key={p.key}
+                    onClick={() => setFilter("purpose", purpose === p.key ? "" : p.key)}
+                    className={`text-sm px-3.5 py-2 border transition-colors ${purpose === p.key ? "bg-maroon text-ivory border-maroon" : "border-gold/40 text-ink-soft hover:border-maroon"}`}
                   >
-                    {p}
+                    {p.label}
                   </button>
                 ))}
               </div>
             </div>
+            {rashiList.length > 0 && (
+              <div className="mt-7">
+                <div className="text-[11px] uppercase tracking-[0.2em] text-ink-muted mb-3">Rashi</div>
+                <div className="flex flex-wrap gap-2.5">
+                  {rashiList.map((r) => (
+                    <button
+                      key={r.key}
+                      onClick={() => setFilter("rashi", rashi === r.key ? "" : r.key)}
+                      className={`text-sm px-3.5 py-2 border transition-colors ${rashi === r.key ? "bg-maroon text-ivory border-maroon" : "border-gold/40 text-ink-soft hover:border-maroon"}`}
+                    >
+                      {r.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </aside>
 

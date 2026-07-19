@@ -398,6 +398,7 @@ async def require_admin(user_id: str = Depends(require_user)) -> str:
 ALL_PERMISSIONS = [
     "products", "inventory", "certificates", "orders",
     "categories", "astrologers", "consultations", "queries",
+    "content", "taxonomy",
 ]
 
 
@@ -1223,14 +1224,145 @@ async def _list_categories() -> list[dict]:
     return out
 
 
+# ── Editable site content (announcement bar, footer, purposes/rashi taxonomy) ──
+# key -> default value. A stored row overrides the default; a blank field in a stored
+# row falls back to the default via _merged_content(), so the site never renders empty.
+_DEFAULT_PURPOSES = [
+    {"key": "wealth", "label": "Wealth"}, {"key": "protection", "label": "Protection"},
+    {"key": "love", "label": "Love"}, {"key": "career", "label": "Career"},
+    {"key": "health", "label": "Health"},
+]
+_DEFAULT_RASHI = [
+    {"key": "mesha", "label": "Mesha (Aries)"}, {"key": "vrishabha", "label": "Vrishabha (Taurus)"},
+    {"key": "mithuna", "label": "Mithuna (Gemini)"}, {"key": "karka", "label": "Karka (Cancer)"},
+    {"key": "simha", "label": "Simha (Leo)"}, {"key": "kanya", "label": "Kanya (Virgo)"},
+    {"key": "tula", "label": "Tula (Libra)"}, {"key": "vrishchika", "label": "Vrishchika (Scorpio)"},
+    {"key": "dhanu", "label": "Dhanu (Sagittarius)"}, {"key": "makara", "label": "Makara (Capricorn)"},
+    {"key": "kumbha", "label": "Kumbha (Aquarius)"}, {"key": "meena", "label": "Meena (Pisces)"},
+]
+_DEFAULT_ANNOUNCEMENT = {"messages": [
+    {"text": "100% Lab-Certified · Ed25519 signed · Dispatched in 48h", "deva": "प्रमाणित"},
+    {"text": "Free insured shipping on orders above ₹5,000", "deva": "मुफ्त शिपिंग"},
+    {"text": "5% prepaid discount · WhatsApp assistance daily 9–9", "deva": "छूट"},
+]}
+_DEFAULT_FOOTER = {
+    "brand": "Tredev", "devanagari": "रत्न · प्रमाण · परंपरा",
+    "description": "A first-party house for authentic spiritual products. Every serialised item carries a cryptographically signed provenance chain — a claim you can verify with a public key.",
+    "badge": "Ed25519-signed certificates",
+    "columns": [
+        {"title": "Shop", "links": [
+            {"label": "Gemstones · रत्न", "href": "/shop?category=gemstone"},
+            {"label": "Rudraksha · रुद्राक्ष", "href": "/shop?category=rudraksha"},
+            {"label": "Bracelets", "href": "/shop?category=bracelet"},
+            {"label": "Yantras · यंत्र", "href": "/shop?category=yantra"},
+            {"label": "Idols · मूर्ति", "href": "/shop?category=idol"},
+            {"label": "Temple Prashad", "href": "/shop?category=prashad"},
+        ]},
+        {"title": "Trust", "links": [
+            {"label": "Verify a QR", "href": "/verify"},
+            {"label": "Carat ↔ Ratti Converter", "href": "/tools/carat-ratti"},
+            {"label": "Shop by Planet", "href": "/shop-by-planet"},
+            {"label": "Shop by Purpose", "href": "/shop-by-purpose"},
+        ]},
+        {"title": "Company", "links": [
+            {"label": "Book a consultation", "href": "/consultation"},
+            {"label": "Kolkata · Mumbai · Varanasi", "href": ""},
+            {"label": "hello@gemora.in", "href": "mailto:hello@gemora.in"},
+            {"label": "+91 90-000-000-00", "href": ""},
+        ]},
+    ],
+    "copyright": "An honest house for sacred things · Made with care in India",
+}
+_CONTENT_DEFAULTS = {
+    "announcement": _DEFAULT_ANNOUNCEMENT, "footer": _DEFAULT_FOOTER,
+    "purposes": _DEFAULT_PURPOSES, "rashi": _DEFAULT_RASHI,
+}
+_CONTENT_KEYS = {"announcement", "footer"}   # gated by the "content" permission
+_TAXONOMY_KEYS = {"purposes", "rashi"}        # gated by the "taxonomy" permission
+
+
+async def _site_content(key: str):
+    """Stored value for a content key, or its built-in default if unset/blank."""
+    row = await db.fetch_val("SELECT value FROM site_content WHERE key = $1", key)
+    return row if row else _CONTENT_DEFAULTS.get(key)
+
+
 @api.get("/categories")
 async def categories():
     db_cats = await _list_categories()
     return {
         "categories": db_cats,
         "planets": ["Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Rahu", "Ketu"],
-        "purposes": ["wealth", "protection", "love", "career", "health"],
+        "purposes": await _site_content("purposes"),
+        "rashi": await _site_content("rashi"),
     }
+
+
+@api.get("/site-content")
+async def site_content_public():
+    """All buyer-facing editable content in one call — the frontend fetches this once."""
+    rows = await db.fetch_all("SELECT key, value FROM site_content")
+    stored = {r["key"]: r["value"] for r in rows}
+    return {k: (stored.get(k) or default) for k, default in _CONTENT_DEFAULTS.items()}
+
+
+class SiteContentIn(BaseModel):
+    value: Any  # the JSON block for this key (shape depends on the key)
+
+
+async def _upsert_content(key: str, value) -> None:
+    await db.execute(
+        """INSERT INTO site_content (key, value, updated_at) VALUES ($1,$2::jsonb, now())
+           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()""",
+        key, value)
+
+
+@api.get("/admin/site-content")
+async def admin_site_content(_: str = Depends(require_perm("content"))):
+    """Announcement + footer content for the Website editor, each with its current
+    (stored or default) value so the form is always populated."""
+    rows = await db.fetch_all("SELECT key, value FROM site_content WHERE key = ANY($1)",
+                              list(_CONTENT_KEYS))
+    stored = {r["key"]: r["value"] for r in rows}
+    return {k: (stored.get(k) or _CONTENT_DEFAULTS[k]) for k in _CONTENT_KEYS}
+
+
+@api.put("/admin/site-content/{key}")
+async def admin_put_site_content(key: str, body: SiteContentIn,
+                                 actor: str = Depends(require_perm("content"))):
+    if key not in _CONTENT_KEYS:
+        raise HTTPException(400, f"Unknown content key. Allowed: {sorted(_CONTENT_KEYS)}")
+    await _upsert_content(key, body.value)
+    await audit_log(actor, "site_content.update", key, {})
+    return {"ok": True, "key": key, "value": await _site_content(key)}
+
+
+@api.get("/admin/taxonomy")
+async def admin_taxonomy(_: str = Depends(require_perm("taxonomy"))):
+    """The editable purposes + rashi lists (stored or default)."""
+    return {k: await _site_content(k) for k in _TAXONOMY_KEYS}
+
+
+@api.put("/admin/taxonomy/{name}")
+async def admin_put_taxonomy(name: str, body: SiteContentIn,
+                             actor: str = Depends(require_perm("taxonomy"))):
+    if name not in _TAXONOMY_KEYS:
+        raise HTTPException(400, f"Unknown taxonomy. Allowed: {sorted(_TAXONOMY_KEYS)}")
+    # Normalise to a clean [{key,label}] list: label required, key slugified from it
+    # if missing, duplicates and blanks dropped.
+    items, seen = [], set()
+    for it in (body.value or []):
+        label = (it.get("label") or "").strip()
+        if not label:
+            continue
+        k = (it.get("key") or "").strip().lower() or _slugify(label).replace("-", "_")
+        if not k or k in seen:
+            continue
+        seen.add(k)
+        items.append({"key": k, "label": label})
+    await _upsert_content(name, items)
+    await audit_log(actor, "taxonomy.update", name, {"count": len(items)})
+    return {"ok": True, "name": name, "items": items}
 
 
 # ── Admin: product/unit/cert ──────────────────────────────────────────────────

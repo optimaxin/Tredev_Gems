@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 
-const MESSAGES = [
+const DEFAULT_MESSAGES = [
   { text: "100% Lab-Certified · Ed25519 signed · Dispatched in 48h", deva: "प्रमाणित" },
   { text: "Free insured shipping on orders above ₹5,000", deva: "मुफ्त शिपिंग" },
   { text: "5% prepaid discount · WhatsApp assistance daily 9–9", deva: "छूट" },
@@ -15,6 +15,17 @@ export default function AnnouncementBar() {
   const [i, setI] = useState(0);
   const [visible, setVisible] = useState(true);
   const [stripActive, setStripActive] = useState(false);
+  // Admin-editable announcement messages (Admin → Website); falls back to defaults.
+  const [messages, setMessages] = useState(DEFAULT_MESSAGES);
+
+  useEffect(() => {
+    api.get("/site-content")
+      .then(({ data }) => {
+        const m = data?.announcement?.messages;
+        if (Array.isArray(m) && m.length) setMessages(m);
+      })
+      .catch(() => {});
+  }, []);
 
   // Yield to any non-dismissed active event that renders in the top strip.
   useEffect(() => {
@@ -31,17 +42,18 @@ export default function AnnouncementBar() {
 
   useEffect(() => {
     if (!visible || stripActive) return;
-    const t = setInterval(() => setI((x) => (x + 1) % MESSAGES.length), 5000);
+    const t = setInterval(() => setI((x) => (x + 1) % messages.length), 5000);
     return () => clearInterval(t);
   }, [visible, stripActive]);
 
-  if (!visible || stripActive) return null;
+  if (!visible || stripActive || !messages.length) return null;
+  const msg = messages[i % messages.length]; // clamp if the list length changed
 
   return (
     <div className="brand-gradient text-ivory text-xs" data-testid="announcement-bar">
       <div className="mx-auto max-w-7xl px-6 lg:px-10 py-2 flex items-center gap-3 justify-center relative">
-        <span className="font-deva text-sm hidden sm:inline">{MESSAGES[i].deva}</span>
-        <span className="tracking-wide">{MESSAGES[i].text}</span>
+        {msg.deva && <span className="font-deva text-sm hidden sm:inline">{msg.deva}</span>}
+        <span className="tracking-wide">{msg.text}</span>
         <button
           onClick={() => setVisible(false)}
           data-testid="announcement-close"
