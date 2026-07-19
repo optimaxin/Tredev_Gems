@@ -296,6 +296,28 @@ def content_hash(payload: dict) -> str:
     return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
 
 
+# Short human-readable verification code from a hex value. MUST stay byte-for-byte
+# identical to the frontend's shortCode() (src/lib/fingerprint.js) so the code stored
+# in the DB matches the seal a customer sees. Crockford-ish alphabet (no 0/O/1/I/L/U);
+# every byte mixes into every character; 32-bit unsigned arithmetic like JS's `>>> 0`.
+_CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+
+def short_code(hex_str: str, length: int = 6) -> str:
+    clean = re.sub(r"[^0-9a-f]", "", (hex_str or "").lower())
+    b = [int(clean[i:i + 2], 16) for i in range(0, len(clean) - 1, 2)]
+    if not b:
+        return ""
+    M = 1 << 32
+    out = []
+    for i in range(length):
+        acc = (i * 2654435761) % M
+        for j, bj in enumerate(b):
+            acc = ((acc * 31) + bj + ((i + 1) * (j + 3))) % M
+        out.append(_CODE_ALPHABET[acc % len(_CODE_ALPHABET)])
+    return "".join(out)
+
+
 def sign_payload(payload: dict) -> str:
     sig = ED25519_PRIVATE.sign(canonical_json(payload).encode("utf-8"))
     return sig.hex()
@@ -1817,10 +1839,11 @@ async def _issue_certificate_tx(conn, unit: dict, body, issued_by_user_id: str) 
         """INSERT INTO authenticity_certificates (id, product_unit_id, certificate_no,
                 issuing_authority, issued_by_user_id, issued_at, lab_certification_id,
                 energization_certificate_id, temple_id, signing_key_id, signed_payload,
-                content_hash, signature)
-           VALUES ($1,$2::uuid,$3,'Tredev',$4::uuid, now(),$5,$6,$7,$8,$9,$10,$11)""",
+                content_hash, signature, verify_code)
+           VALUES ($1,$2::uuid,$3,'Tredev',$4::uuid, now(),$5,$6,$7,$8,$9,$10,$11,$12)""",
         cert_id, unit["unit_id"], f"TDV-{secrets.token_hex(4).upper()}", issued_by_user_id,
-        lab_id, en_id, temple_id, signing_key_id, payload, chash, signature)
+        lab_id, en_id, temple_id, signing_key_id, payload, chash, signature,
+        short_code(chash))
 
     # QR gap: minted now, but only activated at dispatch.
     await conn.execute(
@@ -1856,6 +1879,7 @@ _CERT_SELECT = """
            ac.signed_payload      AS signed_payload,
            ac.content_hash        AS content_hash_sha256,
            ac.signature           AS signature_ed25519_hex,
+           ac.verify_code         AS verify_code,
            ac.revoked_at          AS revoked_at,
            ac.product_unit_id::text AS unit_id,
            pu.product_id::text    AS product_id,
@@ -1882,6 +1906,7 @@ def _shape_cert(row: dict) -> dict:
     return {**(row.get("signed_payload") or {}),
             "content_hash_sha256": row["content_hash_sha256"],
             "signature_ed25519_hex": row["signature_ed25519_hex"],
+            "verify_code": row.get("verify_code"),
             "qr_token": row.get("qr_token"),
             "activated": row.get("qr_status") == "active",
             "revoked": row.get("revoked_at") is not None,
@@ -2931,8 +2956,37 @@ async def admin_units(user_id: str = Depends(require_admin), product_id: Optiona
 
 @api.get("/admin/certificates")
 async def admin_certs(user_id: str = Depends(require_admin)):
-    rows = await db.fetch_all(_CERT_SELECT + " ORDER BY ac.issued_at DESC LIMIT 500")
-    return [_shape_cert(r) for r in rows]
+    # Dedicated admin query: unlike the public verify shape, this exposes WHO the
+    # certificate is assigned to (buyer name/email + order) so staff can see, for each
+    # certificate, which user owns it and for what product. Buyer identity is only
+    # populated once the unit is sold/dispatched — otherwise it's unassigned stock.
+    rows = await db.fetch_all("""
+        SELECT ac.id::text                       AS cert_id,
+               ac.verify_code                     AS verify_code,
+               ac.signed_payload->>'product_name' AS product_name,
+               ac.signed_payload->>'serial'       AS serial,
+               ac.signature                       AS signature_ed25519_hex,
+               ac.revoked_at                      AS revoked_at,
+               ac.product_unit_id::text           AS unit_id,
+               pu.product_id::text                AS product_id,
+               q.token                            AS qr_token,
+               q.status::text                     AS qr_status,
+               o.id::text                         AS order_id,
+               o.order_no                         AS order_no,
+               u.id::text                         AS buyer_id,
+               u.full_name                        AS buyer_name,
+               u.email::text                      AS buyer_email
+          FROM authenticity_certificates ac
+          JOIN product_units pu ON pu.id = ac.product_unit_id
+          LEFT JOIN qr_codes q  ON q.authenticity_certificate_id = ac.id
+          LEFT JOIN order_items oi ON oi.id = pu.sold_order_item_id
+          LEFT JOIN orders o ON o.id = oi.order_id
+          LEFT JOIN users u ON u.id = o.user_id
+         ORDER BY ac.issued_at DESC LIMIT 500""")
+    return [{k: v for k, v in r.items() if k not in ("qr_status", "revoked_at")} | {
+        "activated": r["qr_status"] == "active",
+        "revoked": r["revoked_at"] is not None,
+    } for r in rows]
 
 
 # ── Account: verified items, wishlist, reviews ────────────────────────────────

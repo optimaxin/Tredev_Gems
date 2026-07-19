@@ -48,6 +48,10 @@ export default function Seal({ code, size = 116, dark = false }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size]);
 
+  // The code is constrained to this width, so a 5- or 6-char code both sit inside the
+  // medallion (its clear zone is ~2·(R-20) wide).
+  const codeWidth = (R - 20) * 1.55;
+
   // Curved-text arcs (top bulges up, bottom bulges down; both left→right so upright).
   const arcR = R - 10;
   const topArc = `M ${cx - arcR} ${cy} A ${arcR} ${arcR} 0 0 1 ${cx + arcR} ${cy}`;
@@ -114,22 +118,25 @@ export default function Seal({ code, size = 116, dark = false }) {
         <textPath href={`#bot-${uid}`} startOffset="50%" textAnchor="middle">AUTHENTICITY SEAL</textPath>
       </text>
 
-      {/* ornament + flanking rules above the code */}
-      <text x={cx} y={cy - size * 0.13} textAnchor="middle" fill={bead} fontSize={size * 0.095}>✦</text>
-      <line x1={cx - size * 0.23} y1={cy - size * 0.055} x2={cx - size * 0.10} y2={cy - size * 0.055} stroke={bead} strokeWidth="0.7" opacity="0.85" />
-      <line x1={cx + size * 0.10} y1={cy - size * 0.055} x2={cx + size * 0.23} y2={cy - size * 0.055} stroke={bead} strokeWidth="0.7" opacity="0.85" />
+      {/* ornament + flanking rules above the code (matched to the code width) */}
+      <text x={cx} y={cy - size * 0.125} textAnchor="middle" fill={bead} fontSize={size * 0.09}>✦</text>
+      <line x1={cx - codeWidth / 2} y1={cy - size * 0.05} x2={cx - size * 0.05} y2={cy - size * 0.05} stroke={bead} strokeWidth="0.7" opacity="0.8" />
+      <line x1={cx + size * 0.05} y1={cy - size * 0.05} x2={cx + codeWidth / 2} y2={cy - size * 0.05} stroke={bead} strokeWidth="0.7" opacity="0.8" />
 
-      {/* embossed code — a soft shadow twin behind for depth */}
-      <text x={cx} y={cy + size * 0.07 + 0.8} textAnchor="middle" fill={dark ? "#000" : "#722F37"} opacity={dark ? 0.4 : 0.12}
-        fontSize={size * 0.17} fontWeight="700" letterSpacing="1" style={{ fontFamily: "Georgia, 'Cormorant Garamond', serif" }}>
+      {/* embossed code — forced to a fixed width so any length always fits the medallion.
+          textLength + lengthAdjust keeps it inside the ring no matter how many chars. */}
+      <text x={cx} y={cy + size * 0.075 + 0.8} textAnchor="middle" fill={dark ? "#000" : "#722F37"} opacity={dark ? 0.4 : 0.12}
+        textLength={codeWidth} lengthAdjust="spacingAndGlyphs"
+        fontSize={size * 0.16} fontWeight="700" style={{ fontFamily: "Georgia, 'Cormorant Garamond', serif" }}>
         {code}
       </text>
-      <text x={cx} y={cy + size * 0.07} textAnchor="middle" fill={ink}
-        fontSize={size * 0.17} fontWeight="700" letterSpacing="1" style={{ fontFamily: "Georgia, 'Cormorant Garamond', serif" }}>
+      <text x={cx} y={cy + size * 0.075} textAnchor="middle" fill={ink}
+        textLength={codeWidth} lengthAdjust="spacingAndGlyphs"
+        fontSize={size * 0.16} fontWeight="700" style={{ fontFamily: "Georgia, 'Cormorant Garamond', serif" }}>
         {code}
       </text>
 
-      <text x={cx} y={cy + size * 0.185} textAnchor="middle" fill={bead} fontSize={size * 0.05} letterSpacing="2.4">VERIFY CODE</text>
+      <text x={cx} y={cy + size * 0.19} textAnchor="middle" fill={bead} fontSize={size * 0.05} letterSpacing="2.4">VERIFY CODE</text>
     </svg>
   );
 }
