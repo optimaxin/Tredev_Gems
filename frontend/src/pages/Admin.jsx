@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import {
   ChartBar, Package, Stack, Certificate as CertIcon, Truck, SquaresFour, Sparkle, Calendar,
   ChatCircleDots, UsersFour, ShieldStar, ArrowLeft, WhatsappLogo, Image as ImageIcon, MegaphoneSimple, PaintBrush,
-  ArrowsClockwise, Diamond, Browser,
+  ArrowsClockwise, Diamond, Browser, Star,
 } from "@phosphor-icons/react";
 
 import AdminDashboard from "@/pages/admin/AdminDashboard";
@@ -19,6 +19,7 @@ import AdminCategories from "@/pages/admin/AdminCategories";
 import AdminAstrologers from "@/pages/admin/AdminAstrologers";
 import AdminConsultations from "@/pages/admin/AdminConsultations";
 import AdminQueries from "@/pages/admin/AdminQueries";
+import AdminReviews from "@/pages/admin/AdminReviews";
 import AdminTeam from "@/pages/admin/AdminTeam";
 import AdminUsers from "@/pages/admin/AdminUsers";
 import AdminBroadcast from "@/pages/admin/AdminBroadcast";
@@ -42,6 +43,7 @@ const NAV_ITEMS = [
   { to: "astrologers", label: "Astrologers", Icon: Sparkle, perm: "astrologers" },
   { to: "consultations", label: "Consultations", Icon: Calendar, perm: "consultations" },
   { to: "queries", label: "Queries", Icon: ChatCircleDots, perm: "queries" },
+  { to: "reviews", label: "Reviews", Icon: Star, adminAny: true },
   { to: "broadcast", label: "WhatsApp", Icon: WhatsappLogo, ownerOnly: true },
   { to: "team", label: "Team", Icon: UsersFour, ownerOnly: true },
   { to: "users", label: "Users", Icon: ShieldStar, ownerOnly: true },
@@ -138,6 +140,7 @@ export default function Admin() {
           <Route path="astrologers" element={<AdminAstrologers />} />
           <Route path="consultations" element={<AdminConsultations />} />
           <Route path="queries" element={<AdminQueries />} />
+          <Route path="reviews" element={<AdminReviews />} />
           <Route path="broadcast" element={<AdminBroadcast />} />
           <Route path="team" element={<AdminTeam />} />
           <Route path="users" element={<AdminUsers />} />

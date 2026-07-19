@@ -2,13 +2,11 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { Sparkle, ArrowRight, Calendar } from "@phosphor-icons/react";
+import { api } from "@/lib/api";
 
-/* ─────────────────────────────────────────────────────────────
-   EDIT ME — the ambassador's details.
-   Replace `name` with your ambassador's real name. Leave any field
-   empty ("") to hide that line.
-   ───────────────────────────────────────────────────────────── */
-const AMBASSADOR = {
+/* Built-in defaults — editable from Admin → Website (Ambassador section).
+   Leave any field empty ("") to hide that line. */
+const DEFAULT_AMBASSADOR = {
   eyebrow: "",
   name: "Shri Raghavendra",
   role: "The face of our faith",
@@ -118,11 +116,18 @@ function Chakra() {
 
 export default function AmbassadorHero() {
   const [idx, setIdx] = useState(0);
+  const [ambassador, setAmbassador] = useState(DEFAULT_AMBASSADOR);
   const reduce = useReducedMotion();
 
   useEffect(() => {
     const t = setInterval(() => setIdx((i) => (i + 1) % SLIDES.length), ROTATE_MS);
     return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    api.get("/site-content").then(({ data }) => {
+      if (data?.home?.ambassador) setAmbassador((a) => ({ ...a, ...data.home.ambassador }));
+    }).catch(() => {});
   }, []);
 
   const embers = useMemo(
@@ -156,22 +161,22 @@ export default function AmbassadorHero() {
       <div className="relative mx-auto max-w-7xl px-6 lg:px-10 grid lg:grid-cols-2 gap-10 items-center min-h-[92vh] lg:min-h-[88vh] py-16">
         {/* ── Copy ── */}
         <div className="order-2 lg:order-1 text-center lg:text-left">
-          {AMBASSADOR.eyebrow && (
+          {ambassador.eyebrow && (
             <div className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-gold border border-gold/40 px-3 py-1.5">
-              <Sparkle size={14} weight="duotone" /> {AMBASSADOR.eyebrow}
+              <Sparkle size={14} weight="duotone" /> {ambassador.eyebrow}
             </div>
           )}
-          {AMBASSADOR.name && (
+          {ambassador.name && (
             <h1 className="mt-6 font-display text-5xl md:text-6xl lg:text-7xl leading-[1.03] text-ivory">
-              {AMBASSADOR.name}
+              {ambassador.name}
             </h1>
           )}
-          {AMBASSADOR.role && (
-            <div className="mt-3 font-serifd text-xl md:text-2xl text-gold-soft italic">{AMBASSADOR.role}</div>
+          {ambassador.role && (
+            <div className="mt-3 font-serifd text-xl md:text-2xl text-gold-soft italic">{ambassador.role}</div>
           )}
-          {AMBASSADOR.quote && (
+          {ambassador.quote && (
             <p className="mt-6 text-base md:text-lg text-ivory/80 leading-relaxed max-w-xl mx-auto lg:mx-0">
-              “{AMBASSADOR.quote}”
+              “{ambassador.quote}”
             </p>
           )}
 

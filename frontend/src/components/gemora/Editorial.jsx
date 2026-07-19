@@ -102,12 +102,13 @@ const MANTRAS = [
   "सत्यम् एव जयते", "न हि सत्यात् परो धर्मः", "ॐ नमः शिवाय", "शुभम् भवतु",
   "असतो मा सद्गमय", "सर्वे भवन्तु सुखिनः",
 ];
-export function MantraDivider() {
+export function MantraDivider({ mantras }) {
+  const list = mantras?.length ? mantras : MANTRAS;
   return (
     <div className="relative bg-maroon-deep text-ivory/70 overflow-hidden border-y border-gold/30" aria-hidden="true">
       <div className="grain absolute inset-0" />
       <div className="flex whitespace-nowrap py-3 mantra-track">
-        {MANTRAS.concat(MANTRAS).map((m, i) => (
+        {list.concat(list).map((m, i) => (
           <span key={i} className="px-10 font-deva text-lg shrink-0">
             {m}<span className="text-gold/50 ml-10">◆</span>
           </span>

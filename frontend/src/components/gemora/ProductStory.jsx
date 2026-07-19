@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { motion, useReducedMotion } from "framer-motion";
-import { api } from "@/lib/api";
+import { toast } from "sonner";
+import { api, mediaSrc } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 import ProductCard from "@/components/gemora/ProductCard";
 import { Flourish } from "@/components/gemora/Ornament";
 import {
@@ -11,6 +13,7 @@ import {
   ShieldCheck, Certificate, QrCode, Fingerprint, HandHeart, Sparkle, Truck, Package,
   CreditCard, ArrowsClockwise, ChatCircle, Phone, CalendarBlank, Star, Compass,
   CaretRight, ArrowRight, FlowerLotus, Drop, Sun, Moon, Leaf, Clock, Ruler, Scroll,
+  Camera, X, CheckCircle, PaperPlaneTilt, SpinnerGap,
 } from "@phosphor-icons/react";
 
 /* copy uses string keys so the copy file stays data-only */
@@ -301,8 +304,227 @@ function CareGuide({ p, copy }) {
   );
 }
 
+/* ── 7a. Star rating picker (interactive) ──────────────────────────── */
+function StarPicker({ value, onChange }) {
+  const [hover, setHover] = useState(0);
+  return (
+    <div className="flex gap-1" onMouseLeave={() => setHover(0)}>
+      {[1, 2, 3, 4, 5].map((s) => (
+        <button
+          key={s}
+          type="button"
+          aria-label={`${s} star${s > 1 ? "s" : ""}`}
+          onMouseEnter={() => setHover(s)}
+          onClick={() => onChange(s)}
+          className="text-gold transition-transform hover:scale-110"
+        >
+          <Star size={26} weight={(hover || value) >= s ? "fill" : "regular"} />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* ── 7b. Write-a-review form (login-gated, up to 3 photos) ──────────── */
+const MAX_PHOTOS = 3;
+
+function ReviewForm({ productId, onAdded }) {
+  const { user, loading } = useAuth();
+  const [open, setOpen] = useState(false);
+  const [rating, setRating] = useState(0);
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [photos, setPhotos] = useState([]); // array of URL strings
+  const [uploading, setUploading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [thanked, setThanked] = useState(false);
+
+  const reset = () => { setRating(0); setTitle(""); setBody(""); setPhotos([]); };
+
+  const pickPhotos = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = ""; // allow re-selecting the same file after a remove
+    if (!files.length) return;
+    const room = MAX_PHOTOS - photos.length;
+    if (room <= 0) { toast.error(`Up to ${MAX_PHOTOS} photos`); return; }
+    const chosen = files.slice(0, room);
+    if (files.length > room) toast.message(`Only ${room} more photo${room > 1 ? "s" : ""} added`);
+    setUploading(true);
+    try {
+      for (const file of chosen) {
+        if (!file.type.startsWith("image/")) { toast.error("Only images can be attached"); continue; }
+        if (file.size > 8 * 1024 * 1024) { toast.error(`${file.name} is over 8MB`); continue; }
+        const fd = new FormData();
+        fd.append("file", file);
+        const { data } = await api.post("/reviews/photo", fd, {
+          headers: { "Content-Type": "multipart/form-data" },
+        });
+        setPhotos((p) => (p.length < MAX_PHOTOS ? [...p, data.url] : p));
+      }
+    } catch (_) {
+      toast.error("Couldn't upload photo — please try again");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const removePhoto = (url) => setPhotos((p) => p.filter((u) => u !== url));
+
+  const submit = async () => {
+    if (rating < 1) { toast.error("Please pick a star rating"); return; }
+    if (!body.trim()) { toast.error("Please write a few words"); return; }
+    setSubmitting(true);
+    try {
+      const { data } = await api.post("/reviews", {
+        product_id: productId, rating, title: title.trim(), body: body.trim(), photos,
+      });
+      onAdded?.(data);
+      reset();
+      setOpen(false);
+      setThanked(true);
+      toast.success("Thank you for sharing your experience! 🙏");
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Couldn't submit your review");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (loading) return null;
+
+  // Thank-you state after a successful submit.
+  if (thanked) {
+    return (
+      <div className="mt-8 gold-line-strong bg-cream p-8 text-center">
+        <CheckCircle size={40} weight="duotone" className="text-verified mx-auto" />
+        <div className="font-display text-2xl text-maroon-deep mt-3">Thank you · धन्यवाद</div>
+        <p className="text-sm text-ink-soft mt-2 max-w-md mx-auto leading-relaxed">
+          Your review has been added. We're grateful you took the time to share your experience with fellow seekers.
+        </p>
+        <button
+          onClick={() => setThanked(false)}
+          className="mt-4 text-sm text-maroon underline underline-offset-4 decoration-gold-soft"
+        >
+          Write another review
+        </button>
+      </div>
+    );
+  }
+
+  // Not logged in — invite them to sign in first.
+  if (!user) {
+    return (
+      <div className="mt-8 gold-line bg-ivory p-8 text-center">
+        <div className="font-serifd text-xl text-ink">Have you experienced this piece?</div>
+        <p className="text-sm text-ink-muted mt-2">
+          Please log in or create an account to share your review.
+        </p>
+        <Link
+          to="/login"
+          className="mt-4 inline-flex items-center gap-2 px-6 py-3 brand-gradient text-ivory text-sm uppercase tracking-widest"
+        >
+          Log in to write a review
+        </Link>
+      </div>
+    );
+  }
+
+  if (!open) {
+    return (
+      <div className="mt-8">
+        <button
+          onClick={() => setOpen(true)}
+          data-testid="write-review-open"
+          className="inline-flex items-center gap-2 px-6 py-3 border border-gold/50 text-maroon text-sm uppercase tracking-widest hover:bg-cream transition-colors"
+        >
+          <Star size={16} weight="fill" className="text-gold" /> Write a review
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-8 gold-line-strong bg-ivory p-6 md:p-8">
+      <div className="flex items-center justify-between">
+        <div className="font-display text-2xl text-maroon-deep">Share your experience</div>
+        <button onClick={() => setOpen(false)} aria-label="Close" className="text-ink-muted hover:text-maroon">
+          <X size={20} />
+        </button>
+      </div>
+
+      <div className="mt-5">
+        <label className="text-xs uppercase tracking-widest text-ink-muted">Your rating</label>
+        <div className="mt-2"><StarPicker value={rating} onChange={setRating} /></div>
+      </div>
+
+      <div className="mt-5">
+        <label className="text-xs uppercase tracking-widest text-ink-muted">Title (optional)</label>
+        <input
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          maxLength={120}
+          placeholder="Sum it up in a line"
+          className="mt-2 w-full bg-cream border border-gold/30 px-3 py-2 text-sm text-ink focus:outline-none focus:border-gold"
+        />
+      </div>
+
+      <div className="mt-5">
+        <label className="text-xs uppercase tracking-widest text-ink-muted">Your review</label>
+        <textarea
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+          rows={4}
+          maxLength={2000}
+          placeholder="What did you feel when it arrived? How has it served you?"
+          className="mt-2 w-full bg-cream border border-gold/30 px-3 py-2 text-sm text-ink focus:outline-none focus:border-gold resize-y"
+        />
+      </div>
+
+      <div className="mt-5">
+        <label className="text-xs uppercase tracking-widest text-ink-muted">
+          Photos (optional · up to {MAX_PHOTOS})
+        </label>
+        <div className="mt-2 flex flex-wrap gap-3">
+          {photos.map((url) => (
+            <div key={url} className="relative w-20 h-20 gold-line overflow-hidden">
+              <img src={mediaSrc(url)} alt="" className="w-full h-full object-cover" />
+              <button
+                type="button"
+                onClick={() => removePhoto(url)}
+                aria-label="Remove photo"
+                className="absolute top-0.5 right-0.5 bg-maroon-deep/80 text-ivory rounded-full p-0.5 hover:bg-maroon-deep"
+              >
+                <X size={12} weight="bold" />
+              </button>
+            </div>
+          ))}
+          {photos.length < MAX_PHOTOS && (
+            <label className={`w-20 h-20 flex flex-col items-center justify-center gap-1 border border-dashed border-gold/50 text-ink-muted cursor-pointer hover:bg-cream ${uploading ? "opacity-60 pointer-events-none" : ""}`}>
+              {uploading
+                ? <SpinnerGap size={20} className="animate-spin" />
+                : <Camera size={20} weight="duotone" />}
+              <span className="text-[10px] uppercase tracking-wider">{uploading ? "Uploading" : "Add"}</span>
+              <input type="file" accept="image/*" multiple onChange={pickPhotos} className="hidden" />
+            </label>
+          )}
+        </div>
+      </div>
+
+      <button
+        onClick={submit}
+        disabled={submitting || uploading}
+        data-testid="write-review-submit"
+        className="mt-6 inline-flex items-center gap-2 px-6 py-3 brand-gradient text-ivory text-sm uppercase tracking-widest disabled:opacity-60"
+      >
+        {submitting ? <SpinnerGap size={16} className="animate-spin" /> : <PaperPlaneTilt size={16} weight="fill" />}
+        {submitting ? "Submitting…" : "Submit review"}
+      </button>
+    </div>
+  );
+}
+
 /* ── 7. Reviews with a rating breakdown ────────────────────────────── */
-function Reviews({ reviews }) {
+function Reviews({ reviews, productId, onAdded }) {
   const n = reviews.length;
   const avg = n ? reviews.reduce((s, r) => s + (r.rating || 0), 0) / n : 0;
   const buckets = [5, 4, 3, 2, 1].map((star) => ({
@@ -328,7 +550,7 @@ function Reviews({ reviews }) {
                   <Star key={i} size={16} weight={i < Math.round(avg) ? "fill" : "regular"} />
                 ))}
               </div>
-              <div className="text-xs text-ink-muted mt-2">Based on {n} verified {n === 1 ? "review" : "reviews"}</div>
+              <div className="text-xs text-ink-muted mt-2">Based on {n} {n === 1 ? "review" : "reviews"}</div>
               <div className="mt-5 space-y-2">
                 {buckets.map((b) => (
                   <div key={b.star} className="flex items-center gap-2">
@@ -358,11 +580,22 @@ function Reviews({ reviews }) {
                   </div>
                   {r.title && <div className="font-serifd text-lg text-ink mt-2">{r.title}</div>}
                   <p className="text-sm text-ink-soft mt-2 leading-relaxed">“{r.body}”</p>
+                  {Array.isArray(r.photos) && r.photos.length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {r.photos.map((url, k) => (
+                        <a key={k} href={mediaSrc(url)} target="_blank" rel="noreferrer" className="block w-16 h-16 gold-line overflow-hidden">
+                          <img src={mediaSrc(url)} alt="Review photo" className="w-full h-full object-cover hover:opacity-90" />
+                        </a>
+                      ))}
+                    </div>
+                  )}
                   <div className="mt-4 text-xs text-ink-muted flex items-center gap-2">
                     <ChatCircle size={12} weight="duotone" /> {r.author}
-                    <span className="text-verified inline-flex items-center gap-1 ml-auto">
-                      <ShieldCheck size={11} weight="duotone" /> Verified buyer
-                    </span>
+                    {r.verified_buyer && (
+                      <span className="text-verified inline-flex items-center gap-1 ml-auto">
+                        <ShieldCheck size={11} weight="duotone" /> Verified buyer
+                      </span>
+                    )}
                   </div>
                 </div>
               </Reveal>
@@ -370,6 +603,8 @@ function Reviews({ reviews }) {
           </div>
         </div>
       )}
+
+      <ReviewForm productId={productId} onAdded={onAdded} />
     </section>
   );
 }
@@ -528,7 +763,7 @@ function Related({ p }) {
 }
 
 /* ── The story ─────────────────────────────────────────────────────── */
-export default function ProductStory({ p, reviews = [] }) {
+export default function ProductStory({ p, reviews = [], onReviewAdded }) {
   const reduce = useReducedMotion();
   const copy = copyFor(p.category);
   return (
@@ -539,7 +774,7 @@ export default function ProductStory({ p, reviews = [] }) {
       <ProvenanceBand reduce={reduce} />
       <Ritual copy={copy} />
       <CareGuide p={p} copy={copy} />
-      <Reviews reviews={reviews} />
+      <Reviews reviews={reviews} productId={p.product_id} onAdded={onReviewAdded} />
       <ConsultBanner reduce={reduce} />
       <Policies />
       <Faq p={p} />

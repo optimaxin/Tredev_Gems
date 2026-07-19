@@ -17,40 +17,113 @@ import { useSiteAssets } from "@/context/SiteAssetsContext";
 const HERO_IMG = "https://images.unsplash.com/photo-1669256335723-1fa03d5123c0?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NDh8MHwxfHNlYXJjaHwyfHxJbmRpYW4lMjB0ZW1wbGUlMjBhcmNoaXRlY3R1cmUlMjBnb2xkJTIwZGV0YWlsc3xlbnwwfHx8fDE3ODM3Njc4NDd8MA&ixlib=rb-4.1.0&q=85";
 const CRAFT_IMG = "https://images.pexels.com/photos/6207517/pexels-photo-6207517.jpeg";
 
-const HERO_SLIDES = [
-  {
-    tag: "Est. Kashi · 2024",
-    title: <>Anyone can <em className="font-serifd">claim</em> a stone is real.<br /> We let you <span className="brand-gradient-text">prove it.</span></>,
-    sub: "Every gemstone, rudraksha and yantra you buy is a serialised, cryptographically signed physical unit. Verifiable with a public key from anywhere.",
-    cta1: ["/shop", "Enter the store"], cta2: ["/verify", "Verify a QR"],
-    img: HERO_IMG, deva: "सत्यम् एव जयते", devaSub: "Only truth prevails",
+// Render a homepage title string: "*...*" becomes the gold gradient highlight and
+// "\n" a line break. Keeps admin-editable copy free of JSX.
+function renderRich(text) {
+  return String(text || "").split("\n").map((line, li) => (
+    <React.Fragment key={li}>
+      {li > 0 && <br />}
+      {line.split("*").map((seg, i) =>
+        i % 2 === 1 ? <span key={i} className="brand-gradient-text">{seg}</span> : seg
+      )}
+    </React.Fragment>
+  ));
+}
+
+// Built-in homepage copy — used until the admin-edited version (Admin → Website)
+// loads, and as a fallback for any section left unset. Images live in Site Images.
+const DEFAULT_HOME = {
+  hero: [
+    { tag: "Est. Kashi · 2024", title: "Anyone can claim a stone is real.\nWe let you *prove it.*",
+      sub: "Every gemstone, rudraksha and yantra you buy is a serialised, cryptographically signed physical unit. Verifiable with a public key from anywhere.",
+      cta1_to: "/shop", cta1_label: "Enter the store", cta2_to: "/verify", cta2_label: "Verify a QR",
+      deva: "सत्यम् एव जयते", devaSub: "Only truth prevails" },
+    { tag: "The Navratna, individually signed", title: "Nine stones.\n*Nine planets.* One promise.",
+      sub: "Pukhraj, Neelam, Manik, Panna, Moti, Moonga, Heera, Gomed, Lehsuniya — every stone paired to its ruler, with its own lab report and temple energisation.",
+      cta1_to: "/shop-by-planet", cta1_label: "Shop the Navagraha", cta2_to: "/tools/carat-ratti", cta2_label: "Carat ↔ Ratti tool",
+      deva: "नवग्रह", devaSub: "The nine graha" },
+    { tag: "Rudraksha · Nepal Original", title: "Every bead, a blessing.\n*Every mukhi, a lineage.*",
+      sub: "Authentic 1 to 21 mukhi Nepal rudraksha, X-ray verified and energised at partner temples. No lookalike Indonesian passing off allowed.",
+      cta1_to: "/shop?category=rudraksha", cta1_label: "Explore Rudraksha", cta2_to: "/verify", cta2_label: "How we verify",
+      deva: "रुद्राक्ष", devaSub: "The tears of Rudra" },
+  ],
+  stats: [
+    { value: 1200, suffix: "+", decimals: 0, label: "Verified reviews", deva: "समीक्षा" },
+    { value: 4.9, suffix: "", decimals: 1, label: "Average rating", deva: "औसत" },
+    { value: 9, suffix: "", decimals: 0, label: "Navagraha stones", deva: "नवग्रह" },
+    { value: 100, suffix: "%", decimals: 0, label: "Signed & serialised", deva: "प्रमाणित" },
+  ],
+  astroBand: {
+    eyebrow: "Guidance · परामर्श", title: "Talk to a real person,\nnot a chatbot.",
+    body: "A human, on a scheduled call — who reads your chart and tells you honestly which stone or rudraksha suits you, or whether you need one at all. No guesswork, no upsell.",
+    name: "Shri Raghavendra", role: "Founder & Guide",
+    features: ["Scheduled call", "Reads your chart", "Honest advice"],
   },
-  {
-    tag: "The Navratna, individually signed",
-    title: <>Nine stones. <br /> <span className="brand-gradient-text">Nine planets.</span> One promise.</>,
-    sub: "Pukhraj, Neelam, Manik, Panna, Moti, Moonga, Heera, Gomed, Lehsuniya — every stone paired to its ruler, with its own lab report and temple energisation.",
-    cta1: ["/shop-by-planet", "Shop the Navagraha"], cta2: ["/tools/carat-ratti", "Carat ↔ Ratti tool"],
-    img: "https://images.pexels.com/photos/9953656/pexels-photo-9953656.jpeg",
-    deva: "नवग्रह", devaSub: "The nine graha",
+  categories: [
+    { key: "gemstone", label: "Gemstones", hindi: "रत्न" },
+    { key: "rudraksha", label: "Rudraksha", hindi: "रुद्राक्ष" },
+    { key: "bracelet", label: "Bracelets", hindi: "कड़ा" },
+    { key: "yantra", label: "Yantras", hindi: "यंत्र" },
+    { key: "idol", label: "Idols", hindi: "मूर्ति" },
+    { key: "prashad", label: "Temple Prashad", hindi: "प्रसाद" },
+  ],
+  planets: [
+    { name: "Sun", deva: "सूर्य", stone: "Ruby" }, { name: "Moon", deva: "चंद्र", stone: "Pearl" },
+    { name: "Mars", deva: "मंगल", stone: "Red Coral" }, { name: "Mercury", deva: "बुध", stone: "Emerald" },
+    { name: "Jupiter", deva: "गुरु", stone: "Yellow Sapphire" }, { name: "Venus", deva: "शुक्र", stone: "Diamond" },
+    { name: "Saturn", deva: "शनि", stone: "Blue Sapphire" }, { name: "Rahu", deva: "राहु", stone: "Hessonite" },
+    { name: "Ketu", deva: "केतु", stone: "Cat's Eye" },
+  ],
+  house: {
+    eyebrow: "The house · घर", title: "Sourced by hand.\nSigned by us.",
+    body: "Our team walks the same mines in Ceylon, the same tantric ateliers in Kanchi, the same forests of Kathmandu that families have visited for generations. Every unit is intake-photographed, weighed, X-rayed where needed, and stored in the Tredev vault before it's ever offered for sale.",
+    bullets: [
+      "First-party: we own every SKU we sell.",
+      "Serialised: every unit gets a fingerprint.",
+      "Reverent: priests, not marketers, do the pooja.",
+    ],
   },
-  {
-    tag: "Rudraksha · Nepal Original",
-    title: <>Every bead, a blessing.<br /> <span className="brand-gradient-text">Every mukhi, a lineage.</span></>,
-    sub: "Authentic 1 to 21 mukhi Nepal rudraksha, X-ray verified and energised at partner temples. No lookalike Indonesian passing off allowed.",
-    cta1: ["/shop?category=rudraksha", "Explore Rudraksha"], cta2: ["/verify", "How we verify"],
-    img: "https://images.unsplash.com/photo-1661915606983-cc9759b99343?w=1400",
-    deva: "रुद्राक्ष", devaSub: "The tears of Rudra",
-  },
+  mantras: ["सत्यम् एव जयते", "न हि सत्यात् परो धर्मः", "ॐ नमः शिवाय", "शुभम् भवतु", "असतो मा सद्गमय", "सर्वे भवन्तु सुखिनः"],
+  testimonials: [
+    { by: "Priya S., Mumbai", rating: 5, title: "Trust is what won me over", body: "The Pukhraj arrived with a signed certificate I could actually verify. I've never felt more sure about a stone in 15 years." },
+    { by: "Arjun T., Bengaluru", rating: 5, title: "Beautiful Sri Yantra", body: "Energised at Kanchi as promised. Pooja recording was a lovely touch." },
+    { by: "Neha K., Delhi", rating: 5, title: "The QR sold me", body: "I scanned before opening. Seeing the temple video and lab report right there is next-level." },
+  ],
+  posts: [
+    { title: "How to wear a Yellow Sapphire (Pukhraj) — a complete guide", tag: "Guides" },
+    { title: "Rudraksha mukhi meanings — 1 through 21", tag: "Rudraksha" },
+    { title: "Why Tredev signs every certificate with Ed25519", tag: "Trust" },
+  ],
+  trustBadges: [
+    { abbr: "GJEPC", name: "Gem & Jewellery Export Promotion Council" },
+    { abbr: "GIA", name: "Gemological Institute of America" },
+    { abbr: "IGI", name: "International Gemological Institute" },
+    { abbr: "BIS", name: "Bureau of Indian Standards" },
+  ],
+  marketplaces: ["Amazon", "Flipkart", "Myntra", "Blinkit"],
+};
+
+const HERO_IMGS = [
+  HERO_IMG,
+  "https://images.pexels.com/photos/9953656/pexels-photo-9953656.jpeg",
+  "https://images.unsplash.com/photo-1661915606983-cc9759b99343?w=1400",
+];
+const POST_IMGS = [
+  "https://images.pexels.com/photos/9953656/pexels-photo-9953656.jpeg",
+  "https://images.unsplash.com/photo-1661915606983-cc9759b99343?w=800",
+  "https://images.pexels.com/photos/15286007/pexels-photo-15286007.jpeg",
 ];
 
-const CATS = [
-  { key: "gemstone", label: "Gemstones", hindi: "रत्न", img: "https://images.pexels.com/photos/9953656/pexels-photo-9953656.jpeg" },
-  { key: "rudraksha", label: "Rudraksha", hindi: "रुद्राक्ष", img: "https://images.unsplash.com/photo-1661915606983-cc9759b99343?w=800" },
-  { key: "bracelet", label: "Bracelets", hindi: "कड़ा", img: "https://images.unsplash.com/photo-1611591437281-460bfbe1220a?w=800" },
-  { key: "yantra", label: "Yantras", hindi: "यंत्र", img: "https://images.unsplash.com/photo-1609619385076-36a873425636?w=800" },
-  { key: "idol", label: "Idols", hindi: "मूर्ति", img: "https://images.unsplash.com/photo-1665579156897-b28f83a3fcbd?w=800" },
-  { key: "prashad", label: "Temple Prashad", hindi: "प्रसाद", img: "https://images.unsplash.com/photo-1631452180519-c014fe946bc7?w=800" },
-];
+// Default tile images by category key (admin overrides live in Site Images).
+const CAT_IMGS = {
+  gemstone: "https://images.pexels.com/photos/9953656/pexels-photo-9953656.jpeg",
+  rudraksha: "https://images.unsplash.com/photo-1661915606983-cc9759b99343?w=800",
+  bracelet: "https://images.unsplash.com/photo-1611591437281-460bfbe1220a?w=800",
+  yantra: "https://images.unsplash.com/photo-1609619385076-36a873425636?w=800",
+  idol: "https://images.unsplash.com/photo-1665579156897-b28f83a3fcbd?w=800",
+  prashad: "https://images.unsplash.com/photo-1631452180519-c014fe946bc7?w=800",
+};
+const CAT_IMG_FALLBACK = CAT_IMGS.gemstone;
 
 const PURPOSES = [
   { key: "wealth", label: "Wealth", hindi: "धन", img: "https://images.pexels.com/photos/9953656/pexels-photo-9953656.jpeg" },
@@ -58,30 +131,6 @@ const PURPOSES = [
   { key: "love", label: "Love", hindi: "प्रेम", img: "https://images.unsplash.com/photo-1611591437281-460bfbe1220a?w=1000" },
   { key: "career", label: "Career", hindi: "करियर", img: "https://images.unsplash.com/photo-1544376664-80b17f09d399?w=1000" },
   { key: "health", label: "Health", hindi: "स्वास्थ्य", img: "https://images.unsplash.com/photo-1661915606983-cc9759b99343?w=1000" },
-];
-
-const PLANETS = [
-  { name: "Sun", deva: "सूर्य", stone: "Ruby" },
-  { name: "Moon", deva: "चंद्र", stone: "Pearl" },
-  { name: "Mars", deva: "मंगल", stone: "Red Coral" },
-  { name: "Mercury", deva: "बुध", stone: "Emerald" },
-  { name: "Jupiter", deva: "गुरु", stone: "Yellow Sapphire" },
-  { name: "Venus", deva: "शुक्र", stone: "Diamond" },
-  { name: "Saturn", deva: "शनि", stone: "Blue Sapphire" },
-  { name: "Rahu", deva: "राहु", stone: "Hessonite" },
-  { name: "Ketu", deva: "केतु", stone: "Cat's Eye" },
-];
-
-const TESTIMONIALS = [
-  { by: "Priya S., Mumbai", rating: 5, title: "Trust is what won me over", body: "The Pukhraj arrived with a signed certificate I could actually verify. I've never felt more sure about a stone in 15 years." },
-  { by: "Arjun T., Bengaluru", rating: 5, title: "Beautiful Sri Yantra", body: "Energised at Kanchi as promised. Pooja recording was a lovely touch." },
-  { by: "Neha K., Delhi", rating: 5, title: "The QR sold me", body: "I scanned before opening. Seeing the temple video and lab report right there is next-level." },
-];
-
-const POSTS = [
-  { title: "How to wear a Yellow Sapphire (Pukhraj) — a complete guide", tag: "Guides", img: "https://images.pexels.com/photos/9953656/pexels-photo-9953656.jpeg" },
-  { title: "Rudraksha mukhi meanings — 1 through 21", tag: "Rudraksha", img: "https://images.unsplash.com/photo-1661915606983-cc9759b99343?w=800" },
-  { title: "Why Tredev signs every certificate with Ed25519", tag: "Trust", img: "https://images.pexels.com/photos/15286007/pexels-photo-15286007.jpeg" },
 ];
 
 const FAQ = [
@@ -100,23 +149,31 @@ export default function Home() {
   const [openFaq, setOpenFaq] = useState(0);
   const nav = useNavigate();
   const { getAsset } = useSiteAssets();
+  const [home, setHome] = useState(DEFAULT_HOME);
 
-  // Apply admin-managed slot overrides on top of the default HERO_SLIDES / CATS / PURPOSES.
+  // Admin-edited homepage copy (Admin → Website); merged over the built-in defaults.
+  useEffect(() => {
+    api.get("/site-content").then(({ data }) => {
+      if (data?.home) setHome((h) => ({ ...h, ...data.home }));
+    }).catch(() => {});
+  }, []);
+
+  // Apply admin-managed image slots on top of the edited copy.
   const heroSlides = useMemo(
-    () => HERO_SLIDES.map((s, i) => ({ ...s, img: getAsset(`home_hero_${i + 1}`, s.img) })),
-    [getAsset]
+    () => (home.hero || []).map((s, i) => ({ ...s, img: getAsset(`home_hero_${i + 1}`, HERO_IMGS[i] || HERO_IMG) })),
+    [home.hero, getAsset]
   );
   const cats = useMemo(
-    () => CATS.map((c) => ({ ...c, img: getAsset(`home_cat_${c.key}`, c.img) })),
-    [getAsset]
+    () => (home.categories || []).map((c) => ({ ...c, img: getAsset(`home_cat_${c.key}`, CAT_IMGS[c.key] || CAT_IMG_FALLBACK) })),
+    [home.categories, getAsset]
   );
   const purposes = useMemo(
     () => PURPOSES.map((p) => ({ ...p, img: getAsset(`home_purpose_${p.key}`, p.img) })),
     [getAsset]
   );
   const posts = useMemo(
-    () => POSTS.map((p, i) => ({ ...p, img: getAsset(`home_blog_${i + 1}`, p.img) })),
-    [getAsset]
+    () => (home.posts || []).map((p, i) => ({ ...p, img: getAsset(`home_blog_${i + 1}`, POST_IMGS[i] || POST_IMGS[0]) })),
+    [home.posts, getAsset]
   );
   const astroBandBg = getAsset("home_astro_band_bg", "https://images.pexels.com/photos/15286007/pexels-photo-15286007.jpeg");
   const verifyBandBg = getAsset("home_verify_band_bg", "https://images.pexels.com/photos/15286007/pexels-photo-15286007.jpeg");
@@ -133,7 +190,7 @@ export default function Home() {
 
   const bestsellers = useMemo(() => products.slice(0, 6), [products]);
   const newArrivals = useMemo(() => [...products].reverse().slice(0, 6), [products]);
-  const slide = heroSlides[heroIdx];
+  const slide = heroSlides.length ? heroSlides[heroIdx % heroSlides.length] : null;
 
   const findGo = (e) => {
     e.preventDefault();
@@ -149,6 +206,7 @@ export default function Home() {
       <AmbassadorHero />
 
       {/* HERO carousel */}
+      {slide && (
       <section data-testid={HOME.hero} className="relative overflow-hidden">
         {/* a slowly turning shri-yantra, set into the page like a watermark on paper */}
         <YantraWatermark className="pointer-events-none absolute -left-40 -top-28 w-[560px] h-[560px] text-gold/[0.13] hidden md:block" />
@@ -158,14 +216,14 @@ export default function Home() {
             <div className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-maroon border border-gold/50 px-3 py-1.5">
               <Sparkle size={14} weight="duotone" /> {slide.tag}
             </div>
-            <h1 className="mt-6 font-display text-5xl md:text-6xl leading-[1.02] tracking-tight text-ink">{slide.title}</h1>
+            <h1 className="mt-6 font-display text-5xl md:text-6xl leading-[1.02] tracking-tight text-ink">{renderRich(slide.title)}</h1>
             <p className="mt-8 text-base md:text-lg text-ink-soft max-w-2xl leading-relaxed">{slide.sub}</p>
             <div className="mt-10 flex flex-wrap gap-4">
-              <Link to={slide.cta1[0]} data-testid={HOME.ctaShop} className="brand-gradient text-ivory px-8 py-4 text-sm uppercase tracking-widest inline-flex items-center gap-2 hover-lift">
-                {slide.cta1[1]} <ArrowRight size={16} />
+              <Link to={slide.cta1_to || "/shop"} data-testid={HOME.ctaShop} className="brand-gradient text-ivory px-8 py-4 text-sm uppercase tracking-widest inline-flex items-center gap-2 hover-lift">
+                {slide.cta1_label} <ArrowRight size={16} />
               </Link>
-              <Link to={slide.cta2[0]} data-testid={HOME.ctaVerify} className="border border-maroon text-maroon px-8 py-4 text-sm uppercase tracking-widest inline-flex items-center gap-2 hover:bg-maroon hover:text-ivory transition-colors">
-                <ShieldCheck size={16} weight="duotone" /> {slide.cta2[1]}
+              <Link to={slide.cta2_to || "/verify"} data-testid={HOME.ctaVerify} className="border border-maroon text-maroon px-8 py-4 text-sm uppercase tracking-widest inline-flex items-center gap-2 hover:bg-maroon hover:text-ivory transition-colors">
+                <ShieldCheck size={16} weight="duotone" /> {slide.cta2_label}
               </Link>
             </div>
             <div className="mt-10 flex items-center gap-3">
@@ -198,6 +256,7 @@ export default function Home() {
         </div>
         <div className="brand-gradient h-[2px] w-full" />
       </section>
+      )}
 
       {/* HOMEPAGE EVENTS SECTION (admin-managed) */}
       <EventsSection />
@@ -223,17 +282,14 @@ export default function Home() {
       {/* LEDGER — the numbers, set like a colophon */}
       <section className="bg-ivory border-b border-gold/30 py-14" aria-label="Tredev in numbers">
         <div className="mx-auto max-w-7xl px-6 lg:px-10 grid grid-cols-2 lg:grid-cols-4 gap-y-10 gap-x-6">
-          {[
-            [<CountUp to={1200} suffix="+" />, "Verified reviews", "समीक्षा"],
-            [<CountUp to={4.9} decimals={1} />, "Average rating", "औसत"],
-            [<CountUp to={9} />, "Navagraha stones", "नवग्रह"],
-            [<CountUp to={100} suffix="%" />, "Signed & serialised", "प्रमाणित"],
-          ].map(([val, label, deva], i) => (
-            <Reveal key={label} delay={i * 0.08}>
+          {(home.stats || []).map((s, i) => (
+            <Reveal key={s.label + i} delay={i * 0.08}>
               <div className="relative lg:pl-6 lg:border-l lg:border-gold/30 first:lg:border-0 first:lg:pl-0">
-                <div className="font-display text-5xl md:text-6xl text-maroon-deep leading-none">{val}</div>
-                <div className="mt-2 font-deva text-sm text-gold-soft">{deva}</div>
-                <div className="text-xs uppercase tracking-widest text-ink-muted mt-0.5">{label}</div>
+                <div className="font-display text-5xl md:text-6xl text-maroon-deep leading-none">
+                  <CountUp to={Number(s.value) || 0} decimals={s.decimals || 0} suffix={s.suffix || ""} />
+                </div>
+                <div className="mt-2 font-deva text-sm text-gold-soft">{s.deva}</div>
+                <div className="text-xs uppercase tracking-widest text-ink-muted mt-0.5">{s.label}</div>
               </div>
             </Reveal>
           ))}
@@ -284,7 +340,7 @@ export default function Home() {
             <label className="block sm:col-span-1">
               <div className="text-[10px] uppercase tracking-widest text-ink-muted mb-1">Category</div>
               <select value={finder.category} onChange={(e) => setFinder({ ...finder, category: e.target.value })} className="w-full gold-line px-3 py-2 bg-ivory">
-                {CATS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+                {cats.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
               </select>
             </label>
             <label className="block sm:col-span-1">
@@ -317,20 +373,22 @@ export default function Home() {
         <div className="relative mx-auto max-w-7xl px-6 lg:px-10 grid lg:grid-cols-2 gap-8 items-center min-h-[440px]">
           {/* copy */}
           <Reveal className="py-14 lg:py-16 order-2 lg:order-1">
-            <div className="text-xs uppercase tracking-[0.3em] text-gold">Guidance · परामर्श</div>
+            <div className="text-xs uppercase tracking-[0.3em] text-gold">{home.astroBand?.eyebrow}</div>
             <h3 className="font-display text-4xl md:text-5xl mt-3 leading-tight">
-              Talk to a real person,<br />not a chatbot.
+              {renderRich(home.astroBand?.title)}
             </h3>
             <p className="text-sm md:text-base text-ivory/80 mt-4 max-w-xl leading-relaxed">
-              A human, on a scheduled call — who reads your chart and tells you honestly which stone or
-              rudraksha suits you, or whether you need one at all. No guesswork, no upsell.
+              {home.astroBand?.body}
             </p>
             <div className="mt-6 flex flex-wrap gap-x-6 gap-y-3">
-              {[[Calendar, "Scheduled call"], [Compass, "Reads your chart"], [ShieldCheck, "Honest advice"]].map(([I, t]) => (
-                <div key={t} className="flex items-center gap-2 text-sm text-ivory/85">
-                  <I size={16} weight="duotone" className="text-gold" /> {t}
-                </div>
-              ))}
+              {(home.astroBand?.features || []).map((t, i) => {
+                const I = [Calendar, Compass, ShieldCheck][i % 3];
+                return (
+                  <div key={t + i} className="flex items-center gap-2 text-sm text-ivory/85">
+                    <I size={16} weight="duotone" className="text-gold" /> {t}
+                  </div>
+                );
+              })}
             </div>
             <div className="mt-8 flex flex-wrap gap-3">
               <Link to="/consultation" className="brand-gradient text-ivory px-7 py-3.5 text-xs uppercase tracking-widest hover-lift flex items-center gap-2">
@@ -355,9 +413,9 @@ export default function Home() {
             />
             {/* name plate */}
             <div className="absolute bottom-8 left-2 lg:left-auto lg:-left-4 z-20 bg-ivory/95 backdrop-blur border border-gold/50 px-4 py-2.5 shadow-lg">
-              <div className="font-serifd text-lg text-maroon-deep leading-none">Shri Raghavendra</div>
+              <div className="font-serifd text-lg text-maroon-deep leading-none">{home.astroBand?.name}</div>
               <div className="text-[10px] uppercase tracking-widest text-ink-muted mt-1 flex items-center gap-1">
-                <ShieldCheck size={11} weight="duotone" className="text-verified" /> Founder &amp; Guide
+                <ShieldCheck size={11} weight="duotone" className="text-verified" /> {home.astroBand?.role}
               </div>
             </div>
           </div>
@@ -386,7 +444,7 @@ export default function Home() {
           <h2 className="font-display text-4xl md:text-5xl text-ink mt-2">Every gem has a purpose.</h2>
           <p className="text-sm text-ink-soft mt-3 max-w-2xl">Each Navratna stone is ruled by a planet. Pick your ruler — we'll show you the stones and the certified units currently in the vault.</p>
           <div className="mt-10 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-9 gap-3">
-            {PLANETS.map((p) => (
+            {(home.planets || []).map((p) => (
               <Link key={p.name} to={`/shop?graha=${encodeURIComponent(p.name)}`} className="gold-line bg-ivory p-4 text-center hover-lift">
                 <div className="font-deva text-xl text-maroon-deep">{p.deva}</div>
                 <div className="font-serifd text-sm text-ink mt-1">{p.name}</div>
@@ -501,20 +559,21 @@ export default function Home() {
           </figcaption>
         </div>
         <Reveal>
-          <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">The house · घर</div>
-          <h2 className="font-display text-4xl md:text-5xl text-ink mt-3 leading-tight">Sourced by hand.<br />Signed by us.</h2>
+          <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">{home.house?.eyebrow}</div>
+          <h2 className="font-display text-4xl md:text-5xl text-ink mt-3 leading-tight">{renderRich(home.house?.title)}</h2>
           <DropCap className="mt-5">
-            Our team walks the same mines in Ceylon, the same tantric ateliers in Kanchi, the same forests of Kathmandu that families have visited for generations. Every unit is intake-photographed, weighed, X-rayed where needed, and stored in the Tredev vault before it's ever offered for sale.
+            {home.house?.body}
           </DropCap>
           <ul className="mt-6 space-y-3 text-sm text-ink-soft">
-            <li className="flex gap-2"><Package size={16} className="text-gold-soft shrink-0" weight="duotone" /> First-party: we own every SKU we sell.</li>
-            <li className="flex gap-2"><Fingerprint size={16} className="text-gold-soft shrink-0" weight="duotone" /> Serialised: every unit gets a fingerprint.</li>
-            <li className="flex gap-2"><HandHeart size={16} className="text-gold-soft shrink-0" weight="duotone" /> Reverent: priests, not marketers, do the pooja.</li>
+            {(home.house?.bullets || []).map((b, i) => {
+              const Icon = [Package, Fingerprint, HandHeart][i % 3];
+              return <li key={i} className="flex gap-2"><Icon size={16} className="text-gold-soft shrink-0" weight="duotone" /> {b}</li>;
+            })}
           </ul>
         </Reveal>
       </section>
 
-      <MantraDivider />
+      <MantraDivider mantras={home.mantras} />
 
       {/* SOCIAL PROOF */}
       <section className="bg-cream border-y border-gold/30 py-20">
@@ -529,7 +588,7 @@ export default function Home() {
             </div>
           </div>
           <div className="mt-10 grid md:grid-cols-3 gap-5">
-            {TESTIMONIALS.map((t, i) => (
+            {(home.testimonials || []).map((t, i) => (
               <div key={i} className="gold-line bg-ivory p-6">
                 <div className="text-gold flex gap-0.5">{Array.from({ length: t.rating }).map((_, k) => <Star key={k} size={14} weight="fill" />)}</div>
                 <div className="font-serifd text-lg text-ink mt-3">{t.title}</div>
@@ -640,15 +699,10 @@ export default function Home() {
         <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">Authenticity</div>
         <h2 className="font-display text-3xl md:text-4xl text-ink mt-2">A promise of purity <em className="font-serifd">& authenticity</em></h2>
         <div className="mt-10 flex items-center justify-center gap-8 md:gap-14 flex-wrap opacity-80">
-          {[
-            ["GJEPC", "Gem & Jewellery Export Promotion Council"],
-            ["GIA", "Gemological Institute of America"],
-            ["IGI", "International Gemological Institute"],
-            ["BIS", "Bureau of Indian Standards"],
-          ].map(([abbr, name]) => (
-            <div key={abbr} className="text-center gold-line px-6 py-4 bg-ivory min-w-[140px]">
-              <div className="font-display text-3xl text-maroon-deep">{abbr}</div>
-              <div className="text-[10px] uppercase tracking-widest text-ink-muted mt-1">{name}</div>
+          {(home.trustBadges || []).map((b, i) => (
+            <div key={b.abbr + i} className="text-center gold-line px-6 py-4 bg-ivory min-w-[140px]">
+              <div className="font-display text-3xl text-maroon-deep">{b.abbr}</div>
+              <div className="text-[10px] uppercase tracking-widest text-ink-muted mt-1">{b.name}</div>
             </div>
           ))}
         </div>
@@ -662,7 +716,12 @@ export default function Home() {
         <div className="mx-auto max-w-6xl px-6 lg:px-10 text-center">
           <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">Also available on</div>
           <div className="mt-6 flex items-center justify-center gap-10 flex-wrap text-ink-muted font-display text-2xl">
-            <span>Amazon</span><span>·</span><span>Flipkart</span><span>·</span><span>Myntra</span><span>·</span><span>Blinkit</span>
+            {(home.marketplaces || []).map((m, i) => (
+              <React.Fragment key={m + i}>
+                {i > 0 && <span>·</span>}
+                <span>{m}</span>
+              </React.Fragment>
+            ))}
           </div>
         </div>
       </section>

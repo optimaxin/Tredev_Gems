@@ -43,6 +43,7 @@ import db  # Postgres/Supabase access layer — see backend/MIGRATION.md
 import storage_sb  # Supabase Storage — replaces the Emergent object store
 from pydantic import BaseModel, EmailStr, Field
 from starlette.middleware.cors import CORSMiddleware
+from collections import defaultdict, deque
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -68,6 +69,19 @@ ED25519_PUBLIC_HEX = ED25519_PUBLIC.public_bytes(
 JWT_SECRET = os.environ.get("JWT_SECRET", "dev-secret")
 JWT_ALGO = "HS256"
 JWT_TTL_HOURS = 24 * 7
+
+# ── Environment gate ──────────────────────────────────────────────────────────
+# Dev-only helper routes (mock payments, DB seeding) must never be reachable in
+# production. Set APP_ENV=production on the live deploy; anything else is treated
+# as a development environment.
+APP_ENV = os.environ.get("APP_ENV", "development").strip().lower()
+IS_PRODUCTION = APP_ENV in ("production", "prod")
+
+
+def _require_dev_env() -> None:
+    """Return 404 (never confirm the route exists) when running in production."""
+    if IS_PRODUCTION:
+        raise HTTPException(status_code=404, detail="Not found")
 
 
 # ── Firebase Admin (Phone Auth verification) ─────────────────────────────────
@@ -624,6 +638,8 @@ class ReviewIn(BaseModel):
     rating: int = Field(ge=1, le=5)
     title: str = ""
     body: str = ""
+    # Up to 3 image URLs (paths returned by POST /reviews/photo).
+    photos: List[str] = Field(default_factory=list, max_length=3)
 
 
 class ConsultationBookIn(BaseModel):
@@ -684,6 +700,41 @@ def _cors_origins() -> list[str]:
 
 app = FastAPI(title="Tredev")
 api = APIRouter(prefix="/api")
+
+# ── Rate limiting ─────────────────────────────────────────────────────────────
+# Brute-force protection for auth and other sensitive endpoints (§6). A per-IP
+# sliding-window limiter implemented as a FastAPI dependency, so it never disturbs
+# request-body parsing. In-memory: fine for a single instance; front with Redis if
+# the API is ever scaled to multiple workers/instances.
+def _client_ip(request: Request) -> str:
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+_rate_buckets: dict[str, deque] = defaultdict(deque)
+
+
+def rate_limit(max_calls: int, window_secs: int):
+    """Dependency factory: allow at most `max_calls` per `window_secs` per IP+route.
+
+    Runs on the event loop with no awaits between the check and the append, so no
+    lock is needed. Raises 429 when the window is full.
+    """
+    async def _dep(request: Request) -> None:
+        key = f"{request.url.path}:{_client_ip(request)}"
+        cutoff = time.time() - window_secs
+        dq = _rate_buckets[key]
+        while dq and dq[0] <= cutoff:
+            dq.popleft()
+        if not dq:
+            _rate_buckets.pop(key, None)
+            dq = _rate_buckets[key]
+        if len(dq) >= max_calls:
+            raise HTTPException(429, "Too many requests. Please try again later.")
+        dq.append(time.time())
+    return _dep
 
 
 @app.on_event("startup")
@@ -806,7 +857,7 @@ async def _create_or_get_user(*, email: str, name: str, picture: str = "", passw
 
 
 @api.post("/auth/firebase-verify")
-async def auth_firebase_verify(body: FirebaseVerifyIn):
+async def auth_firebase_verify(body: FirebaseVerifyIn, _rl: None = Depends(rate_limit(15, 60))):
     """Exchange a Firebase Phone Auth ID token for our otp_verification_token."""
     if not _firebase_ready:
         raise HTTPException(503, "Firebase Auth not configured on the server")
@@ -814,7 +865,8 @@ async def auth_firebase_verify(body: FirebaseVerifyIn):
         from firebase_admin import auth as _fb_auth
         decoded = _fb_auth.verify_id_token(body.id_token)
     except Exception as e:
-        raise HTTPException(401, f"Invalid Firebase ID token: {e}")
+        log.warning(f"Firebase ID token verification failed: {e}")
+        raise HTTPException(401, "Invalid or expired Firebase ID token")
     phone = decoded.get("phone_number") or (decoded.get("firebase", {}).get("identities", {}).get("phone", [None])[0])
     if not phone:
         raise HTTPException(400, "Firebase token has no phone_number claim. Enable Phone sign-in in Firebase Console.")
@@ -846,7 +898,7 @@ async def auth_firebase_verify(body: FirebaseVerifyIn):
 
 
 @api.post("/auth/signup")
-async def signup(body: SignupIn):
+async def signup(body: SignupIn, _rl: None = Depends(rate_limit(10, 60))):
     if await _load_user(email=body.email.lower()):
         raise HTTPException(400, "Email already registered")
     phone = normalize_phone(body.phone)
@@ -919,7 +971,7 @@ def _user_public(user: dict) -> dict:
 
 
 @api.post("/auth/login")
-async def login(body: LoginIn):
+async def login(body: LoginIn, _rl: None = Depends(rate_limit(10, 60))):
     user = await _load_user(email=body.email.lower())
     if not user or not user.get("password_hash") or not verify_password(body.password, user["password_hash"]):
         raise HTTPException(401, "Invalid credentials")
@@ -928,7 +980,7 @@ async def login(body: LoginIn):
 
 
 @api.post("/auth/google")
-async def auth_google(body: GoogleSignInIn):
+async def auth_google(body: GoogleSignInIn, _rl: None = Depends(rate_limit(15, 60))):
     """Exchange a Firebase Google ID token for our own JWT.
 
     Replaces the Emergent OAuth round-trip (auth.emergentagent.com ->
@@ -942,7 +994,8 @@ async def auth_google(body: GoogleSignInIn):
         from firebase_admin import auth as _fb_auth
         decoded = _fb_auth.verify_id_token(body.id_token)
     except Exception as e:
-        raise HTTPException(401, f"Invalid Google ID token: {e}")
+        log.warning(f"Google ID token verification failed: {e}")
+        raise HTTPException(401, "Invalid or expired Google ID token")
 
     email = (decoded.get("email") or "").lower()
     if not email:
@@ -1273,11 +1326,105 @@ _DEFAULT_FOOTER = {
     ],
     "copyright": "An honest house for sacred things · Made with care in India",
 }
+# Homepage copy. Titles support a light markup: "*...*" renders as the gold
+# gradient highlight and "\n" is a line break. Section images stay in Site Images.
+_DEFAULT_HOME = {
+    "ambassador": {
+        "eyebrow": "",
+        "name": "Shri Raghavendra",
+        "role": "The face of our faith",
+        "quote": "Every stone we bless carries the same truth we live by.",
+    },
+    "hero": [
+        {"tag": "Est. Kashi · 2024",
+         "title": "Anyone can claim a stone is real.\nWe let you *prove it.*",
+         "sub": "Every gemstone, rudraksha and yantra you buy is a serialised, cryptographically signed physical unit. Verifiable with a public key from anywhere.",
+         "cta1_to": "/shop", "cta1_label": "Enter the store",
+         "cta2_to": "/verify", "cta2_label": "Verify a QR",
+         "deva": "सत्यम् एव जयते", "devaSub": "Only truth prevails"},
+        {"tag": "The Navratna, individually signed",
+         "title": "Nine stones.\n*Nine planets.* One promise.",
+         "sub": "Pukhraj, Neelam, Manik, Panna, Moti, Moonga, Heera, Gomed, Lehsuniya — every stone paired to its ruler, with its own lab report and temple energisation.",
+         "cta1_to": "/shop-by-planet", "cta1_label": "Shop the Navagraha",
+         "cta2_to": "/tools/carat-ratti", "cta2_label": "Carat ↔ Ratti tool",
+         "deva": "नवग्रह", "devaSub": "The nine graha"},
+        {"tag": "Rudraksha · Nepal Original",
+         "title": "Every bead, a blessing.\n*Every mukhi, a lineage.*",
+         "sub": "Authentic 1 to 21 mukhi Nepal rudraksha, X-ray verified and energised at partner temples. No lookalike Indonesian passing off allowed.",
+         "cta1_to": "/shop?category=rudraksha", "cta1_label": "Explore Rudraksha",
+         "cta2_to": "/verify", "cta2_label": "How we verify",
+         "deva": "रुद्राक्ष", "devaSub": "The tears of Rudra"},
+    ],
+    "stats": [
+        {"value": 1200, "suffix": "+", "decimals": 0, "label": "Verified reviews", "deva": "समीक्षा"},
+        {"value": 4.9, "suffix": "", "decimals": 1, "label": "Average rating", "deva": "औसत"},
+        {"value": 9, "suffix": "", "decimals": 0, "label": "Navagraha stones", "deva": "नवग्रह"},
+        {"value": 100, "suffix": "%", "decimals": 0, "label": "Signed & serialised", "deva": "प्रमाणित"},
+    ],
+    "astroBand": {
+        "eyebrow": "Guidance · परामर्श",
+        "title": "Talk to a real person,\nnot a chatbot.",
+        "body": "A human, on a scheduled call — who reads your chart and tells you honestly which stone or rudraksha suits you, or whether you need one at all. No guesswork, no upsell.",
+        "name": "Shri Raghavendra", "role": "Founder & Guide",
+        "features": ["Scheduled call", "Reads your chart", "Honest advice"],
+    },
+    "categories": [
+        {"key": "gemstone", "label": "Gemstones", "hindi": "रत्न"},
+        {"key": "rudraksha", "label": "Rudraksha", "hindi": "रुद्राक्ष"},
+        {"key": "bracelet", "label": "Bracelets", "hindi": "कड़ा"},
+        {"key": "yantra", "label": "Yantras", "hindi": "यंत्र"},
+        {"key": "idol", "label": "Idols", "hindi": "मूर्ति"},
+        {"key": "prashad", "label": "Temple Prashad", "hindi": "प्रसाद"},
+    ],
+    "planets": [
+        {"name": "Sun", "deva": "सूर्य", "stone": "Ruby"},
+        {"name": "Moon", "deva": "चंद्र", "stone": "Pearl"},
+        {"name": "Mars", "deva": "मंगल", "stone": "Red Coral"},
+        {"name": "Mercury", "deva": "बुध", "stone": "Emerald"},
+        {"name": "Jupiter", "deva": "गुरु", "stone": "Yellow Sapphire"},
+        {"name": "Venus", "deva": "शुक्र", "stone": "Diamond"},
+        {"name": "Saturn", "deva": "शनि", "stone": "Blue Sapphire"},
+        {"name": "Rahu", "deva": "राहु", "stone": "Hessonite"},
+        {"name": "Ketu", "deva": "केतु", "stone": "Cat's Eye"},
+    ],
+    "house": {
+        "eyebrow": "The house · घर",
+        "title": "Sourced by hand.\nSigned by us.",
+        "body": "Our team walks the same mines in Ceylon, the same tantric ateliers in Kanchi, the same forests of Kathmandu that families have visited for generations. Every unit is intake-photographed, weighed, X-rayed where needed, and stored in the Tredev vault before it's ever offered for sale.",
+        "bullets": [
+            "First-party: we own every SKU we sell.",
+            "Serialised: every unit gets a fingerprint.",
+            "Reverent: priests, not marketers, do the pooja.",
+        ],
+    },
+    "mantras": [
+        "सत्यम् एव जयते", "न हि सत्यात् परो धर्मः", "ॐ नमः शिवाय",
+        "शुभम् भवतु", "असतो मा सद्गमय", "सर्वे भवन्तु सुखिनः",
+    ],
+    "testimonials": [
+        {"by": "Priya S., Mumbai", "rating": 5, "title": "Trust is what won me over", "body": "The Pukhraj arrived with a signed certificate I could actually verify. I've never felt more sure about a stone in 15 years."},
+        {"by": "Arjun T., Bengaluru", "rating": 5, "title": "Beautiful Sri Yantra", "body": "Energised at Kanchi as promised. Pooja recording was a lovely touch."},
+        {"by": "Neha K., Delhi", "rating": 5, "title": "The QR sold me", "body": "I scanned before opening. Seeing the temple video and lab report right there is next-level."},
+    ],
+    "posts": [
+        {"title": "How to wear a Yellow Sapphire (Pukhraj) — a complete guide", "tag": "Guides"},
+        {"title": "Rudraksha mukhi meanings — 1 through 21", "tag": "Rudraksha"},
+        {"title": "Why Tredev signs every certificate with Ed25519", "tag": "Trust"},
+    ],
+    "trustBadges": [
+        {"abbr": "GJEPC", "name": "Gem & Jewellery Export Promotion Council"},
+        {"abbr": "GIA", "name": "Gemological Institute of America"},
+        {"abbr": "IGI", "name": "International Gemological Institute"},
+        {"abbr": "BIS", "name": "Bureau of Indian Standards"},
+    ],
+    "marketplaces": ["Amazon", "Flipkart", "Myntra", "Blinkit"],
+}
 _CONTENT_DEFAULTS = {
     "announcement": _DEFAULT_ANNOUNCEMENT, "footer": _DEFAULT_FOOTER,
+    "home": _DEFAULT_HOME,
     "purposes": _DEFAULT_PURPOSES, "rashi": _DEFAULT_RASHI,
 }
-_CONTENT_KEYS = {"announcement", "footer"}   # gated by the "content" permission
+_CONTENT_KEYS = {"announcement", "footer", "home"}   # gated by the "content" permission
 _TAXONOMY_KEYS = {"purposes", "rashi"}        # gated by the "taxonomy" permission
 
 
@@ -1828,7 +1975,8 @@ async def admin_create_product(p: ProductIn, user_id: str = Depends(require_admi
     except HTTPException:
         raise
     except asyncpg.exceptions.UniqueViolationError as e:
-        raise HTTPException(400, f"Slug exists or invalid: {e}")
+        log.warning(f"product create unique violation: {e}")
+        raise HTTPException(400, "A product with that slug already exists")
     return _shape_product(await db.fetch_one(
         _PRODUCT_SELECT + " AND p.id = $1::uuid", str(pid)))
 
@@ -1853,7 +2001,8 @@ async def admin_create_unit(u: UnitIn, user_id: str = Depends(require_admin)):
                VALUES ($1,$2::uuid,$3,$4,'in_stock','unverified',$5, clock_timestamp())""",
             unit_id, u.product_id, prod["variant_id"], u.serial, prod["base_price"])
     except asyncpg.exceptions.UniqueViolationError as e:
-        raise HTTPException(400, f"Serial exists: {e}")
+        log.warning(f"unit create unique violation: {e}")
+        raise HTTPException(400, "A unit with that serial already exists")
     return {"unit_id": str(unit_id), "product_id": u.product_id, "serial": u.serial,
             "weight_carat": u.weight_carat, "origin": u.origin, "notes": u.notes,
             "status": "available", "created_at": iso(now())}
@@ -2614,7 +2763,13 @@ async def checkout(body: CheckoutIn, request: Request, user_id: Optional[str] = 
 
 @api.post("/checkout/mock-pay/{order_id}")
 async def mock_pay(order_id: str):
-    """Dev helper: completes an order without Razorpay live keys, atomically flipping units to sold."""
+    """Dev helper: completes an order without Razorpay live keys, atomically flipping units to sold.
+
+    DEV ONLY — 404s in production. Without this gate any anonymous caller could mark
+    an arbitrary order paid (assigning inventory and issuing certificates) without
+    paying. Real payments must go through Razorpay + the verified webhook.
+    """
+    _require_dev_env()
     order = await _load_order(order_id)
     if not order:
         raise HTTPException(404, "Order not found")
@@ -3187,10 +3342,57 @@ _REVIEW_SELECT = """
            r.rating           AS rating,
            COALESCE(r.title, '') AS title,
            COALESCE(r.body, '')  AS body,
+           COALESCE(r.photos, '[]'::jsonb) AS photos,
+           (r.order_item_id IS NOT NULL) AS verified_buyer,
            r.created_at       AS created_at
       FROM reviews r
       LEFT JOIN users u ON u.id = r.user_id
 """
+
+
+def _shape_review(row) -> dict:
+    """Rows come back with `photos` as a JSON string (jsonb). Decode it so the API
+    emits a real array; everything else passes through."""
+    d = dict(row)
+    photos = d.get("photos")
+    if isinstance(photos, str):
+        try:
+            photos = json.loads(photos)
+        except (ValueError, TypeError):
+            photos = []
+    d["photos"] = photos or []
+    return d
+
+
+@api.post("/reviews/photo")
+async def upload_review_photo(request: Request, user_id: str = Depends(require_user)):
+    """Logged-in users attach photos to a review. Single image under form field
+    'file'; returns a servable URL to include in ReviewIn.photos (max 3 per review)."""
+    form = await request.form()
+    upload = form.get("file")
+    if upload is None or not hasattr(upload, "read"):
+        raise HTTPException(400, "Attach a file under form field 'file'")
+    filename = getattr(upload, "filename", "") or "photo.bin"
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "bin"
+    ct = _MIME.get(ext) or getattr(upload, "content_type", None) or "application/octet-stream"
+    data = await upload.read()
+    if not data:
+        raise HTTPException(400, "Empty file")
+    if len(data) > 8 * 1024 * 1024:
+        raise HTTPException(413, "Max 8MB per photo")
+    if not ct.startswith("image/"):
+        raise HTTPException(400, "Only image files are supported")
+    path = f"{_APP_NAME_STORAGE}/reviews/{uuid.uuid4().hex}.{ext}"
+    result = await _storage_put(path, data, ct)
+    storage_path = result.get("path") or path
+    media_id = uuid.uuid4()
+    await db.execute(
+        """INSERT INTO media_assets (id, owner_type, storage_provider, bucket, object_key,
+                mime_type, file_size_bytes, original_filename, is_public, uploaded_by)
+           VALUES ($1,'user','supabase',$2,$3,$4,$5,$6,true,$7::uuid)""",
+        media_id, storage_sb.BUCKET, storage_path, ct,
+        result.get("size") or len(data), filename, user_id)
+    return {"media_id": str(media_id), "url": _media_public_url(storage_path)}
 
 
 @api.post("/reviews")
@@ -3202,20 +3404,63 @@ async def create_review(body: ReviewIn, user_id: str = Depends(require_user)):
         """SELECT oi.id FROM order_items oi JOIN orders o ON o.id = oi.order_id
             WHERE o.user_id = $1::uuid AND oi.product_id = $2::uuid
             ORDER BY oi.created_at DESC LIMIT 1""", user_id, body.product_id)
+    photos = [str(u) for u in (body.photos or [])][:3]
     await db.execute(
         """INSERT INTO reviews (id, product_id, user_id, order_item_id, rating, title,
-                                body, moderation_status)
-           VALUES ($1,$2::uuid,$3::uuid,$4,$5,$6,$7,'approved')""",
+                                body, photos, moderation_status)
+           VALUES ($1,$2::uuid,$3::uuid,$4,$5,$6,$7,$8::jsonb,'approved')""",
         review_id, body.product_id, user_id, order_item_id, body.rating,
-        body.title, body.body)
-    return await db.fetch_one(_REVIEW_SELECT + " WHERE r.id = $1::uuid", str(review_id))
+        body.title, body.body, photos)
+    row = await db.fetch_one(_REVIEW_SELECT + " WHERE r.id = $1::uuid", str(review_id))
+    return _shape_review(row)
 
 
 @api.get("/reviews/{product_id}")
 async def list_reviews(product_id: str):
-    return await db.fetch_all(
+    # Only approved reviews are shown publicly (admins can delete unwanted ones).
+    rows = await db.fetch_all(
         _REVIEW_SELECT + " WHERE r.product_id = $1::uuid"
+        " AND r.moderation_status = 'approved'"
         " ORDER BY r.created_at DESC LIMIT 200", product_id)
+    return [_shape_review(r) for r in rows]
+
+
+# ── Admin: review moderation ─────────────────────────────────────────────────
+# Same shape as _REVIEW_SELECT but joins the product so staff see what was reviewed.
+_ADMIN_REVIEW_SELECT = """
+    SELECT r.id::text         AS review_id,
+           r.product_id::text AS product_id,
+           r.user_id::text    AS user_id,
+           COALESCE(u.full_name, 'Anonymous') AS author,
+           COALESCE(u.email::text, '') AS author_email,
+           p.title            AS product_title,
+           p.slug::text       AS product_slug,
+           r.rating           AS rating,
+           COALESCE(r.title, '') AS title,
+           COALESCE(r.body, '')  AS body,
+           COALESCE(r.photos, '[]'::jsonb) AS photos,
+           (r.order_item_id IS NOT NULL) AS verified_buyer,
+           r.created_at       AS created_at
+      FROM reviews r
+      LEFT JOIN users u ON u.id = r.user_id
+      LEFT JOIN products p ON p.id = r.product_id
+"""
+
+
+@api.get("/admin/reviews")
+async def admin_list_reviews(_: str = Depends(require_admin), limit: int = 500):
+    rows = await db.fetch_all(
+        _ADMIN_REVIEW_SELECT + " ORDER BY r.created_at DESC LIMIT $1", limit)
+    return [_shape_review(r) for r in rows]
+
+
+@api.delete("/admin/reviews/{review_id}")
+async def admin_delete_review(review_id: str, _: str = Depends(require_admin)):
+    got = await db.fetch_val(
+        "DELETE FROM reviews WHERE id = $1::uuid RETURNING id", review_id)
+    if not got:
+        raise HTTPException(404, "Review not found")
+    return {"ok": True}
 
 
 # ── Consultation ──────────────────────────────────────────────────────────────
@@ -3372,13 +3617,15 @@ async def book(body: ConsultationBookIn, user_id: Optional[str] = Depends(get_us
 # ── Dev seed (idempotent) ─────────────────────────────────────────────────────
 @api.post("/dev/seed")
 async def dev_seed():
-    """Seed admin user + demo catalog (idempotent).
+    """Seed admin user + demo catalog (idempotent). DEV ONLY — 404s in production
+    so an attacker can't (re)create a known-credential admin account on the live DB.
 
     Lives in backend/seed_pg.py: the Postgres seed touches ~15 tables (categories,
     products + variants + per-category detail rows, media, units, temples/priests,
     signing key, certs + lab/energization/QR, users + roles/permissions/prefs,
     astrologers), which is far too much to inline in a route handler.
     """
+    _require_dev_env()
     import seed_pg
     return await seed_pg.run(
         hash_password=hash_password,
@@ -4360,7 +4607,7 @@ async def admin_astrologer_affiliate(astrologer_id: str, _: str = Depends(requir
 
 # --- Astrologer-side (self-serve) auth & workspace ---------------------------
 @api.post("/astrologer/auth/login")
-async def astro_login(body: AstroLoginIn):
+async def astro_login(body: AstroLoginIn, _rl: None = Depends(rate_limit(10, 60))):
     a = _shape_astro(await db.fetch_one(
         _ASTRO_SELECT + " WHERE a.email = $1::citext", body.email), include_hash=True)
     if not a or a.get("is_active") is False or not a.get("password_hash"):
@@ -4372,7 +4619,7 @@ async def astro_login(body: AstroLoginIn):
 
 
 @api.post("/astrologer/auth/set-password")
-async def astro_set_password(body: AstroSetPasswordIn):
+async def astro_set_password(body: AstroSetPasswordIn, _rl: None = Depends(rate_limit(10, 60))):
     try:
         data = pyjwt.decode(body.token, JWT_SECRET, algorithms=[JWT_ALGO], audience="astro_pwd")
     except Exception:
@@ -4390,17 +4637,21 @@ async def astro_set_password(body: AstroSetPasswordIn):
 
 
 @api.post("/astrologer/auth/request-reset")
-async def astro_request_reset(body: AstroRequestResetIn):
-    """Astrologer-triggered reset. Always returns ok to avoid email enumeration."""
+async def astro_request_reset(body: AstroRequestResetIn, _rl: None = Depends(rate_limit(5, 60))):
+    """Astrologer-triggered reset. Always returns the same response to avoid email
+    enumeration, and NEVER returns the reset token/link to the caller — the link is
+    delivered out-of-band (email/log) so it can't be used to seize another
+    astrologer's account by simply POSTing their email."""
     aid = await db.fetch_val(
         "SELECT id::text FROM astrologers WHERE email = $1::citext AND is_active",
         body.email)
-    reset_url = None
     if aid:
         token = _mint_astro_password_token(aid, purpose="reset")
         reset_url = _welcome_url(token)
+        # Server-side only. In dev this is visible in the logs; in production this is
+        # where the email adapter should send the link. It must never go to the client.
         log.info(f"astro password reset link for {body.email}: {reset_url}")
-    return {"ok": True, "reset_url": reset_url}  # reset_url visible in local dev; safe to leave until email adapter is wired
+    return {"ok": True, "message": "If that email is registered, a reset link has been sent."}
 
 
 @api.get("/astrologer/me")
@@ -4845,7 +5096,8 @@ async def _storage_put(path: str, data: bytes, content_type: str) -> dict:
     try:
         return await storage_sb.put(path, data, content_type)
     except Exception as e:
-        raise HTTPException(502, f"Storage put failed: {e}")
+        log.error(f"Storage put failed for {path}: {e}")
+        raise HTTPException(502, "Storage upload failed. Please try again.")
 
 
 async def _storage_get(path: str) -> tuple[bytes, str]:
@@ -4856,7 +5108,8 @@ async def _storage_get(path: str) -> tuple[bytes, str]:
     except FileNotFoundError:
         raise HTTPException(404, "File not found in storage")
     except Exception as e:
-        raise HTTPException(502, f"Storage get failed: {e}")
+        log.error(f"Storage get failed for {path}: {e}")
+        raise HTTPException(502, "Storage read failed. Please try again.")
 
 
 # ── Media library endpoints ──────────────────────────────────────────────────

@@ -442,7 +442,11 @@ export default function ProductDetail() {
       {/* ── The immersive story: specs, benefits, provenance, ritual, care,
              reviews, consultation, policies, FAQ and related pieces. Every
              section is data-driven, so it works for all categories. ── */}
-      <ProductStory p={p} reviews={reviews} />
+      <ProductStory
+        p={p}
+        reviews={reviews}
+        onReviewAdded={(r) => setReviews((cur) => [r, ...cur])}
+      />
 
       {/* Sticky buy bar — mobile only */}
       <div className="lg:hidden fixed bottom-0 inset-x-0 z-40 sticky-rise bg-ivory/95 backdrop-blur border-t border-gold/40">

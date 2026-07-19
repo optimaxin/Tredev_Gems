@@ -59,6 +59,15 @@ api.interceptors.response.use((resp) => {
   return resp;
 });
 
+// Resolve a stored image reference to a browser-usable src. External images are
+// saved as absolute URLs (used as-is); user uploads come back as relative
+// backend paths like "/api/media/file/…" that need the backend origin prepended.
+export const mediaSrc = (ref) => {
+  if (!ref) return "";
+  if (/^https?:\/\//i.test(ref) || ref.startsWith("data:")) return ref;
+  return `${process.env.REACT_APP_BACKEND_URL || ""}${ref}`;
+};
+
 export const formatINR = (paise) => {
   if (paise == null) return "—";
   const rupees = Math.round(paise) / 100;
