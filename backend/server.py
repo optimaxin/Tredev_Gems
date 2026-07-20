@@ -5447,6 +5447,8 @@ async def admin_events_create(body: EventIn, user_id: str = Depends(require_admi
                 show_in_strip, show_in_section, created_by)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8::citext,$9,$10,$11,$12,$13,$14,$15::uuid)""",
         eid, *_event_args(body), user_id)
+    await audit_log(user_id, "event.create", str(eid),
+                    {"title": body.title, "active": body.active})
     return await db.fetch_one(_EVENT_SELECT + " WHERE e.id = $1::uuid", str(eid))
 
 
@@ -5463,15 +5465,19 @@ async def admin_events_update(event_id: str, body: EventIn, user_id: str = Depen
         event_id, *_event_args(body), user_id)
     if not got:
         raise HTTPException(404, "Event not found")
+    await audit_log(user_id, "event.update", event_id,
+                    {"title": body.title, "active": body.active})
     return await db.fetch_one(_EVENT_SELECT + " WHERE e.id = $1::uuid", event_id)
 
 
 @api.delete("/admin/events/{event_id}")
-async def admin_events_delete(event_id: str, _: str = Depends(require_admin)):
+async def admin_events_delete(event_id: str, actor: str = Depends(require_admin)):
+    title = await db.fetch_val("SELECT title FROM events WHERE id = $1::uuid", event_id)
     got = await db.fetch_val(
         "DELETE FROM events WHERE id = $1::uuid RETURNING id::text", event_id)
     if not got:
         raise HTTPException(404, "Event not found")
+    await audit_log(actor, "event.delete", event_id, {"title": title})
     return {"ok": True}
 
 
