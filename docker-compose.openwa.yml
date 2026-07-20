@@ -1,0 +1,45 @@
+# OpenWA gateway for Tredev Gems — WhatsApp send/receive, campaigns, support inbox.
+#
+# Deliberately LEAN compared to the upstream docker-compose.yml:
+#   * no docker-socket-proxy   — upstream mounts /var/run/docker.sock so OpenWA can spawn
+#                                its own Postgres/Redis/MinIO. Render gives no socket
+#                                access, so we never use that path.
+#   * no builtin datastores    — SQLite + local storage (POSTGRES_BUILTIN/REDIS_BUILTIN/
+#                                MINIO_BUILTIN all false, which are already the defaults).
+#   * ENGINE_TYPE=baileys      — a WebSocket client with NO Chromium. whatsapp-web.js runs
+#                                a full Chromium per session (upstream sets mem_limit 2g),
+#                                which does not fit a small Render instance.
+#
+# The gateway is bound to 127.0.0.1 ONLY. It must never be publicly reachable — the API
+# key travels in a header, and anyone who reaches it can send messages as your number.
+# Tredev's FastAPI backend talks to it server-to-server.
+#
+#   docker compose -f docker-compose.openwa.yml up -d --build
+#   docker compose -f docker-compose.openwa.yml logs -f openwa
+#
+services:
+  openwa:
+    build:
+      context: ./services/openwa
+      dockerfile: Dockerfile
+    container_name: tredev-openwa
+    restart: unless-stopped
+    env_file:
+      - ./services/openwa.env
+    ports:
+      # 127.0.0.1 prefix is load-bearing: without it Docker publishes on 0.0.0.0.
+      - '127.0.0.1:2785:2785'
+    volumes:
+      # WhatsApp auth state lives here. Lose this volume and the number must be
+      # re-paired by QR — on Render this must be a persistent disk.
+      - openwa-data:/app/data
+    stop_grace_period: 45s
+    healthcheck:
+      test: ['CMD-SHELL', 'node -e "fetch(\"http://127.0.0.1:2785/api/health\").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+volumes:
+  openwa-data:

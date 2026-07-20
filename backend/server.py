@@ -34,6 +34,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 from cryptography.hazmat.primitives import serialization
 from dotenv import load_dotenv
 from fastapi import APIRouter, Cookie, Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi.responses import RedirectResponse
 from fastapi.responses import Response as FastAPIResponse
 
 import asyncpg
@@ -41,6 +42,7 @@ from decimal import Decimal
 
 import db  # Postgres/Supabase access layer — see backend/MIGRATION.md
 import storage_sb  # Supabase Storage — replaces the Emergent object store
+import wa_openwa  # OpenWA gateway — two-way WhatsApp (send/receive/campaigns)
 from pydantic import BaseModel, EmailStr, Field
 from starlette.middleware.cors import CORSMiddleware
 from collections import defaultdict, deque
@@ -413,6 +415,9 @@ ALL_PERMISSIONS = [
     "products", "inventory", "certificates", "orders",
     "categories", "astrologers", "consultations", "queries",
     "content", "taxonomy",
+    # Reading the support inbox exposes customer conversations, so it is its own
+    # permission rather than being folded into a broader one.
+    "whatsapp",
 ]
 
 
@@ -5348,16 +5353,24 @@ async def admin_media_delete(media_id: str, actor: str = Depends(require_admin))
 
 @api.get("/media/file/{path:path}")
 async def media_serve(path: str):
-    """Public passthrough — image tags fetch here. Streams from storage.
+    """Image tags fetch here. Redirects the browser straight to Supabase's storage
+    CDN with a signed URL, so the (potentially large) bytes never pass through this
+    backend — which is what made every image slow. We only issue a tiny redirect.
 
-    Object keys are content-unique (uuid), so a given URL's bytes never change:
-    cache them for a year and mark immutable so browsers/CDNs stop re-fetching on
-    every page view. (Deletes soft-delete the DB row, not the object, so a still-
-    referenced URL keeps resolving.)"""
-    data, ct = await _storage_get(path)
-    return FastAPIResponse(content=data, media_type=ct, headers={
-        "Cache-Control": "public, max-age=31536000, immutable",
-    })
+    Object keys are content-unique (uuid), so a URL's bytes never change; the
+    redirect itself is cacheable for a day, and the signed target is valid a week.
+    Falls back to proxying the bytes if signing is unavailable."""
+    try:
+        signed = await storage_sb.sign(path, 604800)  # 7 days
+        return RedirectResponse(signed, status_code=307, headers={
+            "Cache-Control": "public, max-age=86400",  # cache the redirect for a day
+        })
+    except Exception as e:  # noqa: BLE001 — any signing failure falls back to proxying
+        log.warning("media sign failed, proxying %s: %s", path, e)
+        data, ct = await _storage_get(path)
+        return FastAPIResponse(content=data, media_type=ct, headers={
+            "Cache-Control": "public, max-age=31536000, immutable",
+        })
 
 
 # ── Site assets (slot → media) ───────────────────────────────────────────────
@@ -5497,6 +5510,346 @@ async def admin_events_delete(event_id: str, actor: str = Depends(require_admin)
         raise HTTPException(404, "Event not found")
     await audit_log(actor, "event.delete", event_id, {"title": title})
     return {"ok": True}
+
+
+# ── OpenWA gateway: two-way WhatsApp ─────────────────────────────────────────
+# MIRRORING POLICY (deliberate, privacy-driven)
+# The connected number is a real WhatsApp account whose chat list also contains the
+# operator's personal and family conversations. Storing "every message" verbatim would
+# copy those into Supabase, where any staff member holding the `whatsapp` permission
+# could read them. So a chat is mirrored ONLY when:
+#     * it is not a group, AND
+#     * its number matches a Tredev user (users.phone)
+# Everything else is delivered, acted on, and dropped — never written to the DB.
+# _wa_should_mirror() is the single place to change this rule.
+
+async def _wa_should_mirror(chat_id: str) -> Optional[str]:
+    """Return the Tredev user_id this chat belongs to, or None if it must not be stored."""
+    if wa_openwa.is_group(chat_id):
+        return None
+    phone = wa_openwa.phone_from_chat_id(chat_id)
+    if not phone:
+        return None
+    return await db.fetch_val(
+        "SELECT id::text FROM users WHERE phone = $1 AND deleted_at IS NULL", phone)
+
+
+async def _wa_upsert_chat(session_id: str, chat_id: str, user_id: str,
+                          display_name: Optional[str] = None,
+                          preview: Optional[str] = None,
+                          ts: Optional[datetime] = None) -> str:
+    """Create or refresh the conversation row, returning its uuid.
+
+    Deliberately does NOT touch unread_count. OpenWA retries webhook deliveries, and
+    this upsert runs on every retry — bumping the badge here double-counts a message
+    that the (idempotent) insert then discards. The caller increments unread only
+    when a row was actually inserted.
+    """
+    return await db.fetch_val(
+        """INSERT INTO wa_chats (session_id, chat_id, phone, display_name, is_group,
+                                 user_id, last_message_at, last_message_preview)
+           VALUES ($1,$2,$3,$4,false,$5::uuid,$6,$7)
+           ON CONFLICT (session_id, chat_id) DO UPDATE
+              SET display_name         = COALESCE(EXCLUDED.display_name, wa_chats.display_name),
+                  last_message_at      = GREATEST(COALESCE(EXCLUDED.last_message_at, wa_chats.last_message_at),
+                                                  COALESCE(wa_chats.last_message_at, EXCLUDED.last_message_at)),
+                  last_message_preview = COALESCE(EXCLUDED.last_message_preview, wa_chats.last_message_preview),
+                  user_id              = COALESCE(wa_chats.user_id, EXCLUDED.user_id),
+                  updated_at           = now()
+        RETURNING id::text""",
+        session_id, chat_id, wa_openwa.phone_from_chat_id(chat_id), display_name,
+        user_id, ts or now(), (preview or "")[:200])
+
+
+async def _wa_store_message(*, session_id: str, chat_row_id: str, wa_message_id: str,
+                            direction: str, body_text: str = "", msg_type: str = "text",
+                            from_phone: Optional[str] = None, to_phone: Optional[str] = None,
+                            status: str = "delivered", source: str = "support",
+                            sent_by_user_id: Optional[str] = None,
+                            campaign_id: Optional[str] = None,
+                            media_url: Optional[str] = None,
+                            raw: Optional[dict] = None,
+                            ts: Optional[datetime] = None) -> Optional[str]:
+    """Insert one message. ON CONFLICT DO NOTHING on (session_id, wa_message_id) makes
+    this idempotent — OpenWA retries webhook deliveries, so the same message can arrive
+    several times and must not duplicate."""
+    return await db.fetch_val(
+        """INSERT INTO wa_messages (chat_id, session_id, wa_message_id, direction,
+                                    from_phone, to_phone, msg_type, body, media_url,
+                                    status, sent_by_user_id, source, campaign_id, raw,
+                                    wa_timestamp)
+           VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::uuid,$12,$13::uuid,$14,$15)
+           ON CONFLICT (session_id, wa_message_id) DO NOTHING
+        RETURNING id::text""",
+        chat_row_id, session_id, wa_message_id, direction, from_phone, to_phone,
+        msg_type, body_text, media_url, status, sent_by_user_id, source, campaign_id,
+        raw or {}, ts or now())
+
+
+def _wa_event_ts(payload: dict) -> datetime:
+    """WhatsApp timestamps arrive as unix seconds (sometimes ms). Fall back to now()."""
+    t = payload.get("timestamp") or payload.get("t")
+    try:
+        t = float(t)
+        if t > 1e11:      # milliseconds
+            t = t / 1000.0
+        return datetime.fromtimestamp(t, tz=timezone.utc)
+    except (TypeError, ValueError):
+        return now()
+
+
+@api.post("/wa/openwa/webhook")
+async def openwa_webhook(request: Request):
+    """Inbound events from the OpenWA gateway.
+
+    Verified with HMAC-SHA256 over the raw body (X-OpenWA-Signature: sha256=<hex>) —
+    the same scheme as the Meta webhook above. Always returns 200 on a verified
+    payload: a non-2xx makes OpenWA retry, and a message we deliberately did not
+    mirror is not a delivery failure.
+    """
+    raw = await request.body()
+    if not wa_openwa.verify_signature(raw, request.headers.get("x-openwa-signature")):
+        log.warning("OpenWA webhook rejected: bad signature")
+        raise HTTPException(401, "Invalid signature")
+    try:
+        body = json.loads(raw or b"{}")
+    except ValueError:
+        raise HTTPException(400, "Malformed payload")
+
+    event = body.get("event") or request.headers.get("x-openwa-event") or ""
+    payload = body.get("payload") or {}
+    session_id = body.get("sessionId") or wa_openwa.SESSION_ID
+
+    if event not in ("message.received", "message.sent"):
+        # ack/failed/session events are useful for status but carry no new content.
+        return {"ok": True, "ignored": event}
+
+    chat_id = payload.get("chatId") or payload.get("from") or payload.get("to") or ""
+    if not chat_id:
+        return {"ok": True, "ignored": "no chatId"}
+
+    user_id = await _wa_should_mirror(chat_id)
+    if not user_id:
+        # Not a customer conversation (or a group) — deliberately not stored.
+        return {"ok": True, "stored": False}
+
+    inbound = event == "message.received"
+    phone = wa_openwa.phone_from_chat_id(chat_id)
+    text = payload.get("body") or payload.get("text") or ""
+    chat_row_id = await _wa_upsert_chat(
+        session_id, chat_id, user_id,
+        display_name=payload.get("pushName") or payload.get("notifyName"),
+        preview=text, ts=_wa_event_ts(payload))
+
+    inserted = await _wa_store_message(
+        session_id=session_id, chat_row_id=chat_row_id,
+        wa_message_id=payload.get("id") or payload.get("messageId") or uid("wa_"),
+        direction="in" if inbound else "out",
+        body_text=text, msg_type=payload.get("type") or "text",
+        from_phone=phone if inbound else None,
+        to_phone=None if inbound else phone,
+        status="delivered" if inbound else "sent",
+        source="support", media_url=payload.get("mediaUrl"),
+        raw=payload, ts=_wa_event_ts(payload))
+
+    # Only a genuinely new inbound message raises the badge. `inserted` is None when
+    # ON CONFLICT DO NOTHING swallowed a retry, which is exactly when we must not count.
+    if inserted and inbound:
+        await db.execute(
+            "UPDATE wa_chats SET unread_count = unread_count + 1, updated_at = now() "
+            "WHERE id = $1::uuid", chat_row_id)
+    return {"ok": True, "stored": bool(inserted)}
+
+
+# ── Admin: WhatsApp inbox, campaigns, session ────────────────────────────────
+class WaSendIn(BaseModel):
+    chat_id: Optional[str] = None   # either an explicit chat id…
+    phone: Optional[str] = None     # …or a phone number we convert
+    text: str = Field(min_length=1, max_length=4096)
+
+
+class WaCampaignIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    body: str = Field(min_length=1, max_length=4096)
+    # Explicit recipients, or None to target every opted-in user with a verified phone.
+    user_ids: Optional[List[str]] = None
+
+
+@api.get("/admin/whatsapp/status")
+async def wa_admin_status(_: str = Depends(require_perm("whatsapp"))):
+    """Gateway + session health for the admin panel header."""
+    if not wa_openwa.configured():
+        return {"configured": False, "status": "not_configured"}
+    try:
+        s = await wa_openwa.session_status()
+    except wa_openwa.OpenWAError as e:
+        log.warning(f"OpenWA status failed: {e}")
+        return {"configured": True, "status": "unreachable"}
+    return {"configured": True, "status": s.get("status"), "phone": s.get("phone"),
+            "connected_at": s.get("connectedAt"), "last_error": s.get("lastError")}
+
+
+@api.get("/admin/whatsapp/chats")
+async def wa_admin_chats(_: str = Depends(require_perm("whatsapp")),
+                         limit: int = 100, q: Optional[str] = None):
+    """Support inbox. Reads OUR mirror, not the gateway — so it only ever shows
+    customer conversations (see the mirroring policy above), and stays fast."""
+    limit = max(1, min(limit, 200))
+    where, args = ["c.is_group = false"], []
+
+    def _arg(v):
+        args.append(v)
+        return f"${len(args)}"
+
+    if q:
+        a = _arg(f"%{q}%")
+        where.append(f"(c.display_name ILIKE {a} OR c.phone ILIKE {a} "
+                     f"OR u.full_name ILIKE {a} OR c.last_message_preview ILIKE {a})")
+    return await db.fetch_all(
+        f"""SELECT c.id::text AS chat_row_id, c.chat_id, c.phone, c.display_name,
+                   c.unread_count, c.last_message_at, c.last_message_preview,
+                   c.user_id::text AS user_id, COALESCE(u.full_name, '') AS customer_name
+              FROM wa_chats c
+              LEFT JOIN users u ON u.id = c.user_id
+             WHERE {' AND '.join(where)}
+             ORDER BY c.last_message_at DESC NULLS LAST
+             LIMIT {_arg(limit)}""", *args)
+
+
+@api.get("/admin/whatsapp/chats/{chat_row_id}/messages")
+async def wa_admin_messages(chat_row_id: str, _: str = Depends(require_perm("whatsapp")),
+                            limit: int = 100):
+    limit = max(1, min(limit, 500))
+    try:
+        uuid.UUID(chat_row_id)
+    except ValueError:
+        raise HTTPException(400, "Invalid chat id")
+    return await db.fetch_all(
+        """SELECT m.id::text AS message_id, m.direction, m.body, m.msg_type, m.media_url,
+                  m.status, m.source, m.wa_timestamp, m.error,
+                  COALESCE(s.full_name, '') AS sent_by_name
+             FROM wa_messages m
+             LEFT JOIN users s ON s.id = m.sent_by_user_id
+            WHERE m.chat_id = $1::uuid
+            ORDER BY m.wa_timestamp ASC
+            LIMIT $2""", chat_row_id, limit)
+
+
+@api.post("/admin/whatsapp/send")
+async def wa_admin_send(body: WaSendIn, actor: str = Depends(require_perm("whatsapp"))):
+    """Staff reply. Sends via the gateway, then mirrors our own outbound copy so the
+    thread reads correctly even before the message.sent webhook lands."""
+    if not wa_openwa.configured():
+        raise HTTPException(503, "WhatsApp gateway is not configured")
+    chat_id = body.chat_id or (wa_openwa.to_chat_id(normalize_phone(body.phone)) if body.phone else None)
+    if not chat_id:
+        raise HTTPException(400, "chat_id or phone is required")
+    try:
+        res = await wa_openwa.send_text(chat_id, body.text)
+    except wa_openwa.OpenWAError as e:
+        log.warning(f"OpenWA send failed: {e}")
+        raise HTTPException(502, "Could not send the message. Please try again.")
+
+    user_id = await _wa_should_mirror(chat_id)
+    if user_id:
+        chat_row_id = await _wa_upsert_chat(
+            wa_openwa.SESSION_ID, chat_id, user_id, preview=body.text, ts=now())
+        await _wa_store_message(
+            session_id=wa_openwa.SESSION_ID, chat_row_id=chat_row_id,
+            wa_message_id=res.get("messageId") or uid("wa_"),
+            direction="out", body_text=body.text,
+            to_phone=wa_openwa.phone_from_chat_id(chat_id),
+            status="sent", source="support", sent_by_user_id=actor, raw=res)
+    await audit_log(actor, "whatsapp.send", chat_id, {"chars": len(body.text)})
+    return {"ok": True, "message_id": res.get("messageId"), "stored": bool(user_id)}
+
+
+@api.post("/admin/whatsapp/chats/{chat_row_id}/read")
+async def wa_admin_mark_read(chat_row_id: str, _: str = Depends(require_perm("whatsapp"))):
+    chat_id = await db.fetch_val(
+        "UPDATE wa_chats SET unread_count = 0, updated_at = now() "
+        "WHERE id = $1::uuid RETURNING chat_id", chat_row_id)
+    if not chat_id:
+        raise HTTPException(404, "Chat not found")
+    try:
+        await wa_openwa.mark_read(chat_id)
+    except wa_openwa.OpenWAError:
+        pass  # local state is what the inbox renders; gateway ack is best-effort
+    return {"ok": True}
+
+
+@api.post("/admin/whatsapp/campaigns")
+async def wa_admin_campaign(body: WaCampaignIn, actor: str = Depends(require_perm("whatsapp"))):
+    """Queue a bulk send. OpenWA paces delivery itself — blasting messages back to back
+    is a fast route to a ban, so we hand it the whole list and let it throttle."""
+    if not wa_openwa.configured():
+        raise HTTPException(503, "WhatsApp gateway is not configured")
+    sql = """SELECT u.id::text AS user_id, u.phone
+               FROM users u
+               LEFT JOIN notification_preferences np ON np.user_id = u.id
+              WHERE u.deleted_at IS NULL AND u.phone IS NOT NULL
+                AND u.phone_verified_at IS NOT NULL
+                AND COALESCE((np.whatsapp ->> 'optin')::boolean, true)"""
+    args: list = []
+    if body.user_ids:
+        args.append(body.user_ids)
+        sql += f" AND u.id = ANY(${len(args)}::uuid[])"
+    recipients = await db.fetch_all(sql + " LIMIT 2000", *args)
+    if not recipients:
+        raise HTTPException(400, "No opted-in recipients with a verified phone")
+
+    chat_ids = [wa_openwa.to_chat_id(r["phone"]) for r in recipients]
+    try:
+        res = await wa_openwa.send_bulk(chat_ids, body.body)
+    except wa_openwa.OpenWAError as e:
+        log.warning(f"OpenWA bulk send failed: {e}")
+        raise HTTPException(502, "Could not queue the campaign. Please try again.")
+
+    cid = await db.fetch_val(
+        """INSERT INTO wa_campaigns (name, session_id, batch_id, body, recipient_count,
+                                     status, created_by)
+           VALUES ($1,$2,$3,$4,$5,'running',$6::uuid) RETURNING id::text""",
+        body.name, wa_openwa.SESSION_ID, res.get("batchId"), body.body,
+        len(chat_ids), actor)
+    await audit_log(actor, "whatsapp.campaign.start", cid,
+                    {"name": body.name, "recipients": len(chat_ids)})
+    return {"ok": True, "campaign_id": cid, "batch_id": res.get("batchId"),
+            "recipients": len(chat_ids)}
+
+
+@api.get("/admin/whatsapp/campaigns")
+async def wa_admin_campaign_list(_: str = Depends(require_perm("whatsapp")), limit: int = 50):
+    return await db.fetch_all(
+        """SELECT c.id::text AS campaign_id, c.name, c.batch_id, c.body, c.status,
+                  c.recipient_count, c.sent_count, c.failed_count, c.created_at,
+                  c.completed_at, COALESCE(u.full_name, '') AS created_by_name
+             FROM wa_campaigns c
+             LEFT JOIN users u ON u.id = c.created_by
+            ORDER BY c.created_at DESC LIMIT $1""", max(1, min(limit, 200)))
+
+
+@api.post("/admin/whatsapp/campaigns/{campaign_id}/refresh")
+async def wa_admin_campaign_refresh(campaign_id: str,
+                                    _: str = Depends(require_perm("whatsapp"))):
+    """Poll the gateway for batch progress and fold it into our row."""
+    row = await db.fetch_one(
+        "SELECT batch_id, status FROM wa_campaigns WHERE id = $1::uuid", campaign_id)
+    if not row:
+        raise HTTPException(404, "Campaign not found")
+    if not row["batch_id"]:
+        return {"ok": True, "status": row["status"]}
+    try:
+        b = await wa_openwa.batch_status(row["batch_id"])
+    except wa_openwa.OpenWAError:
+        raise HTTPException(502, "Could not read campaign progress")
+    sent, failed = b.get("sent") or 0, b.get("failed") or 0
+    status = (b.get("status") or row["status"]).lower()
+    done = status in ("completed", "cancelled", "failed")
+    await db.execute(
+        """UPDATE wa_campaigns SET sent_count=$2, failed_count=$3, status=$4,
+               completed_at = CASE WHEN $5 THEN now() ELSE completed_at END
+            WHERE id=$1::uuid""", campaign_id, sent, failed, status, done)
+    return {"ok": True, "status": status, "sent": sent, "failed": failed}
 
 
 # ── Router wiring ─────────────────────────────────────────────────────────────

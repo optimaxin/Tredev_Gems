@@ -86,3 +86,30 @@ async def delete(path: str) -> None:
                             headers=_headers())
     if r.status_code >= 400 and r.status_code != 404:
         log.warning(f"Supabase storage delete failed [{r.status_code}]: {r.text[:200]}")
+
+
+async def sign(path: str, expires_in: int = 604800) -> str:
+    """A time-limited, direct-to-Supabase URL for a private object.
+
+    Lets the browser fetch bytes straight from Supabase's storage/CDN instead of
+    having this backend download and re-stream them (the slow path). The bucket
+    stays private — the URL carries a signed token that expires after `expires_in`
+    seconds (default 7 days).
+    """
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.post(
+            f"{_base_url()}/object/sign/{BUCKET}/{path}",
+            json={"expiresIn": expires_in},
+            headers=_headers({"Content-Type": "application/json"}),
+        )
+    if r.status_code >= 400:
+        raise RuntimeError(f"Supabase storage sign failed [{r.status_code}]: {r.text[:200]}")
+    body = r.json()
+    signed = body.get("signedURL") or body.get("signedUrl") or body.get("url")
+    if not signed:
+        raise RuntimeError("Supabase sign returned no signedURL")
+    base = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    # signedURL is relative, e.g. "/object/sign/media/<path>?token=..."
+    if signed.startswith("http"):
+        return signed
+    return f"{base}/storage/v1{signed if signed.startswith('/') else '/' + signed}"
