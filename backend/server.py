@@ -1986,6 +1986,8 @@ async def admin_create_product(p: ProductIn, user_id: str = Depends(require_admi
     except asyncpg.exceptions.UniqueViolationError as e:
         log.warning(f"product create unique violation: {e}")
         raise HTTPException(400, "A product with that slug already exists")
+    await audit_log(user_id, "product.create", str(pid),
+                    {"name": p.name, "slug": p.slug, "category": p.category, "price": p.price})
     return _shape_product(await db.fetch_one(
         _PRODUCT_SELECT + " AND p.id = $1::uuid", str(pid)))
 
@@ -2012,6 +2014,8 @@ async def admin_create_unit(u: UnitIn, user_id: str = Depends(require_admin)):
     except asyncpg.exceptions.UniqueViolationError as e:
         log.warning(f"unit create unique violation: {e}")
         raise HTTPException(400, "A unit with that serial already exists")
+    await audit_log(user_id, "unit.create", str(unit_id),
+                    {"serial": u.serial, "product_id": u.product_id})
     return {"unit_id": str(unit_id), "product_id": u.product_id, "serial": u.serial,
             "weight_carat": u.weight_carat, "origin": u.origin, "notes": u.notes,
             "status": "available", "created_at": iso(now())}
@@ -2037,6 +2041,8 @@ async def admin_create_units_bulk(b: BulkUnitsIn, user_id: str = Depends(require
         created = await _generate_units(
             conn, prod["product_id"], prod["slug"], prod["category_key"],
             prod["variant_id"], prod["base_price"], b.quantity)
+    await audit_log(user_id, "unit.bulk_create", b.product_id,
+                    {"slug": prod["slug"], "count": len(created)})
     return {"product_id": b.product_id, "count": len(created), "units": created}
 
 
@@ -2156,6 +2162,9 @@ async def admin_issue_certificate(body: CertificateIssueIn, user_id: str = Depen
         raise HTTPException(404, "Unit not found")
     async with db.transaction() as conn:
         cert_id = await _issue_certificate_tx(conn, unit, body, user_id)
+    await audit_log(user_id, "certificate.issue", str(cert_id),
+                    {"serial": unit["serial"], "product_name": unit.get("product_name"),
+                     "lab": body.lab_name, "temple": body.temple_name})
     return _shape_cert(await db.fetch_one(
         _CERT_SELECT + " WHERE ac.id = $1::uuid", cert_id))
 
@@ -3464,11 +3473,12 @@ async def admin_list_reviews(_: str = Depends(require_admin), limit: int = 500):
 
 
 @api.delete("/admin/reviews/{review_id}")
-async def admin_delete_review(review_id: str, _: str = Depends(require_admin)):
+async def admin_delete_review(review_id: str, actor: str = Depends(require_admin)):
     got = await db.fetch_val(
         "DELETE FROM reviews WHERE id = $1::uuid RETURNING id", review_id)
     if not got:
         raise HTTPException(404, "Review not found")
+    await audit_log(actor, "review.delete", review_id)
     return {"ok": True}
 
 
@@ -3986,12 +3996,105 @@ async def admin_purge_orders(actor: str = Depends(require_owner)):
     return {"ok": True, "deleted": n}
 
 
+# The audit trail powers the admin "Activity Log" page: who (owner/staff) did what, to
+# what, and when. Owner-only — it exposes every admin's actions, so staff must not read it.
+_AUDIT_SELECT = """
+      FROM admin_events e
+      LEFT JOIN users u ON u.id = e.actor_id
+      LEFT JOIN LATERAL (
+            SELECT ro.name
+              FROM user_roles ur JOIN roles ro ON ro.id = ur.role_id
+             WHERE ur.user_id = u.id
+             ORDER BY CASE ro.name WHEN 'admin' THEN 0 WHEN 'staff' THEN 1 ELSE 2 END
+             LIMIT 1
+      ) r ON true
+"""
+
+
 @api.get("/admin/audit-log")
-async def admin_audit_log(_: str = Depends(require_owner), limit: int = 200):
-    return await db.fetch_all(
-        """SELECT id::text AS event_id, actor_id::text AS actor_id, action,
-                  COALESCE(target,'') AS target, meta, created_at AS at
-             FROM admin_events ORDER BY created_at DESC LIMIT $1""", limit)
+async def admin_audit_log(
+    _: str = Depends(require_owner),
+    limit: int = 100,
+    offset: int = 0,
+    q: Optional[str] = None,
+    action: Optional[str] = None,
+    actor_id: Optional[str] = None,
+    date_from: Optional[str] = None,   # ISO date/datetime, inclusive
+    date_to: Optional[str] = None,     # ISO date/datetime, inclusive (whole day if date-only)
+):
+    """Paginated, filterable admin activity trail. Returns {items, total}."""
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
+    where: list[str] = []
+    args: list = []
+
+    def _arg(v):
+        args.append(v)
+        return f"${len(args)}"
+
+    if action:
+        where.append(f"e.action = {_arg(action)}")
+    if actor_id:
+        where.append(f"e.actor_id = {_arg(actor_id)}::uuid")
+    if date_from:
+        where.append(f"e.created_at >= {_arg(date_from)}::timestamptz")
+    if date_to:
+        # A bare date ("2026-07-20") means "through the end of that day".
+        a = _arg(date_to)
+        where.append(
+            f"e.created_at < (CASE WHEN length({a}::text) <= 10"
+            f" THEN ({a}::date + 1)::timestamptz ELSE {a}::timestamptz END)")
+    if q:
+        a = _arg(f"%{q}%")
+        where.append(
+            f"(e.action ILIKE {a} OR e.target ILIKE {a} OR e.meta::text ILIKE {a}"
+            f" OR u.full_name ILIKE {a} OR u.email::text ILIKE {a})")
+
+    clause = (" WHERE " + " AND ".join(where)) if where else ""
+    total = await db.fetch_val(f"SELECT count(*){_AUDIT_SELECT}{clause}", *args)
+    rows = await db.fetch_all(
+        f"""SELECT e.id::text                       AS event_id,
+                   e.actor_id::text                 AS actor_id,
+                   COALESCE(u.full_name, '')        AS actor_name,
+                   COALESCE(u.email::text, '')      AS actor_email,
+                   COALESCE(r.name, '')             AS actor_role_row,
+                   e.action                         AS action,
+                   COALESCE(e.target, '')           AS target,
+                   e.meta                           AS meta,
+                   e.created_at                     AS at
+            {_AUDIT_SELECT}{clause}
+            ORDER BY e.created_at DESC
+            LIMIT {_arg(limit)} OFFSET {_arg(offset)}""", *args)
+
+    items = []
+    for row in rows:
+        d = dict(row)
+        # roles.admin is the app's "owner" — keep the same vocabulary the UI uses.
+        d["actor_role"] = _ROLE_FROM_DB.get(d.pop("actor_role_row", ""), "")
+        if not d["actor_name"]:
+            # Deleted user (actor_id FK is ON DELETE SET NULL) — don't render a blank row.
+            d["actor_name"] = "Deleted user" if d["actor_id"] else "System"
+        items.append(d)
+    return {"items": items, "total": total or 0}
+
+
+@api.get("/admin/audit-log/filters")
+async def admin_audit_log_filters(_: str = Depends(require_owner)):
+    """Distinct actions and actors, for the Activity Log filter dropdowns."""
+    actions = await db.fetch_all(
+        "SELECT DISTINCT action FROM admin_events ORDER BY action")
+    actors = await db.fetch_all(
+        """SELECT DISTINCT e.actor_id::text          AS actor_id,
+                  COALESCE(u.full_name, '')          AS name,
+                  COALESCE(u.email::text, '')        AS email
+             FROM admin_events e
+             LEFT JOIN users u ON u.id = e.actor_id
+            WHERE e.actor_id IS NOT NULL
+            ORDER BY name""")
+    return {
+        "actions": [a["action"] for a in actions],
+        "actors": [dict(a) for a in actors],
+    }
 
 
 @api.post("/admin/inventory/purge")
@@ -4119,7 +4222,7 @@ _PRODUCT_PATCH_COLS = {
 
 
 @api.patch("/admin/products/{product_id}")
-async def admin_update_product(product_id: str, body: ProductUpdateIn, _: str = Depends(require_perm("products"))):
+async def admin_update_product(product_id: str, body: ProductUpdateIn, actor: str = Depends(require_perm("products"))):
     sent = body.model_dump(exclude_unset=True)  # keeps explicit nulls (e.g. clearing the sub)
     updates = {k: v for k, v in sent.items() if v is not None}
     if not sent:
@@ -4164,6 +4267,9 @@ async def admin_update_product(product_id: str, body: ProductUpdateIn, _: str = 
     row = await db.fetch_one(_PRODUCT_SELECT + " AND p.id = $1::uuid", product_id)
     if not row:
         raise HTTPException(404, "Product not found")
+    # Log which fields changed, not the whole product — keeps the trail readable.
+    await audit_log(actor, "product.update", product_id,
+                    {"fields": sorted(sent.keys()), "name": row.get("name")})
     return _shape_product(row)
 
 
@@ -4208,11 +4314,13 @@ async def _purge_product(conn, product_id: str) -> None:
 
 
 @api.delete("/admin/products/{product_id}")
-async def admin_delete_product(product_id: str, _: str = Depends(require_perm("products"))):
+async def admin_delete_product(product_id: str, actor: str = Depends(require_perm("products"))):
     """Remove a product and its inventory. A product that's been ordered can't be
     deleted outright (order history references it), so it's archived and its *unsold*
     stock is cleared — no active product ever leaves sellable inventory behind. A
     product that was never ordered is deleted entirely, freeing its slug."""
+    name = await db.fetch_val(
+        "SELECT title FROM products WHERE id = $1::uuid", product_id)
     async with db.transaction() as conn:
         exists = await conn.fetchval(
             "SELECT 1 FROM products WHERE id=$1::uuid AND deleted_at IS NULL", product_id)
@@ -4232,13 +4340,17 @@ async def admin_delete_product(product_id: str, _: str = Depends(require_perm("p
             await conn.execute(
                 "UPDATE product_variants SET stock_qty=0, is_active=false, updated_at=now() "
                 "WHERE product_id=$1::uuid", product_id)
-            return {"ok": True, "mode": "archived", "units_removed": removed}
-        # Never ordered — remove it and all its inventory outright.
-        all_units = await conn.fetch(
-            "SELECT id::text AS id FROM product_units WHERE product_id=$1::uuid", product_id)
-        removed = await _delete_units(conn, [r["id"] for r in all_units])
-        await _purge_product(conn, product_id)
-        return {"ok": True, "mode": "deleted", "units_removed": removed}
+            mode = "archived"
+        else:
+            # Never ordered — remove it and all its inventory outright.
+            all_units = await conn.fetch(
+                "SELECT id::text AS id FROM product_units WHERE product_id=$1::uuid", product_id)
+            removed = await _delete_units(conn, [r["id"] for r in all_units])
+            await _purge_product(conn, product_id)
+            mode = "deleted"
+    await audit_log(actor, "product.delete", product_id,
+                    {"name": name, "mode": mode, "units_removed": removed})
+    return {"ok": True, "mode": mode, "units_removed": removed}
 
 
 # --- Categories CRUD (perm: categories) ---------------------------------------
@@ -4356,7 +4468,7 @@ def _slugify(s: str) -> str:
 
 
 @api.post("/admin/categories")
-async def admin_create_category(body: CategoryIn, _: str = Depends(require_perm("categories"))):
+async def admin_create_category(body: CategoryIn, actor: str = Depends(require_perm("categories"))):
     slug = _slugify(body.label)
     if not slug:
         raise HTTPException(400, "Label is required")
@@ -4390,11 +4502,13 @@ async def admin_create_category(body: CategoryIn, _: str = Depends(require_perm(
            VALUES ($1,$2::category_key,$3,$4,$5::citext,$6::uuid,$7,$8,true)""",
         cid, ck, body.label, body.hindi, slug, parent_id, body.order,
         _normalize_category_banner(body.banner))
+    await audit_log(actor, "category.create", str(cid),
+                    {"label": body.label, "slug": slug, "parent_id": body.parent_id})
     return next((c for c in await _list_categories() if c["category_id"] == str(cid)), None)
 
 
 @api.patch("/admin/categories/{category_id}")
-async def admin_update_category(category_id: str, body: CategoryUpdateIn, _: str = Depends(require_perm("categories"))):
+async def admin_update_category(category_id: str, body: CategoryUpdateIn, actor: str = Depends(require_perm("categories"))):
     updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
     if not updates:
         raise HTTPException(400, "Nothing to update")
@@ -4419,15 +4533,19 @@ async def admin_update_category(category_id: str, body: CategoryUpdateIn, _: str
         f"WHERE id = ${len(args)}::uuid RETURNING id::text", *args)
     if not got:
         raise HTTPException(404, "Category not found")
+    await audit_log(actor, "category.update", category_id, updates)
     return next((c for c in await _list_categories() if c["category_id"] == category_id), None)
 
 
 @api.delete("/admin/categories/{category_id}")
-async def admin_delete_category(category_id: str, _: str = Depends(require_perm("categories"))):
+async def admin_delete_category(category_id: str, actor: str = Depends(require_perm("categories"))):
     # Deactivate rather than delete: products.category_id references categories.
+    name = await db.fetch_val(
+        "SELECT name FROM categories WHERE id = $1::uuid", category_id)
     await db.execute(
         "UPDATE categories SET is_active=false, updated_at=now() WHERE id=$1::uuid",
         category_id)
+    await audit_log(actor, "category.deactivate", category_id, {"name": name})
     return {"ok": True}
 
 
@@ -4837,7 +4955,7 @@ async def admin_list_consultations(_: str = Depends(require_perm("consultations"
 
 
 @api.patch("/admin/consultations/{booking_id}")
-async def admin_update_consultation(booking_id: str, body: dict, _: str = Depends(require_perm("consultations"))):
+async def admin_update_consultation(booking_id: str, body: dict, actor: str = Depends(require_perm("consultations"))):
     updates = {k: v for k, v in body.items() if k in {"status", "meeting_link", "notes"}}
     if not updates:
         raise HTTPException(400, "Nothing to update")
@@ -4853,12 +4971,13 @@ async def admin_update_consultation(booking_id: str, body: dict, _: str = Depend
         f"RETURNING id::text", *args)
     if not got:
         raise HTTPException(404, "Booking not found")
+    await audit_log(actor, "consultation.update", booking_id, updates)
     return await _load_consultation(booking_id)
 
 
 # --- Order status (perm: orders) ---------------------------------------------
 @api.patch("/admin/orders/{order_id}/status")
-async def admin_update_order_status(order_id: str, body: OrderStatusIn, _: str = Depends(require_perm("orders"))):
+async def admin_update_order_status(order_id: str, body: OrderStatusIn, actor: str = Depends(require_perm("orders"))):
     allowed = {"pending_payment", "paid", "shipped", "delivered", "cancelled", "refunded"}
     if body.status not in allowed:
         raise HTTPException(400, f"Invalid status. Allowed: {sorted(allowed)}")
@@ -4876,6 +4995,8 @@ async def admin_update_order_status(order_id: str, body: OrderStatusIn, _: str =
                VALUES ($1,$2::uuid,$3::order_status,$4::order_status,'admin status change')""",
             uuid.uuid4(), order_id, db.ORDER_STATUS_TO_DB.get(prev["status"], "pending"),
             db.ORDER_STATUS_TO_DB[body.status])
+    await audit_log(actor, "order.status_change", order_id,
+                    {"from": prev["status"], "to": body.status})
     return await _load_order(order_id)
 
 
@@ -4999,6 +5120,8 @@ async def admin_update_query(query_id: str, body: QueryReplyIn, actor: str = Dep
             await conn.execute(
                 """UPDATE queries SET status = $2::query_status, updated_at = now()
                     WHERE id = $1::uuid""", query_id, body.status)
+    await audit_log(actor, "query.update", query_id,
+                    {"status": body.status, "note_added": bool(body.note)})
     return await db.fetch_one(_QUERY_SELECT + " WHERE q.id = $1::uuid", query_id)
 
 
@@ -5088,6 +5211,8 @@ async def admin_promo_broadcast(body: PromoBroadcastIn, user_id: str = Depends(r
                                       created_by)
            VALUES ($1,$2,$3,$4,$5,$6::uuid)""",
         uuid.uuid4(), template, body.body_params, sent, failed, user_id)
+    await audit_log(user_id, "whatsapp.broadcast", template,
+                    {"sent": sent, "failed": failed, "eligible_users": len(users)})
     return {"ok": True, "sent": sent, "failed": failed, "eligible_users": len(users), "provider": _otp_provider()}
 
 
@@ -5158,6 +5283,9 @@ async def admin_media_upload(request: Request, user_id: str = Depends(require_ad
            VALUES ($1,'product','supabase',$2,$3,$4,$5,$6,false,$7::uuid)""",
         media_id, storage_sb.BUCKET, storage_path, ct,
         result.get("size") or len(data), filename, user_id)
+    await audit_log(user_id, "media.upload", str(media_id),
+                    {"filename": filename, "content_type": ct,
+                     "size": result.get("size") or len(data)})
     # _MEDIA_SELECT already carries a WHERE, so extra predicates are ANDed.
     return await db.fetch_one(_MEDIA_SELECT + " AND m.id = $1::uuid", str(media_id))
 
@@ -5185,7 +5313,7 @@ async def admin_media_list(_: str = Depends(require_admin), limit: int = 200):
 
 
 @api.delete("/admin/media/{media_id}")
-async def admin_media_delete(media_id: str, _: str = Depends(require_admin)):
+async def admin_media_delete(media_id: str, actor: str = Depends(require_admin)):
     async with db.transaction() as conn:
         got = await conn.fetchval(
             "UPDATE media_assets SET deleted_at = now() WHERE id = $1::uuid RETURNING id",
@@ -5196,6 +5324,7 @@ async def admin_media_delete(media_id: str, _: str = Depends(require_admin)):
         await conn.execute(
             """UPDATE site_assets SET media_id = NULL, url = NULL, updated_at = now()
                 WHERE media_id = $1::uuid""", media_id)
+    await audit_log(actor, "media.delete", media_id)
     return {"ok": True}
 
 
@@ -5251,6 +5380,8 @@ async def site_assets_put(slot: str, body: SiteAssetPutIn, user_id: str = Depend
               SET media_id = EXCLUDED.media_id, url = EXCLUDED.url,
                   updated_by = EXCLUDED.updated_by, updated_at = now()""",
         slot, media_id, url, user_id)
+    await audit_log(user_id, "site_asset.set" if media_id else "site_asset.clear",
+                    slot, {"media_id": media_id})
     return {"ok": True, "slot": slot, "media_id": media_id, "url": url}
 
 

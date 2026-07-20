@@ -138,6 +138,24 @@ export default function OrderConfirmed() {
           )}
         </motion.div>
 
+        {/* ── Delivery scene — the truck carrying your order onward ── */}
+        <div className="mt-8 relative max-w-xl mx-auto" aria-hidden="true">
+          <div className="deliv" data-testid="confirm-delivery">
+            <div className="deliv__road2" />
+            <div className="deliv__road" />
+            <div className="deliv__truck">
+              <span className="puff" /><span className="puff p2" />
+              <span className="cargo" />
+              <span className="cab" />
+              <span className="wheel a" />
+              <span className="wheel b" />
+            </div>
+          </div>
+          <div className="text-[11px] uppercase tracking-[0.3em] text-gold-soft text-center -mt-1">
+            On its way to you · मार्ग पर
+          </div>
+        </div>
+
         {/* ── Order summary (if it belongs to this signed-in user) ── */}
         {order && (
           <motion.div
