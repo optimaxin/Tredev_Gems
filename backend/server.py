@@ -4025,6 +4025,22 @@ async def admin_audit_log(
     """Paginated, filterable admin activity trail. Returns {items, total}."""
     limit = max(1, min(limit, 500))
     offset = max(0, offset)
+
+    # Validate before these reach SQL: a malformed uuid/date would otherwise surface
+    # as a raw Postgres cast error (500). Filters come from the UI, but the endpoint
+    # must not fall over on a hand-typed query string.
+    if actor_id:
+        try:
+            uuid.UUID(actor_id)
+        except ValueError:
+            raise HTTPException(400, "Invalid actor_id")
+    for _label, _val in (("date_from", date_from), ("date_to", date_to)):
+        if _val:
+            try:
+                datetime.fromisoformat(_val.replace("Z", "+00:00"))
+            except ValueError:
+                raise HTTPException(400, f"Invalid {_label} — expected ISO date or datetime")
+
     where: list[str] = []
     args: list = []
 
@@ -4036,13 +4052,15 @@ async def admin_audit_log(
         where.append(f"e.action = {_arg(action)}")
     if actor_id:
         where.append(f"e.actor_id = {_arg(actor_id)}::uuid")
+    # NOTE: the params are cast ::text first. A bare `$1::timestamptz` makes asyncpg
+    # infer the argument as timestamptz and reject the plain string the client sends.
     if date_from:
-        where.append(f"e.created_at >= {_arg(date_from)}::timestamptz")
+        where.append(f"e.created_at >= {_arg(date_from)}::text::timestamptz")
     if date_to:
         # A bare date ("2026-07-20") means "through the end of that day".
-        a = _arg(date_to)
+        a = f"{_arg(date_to)}::text"
         where.append(
-            f"e.created_at < (CASE WHEN length({a}::text) <= 10"
+            f"e.created_at < (CASE WHEN length({a}) <= 10"
             f" THEN ({a}::date + 1)::timestamptz ELSE {a}::timestamptz END)")
     if q:
         a = _arg(f"%{q}%")

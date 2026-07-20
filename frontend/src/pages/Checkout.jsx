@@ -10,31 +10,43 @@ import OrderTruckButton from "@/components/gemora/OrderTruckButton";
 export default function Checkout() {
   const { cart, refresh, subtotal } = useCart();
   const nav = useNavigate();
-  const [placing, setPlacing] = useState(false);
+  // idle → loading (collecting payment) → delivering (truck plays, then we navigate)
+  const [phase, setPhase] = useState("idle");
   const [form, setForm] = useState({
     shipping_name: "", shipping_phone: "", shipping_address: "",
     shipping_city: "", shipping_state: "", shipping_pincode: "", email: "",
   });
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const total = subtotal + Math.round(subtotal * 0.03);
+  const DELIVER_MS = 4200; // matches the truck animation length
+
+  // Payment is confirmed by here — play the delivery truck, then leave for the
+  // confirmation page. This is the ONLY place the animation starts.
+  const deliverAndGo = async (orderId) => {
+    try { await refresh(); } catch (_) {}
+    setPhase("delivering");
+    await new Promise((r) => setTimeout(r, DELIVER_MS));
+    nav(`/order-confirmed/${orderId}`);
+  };
 
   const place = async (e) => {
     e.preventDefault();
-    setPlacing(true);
+    if (phase !== "idle") return;
+    setPhase("loading"); // "Processing…" while we collect payment — no truck yet
     try {
       const affiliate_ref = getAffiliateRef();
       const { data } = await api.post("/checkout", { ...form, affiliate_ref });
+
+      // Test mode (Razorpay keys not configured on the server): complete server-side.
       if (data.order.mock_payment || !data.razorpay_key_id) {
-        // Complete via mock endpoint (Razorpay keys not configured)
-        const paid = await api.post(`/checkout/mock-pay/${data.order.order_id}`);
-        await refresh();
-        // Let the delivery-truck button finish its run before we leave the page.
-        await new Promise((r) => setTimeout(r, 3600));
+        await api.post(`/checkout/mock-pay/${data.order.order_id}`);
         toast.success("Payment complete (test mode)");
-        nav(`/order-confirmed/${paid.data.order_id}`);
+        await deliverAndGo(data.order.order_id);
         return;
       }
-      // Real Razorpay
+
+      // Real Razorpay — open the checkout to collect payment. The truck only plays
+      // after the payment is verified in the handler below.
       const options = {
         key: data.razorpay_key_id,
         amount: data.order.total,
@@ -45,9 +57,6 @@ export default function Checkout() {
         prefill: { name: form.shipping_name, email: form.email, contact: form.shipping_phone },
         theme: { color: "#722F37" },
         handler: async (rp) => {
-          // Only the verify call itself determines success/failure. Post-success
-          // steps (refresh/nav) must never surface a "failed" toast — the payment
-          // is already done by then.
           try {
             await api.post("/checkout/verify", {
               order_id: data.order.order_id,
@@ -57,25 +66,29 @@ export default function Checkout() {
             });
           } catch (err) {
             toast.error("Payment verification failed");
+            setPhase("idle");
             return;
           }
           toast.success("Payment verified");
-          try { await refresh(); } catch (_) {}
-          nav(`/order-confirmed/${data.order.order_id}`);
+          await deliverAndGo(data.order.order_id); // ← truck plays now, after paying
         },
+        // Buyer closed the Razorpay window without paying — reset the button.
+        modal: { ondismiss: () => setPhase("idle") },
       };
+
+      const openRzp = () => new window.Razorpay(options).open();
       if (!window.Razorpay) {
         const s = document.createElement("script");
         s.src = "https://checkout.razorpay.com/v1/checkout.js";
-        s.onload = () => new window.Razorpay(options).open();
+        s.onload = openRzp;
+        s.onerror = () => { toast.error("Could not load the payment gateway"); setPhase("idle"); };
         document.body.appendChild(s);
       } else {
-        new window.Razorpay(options).open();
+        openRzp();
       }
     } catch (err) {
       toast.error(err.response?.data?.detail || "Checkout failed");
-    } finally {
-      setPlacing(false);
+      setPhase("idle");
     }
   };
 
@@ -132,9 +145,11 @@ export default function Checkout() {
           <div className="mt-6">
             <OrderTruckButton
               type="submit"
-              disabled={placing}
+              state={phase}
+              duration={DELIVER_MS}
               data-testid="checkout-place-order"
               idleLabel="Pay securely"
+              loadingLabel="Processing…"
               successLabel="On its way"
             />
           </div>

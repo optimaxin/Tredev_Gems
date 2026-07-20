@@ -275,6 +275,10 @@ body {
 .otbtn__label--success { color: var(--gold); opacity: 0; transform: translateY(12px); }
 .otbtn__label--success svg { width: 16px; height: 14px; }
 .otbtn__label--success polyline { fill: none; stroke: var(--gold); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 18; stroke-dashoffset: 18; }
+/* "Processing…" while the payment is being collected (before the truck plays) */
+.otbtn__label--loading { opacity: 0; color: var(--iv); }
+.otbtn.is-loading .otbtn__label--loading { opacity: 1; }
+.otbtn.is-loading .otbtn__label--default { opacity: 0; }
 /* clear the idle text while the truck plays so they never overlap */
 .otbtn.is-playing .otbtn__label--default { opacity: 0; transform: translateY(-12px); }
 .otbtn.is-done .otbtn__label--success { opacity: 1; transform: translateY(0); }
@@ -309,10 +313,12 @@ body {
 .otbtn__lines i:nth-child(3) { top: 12px; left: 3px; width: 13px; }
 .otbtn.is-playing .otbtn__lines { animation: ot-lines var(--ot, 4200ms) ease forwards; }
 
+/* forward travel: the cab faces right, so it enters from the left, parks to load,
+   then drives off to the right — moving the way it faces. */
 @keyframes ot-truck {
-  0%   { transform: translateX(200px); }
+  0%   { transform: translateX(-200px); }
   16%, 42% { transform: translateX(0); }
-  72%, 100% { transform: translateX(-260px); }
+  72%, 100% { transform: translateX(260px); }
 }
 @keyframes ot-wheel { to { transform: rotate(360deg); } }
 @keyframes ot-box {

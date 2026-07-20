@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import {
   ChartBar, Package, Stack, Certificate as CertIcon, Truck, SquaresFour, Sparkle, Calendar,
   ChatCircleDots, UsersFour, ShieldStar, ArrowLeft, WhatsappLogo, Image as ImageIcon, MegaphoneSimple, PaintBrush,
-  ArrowsClockwise, Diamond, Browser, Star, Notebook,
+  ArrowsClockwise, Diamond, Browser, Star, Notebook, ClockCounterClockwise,
 } from "@phosphor-icons/react";
 
 import AdminDashboard from "@/pages/admin/AdminDashboard";
@@ -28,6 +28,7 @@ import AdminMedia from "@/pages/admin/AdminMedia";
 import AdminSiteAssets from "@/pages/admin/AdminSiteAssets";
 import AdminWebsite from "@/pages/admin/AdminWebsite";
 import AdminEvents from "@/pages/admin/AdminEvents";
+import AdminLogs from "@/pages/admin/AdminLogs";
 
 const NAV_ITEMS = [
   { to: "dashboard", label: "Dashboard", Icon: ChartBar, ownerOnly: true },
@@ -49,6 +50,8 @@ const NAV_ITEMS = [
   { to: "broadcast", label: "WhatsApp", Icon: WhatsappLogo, ownerOnly: true },
   { to: "team", label: "Team", Icon: UsersFour, ownerOnly: true },
   { to: "users", label: "Users", Icon: ShieldStar, ownerOnly: true },
+  // Owner-only: it exposes every admin's and staff member's actions.
+  { to: "logs", label: "Activity Log", Icon: ClockCounterClockwise, ownerOnly: true },
 ];
 
 function has(user, item) {
@@ -147,6 +150,7 @@ export default function Admin() {
           <Route path="broadcast" element={<AdminBroadcast />} />
           <Route path="team" element={<AdminTeam />} />
           <Route path="users" element={<AdminUsers />} />
+          <Route path="logs" element={<AdminLogs />} />
           <Route path="*" element={<Navigate to={defaultLanding} replace />} />
         </Routes>
       </main>

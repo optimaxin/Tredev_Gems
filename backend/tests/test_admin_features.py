@@ -170,9 +170,15 @@ class TestAdminOwnerOps:
         assert not any(o.get("order_id") == order_id for o in r_get.json())
 
     def test_11_audit_log_has_entries(self, owner_token):
-        r = requests.get(f"{API}/admin/audit-log", headers=_headers(owner_token), timeout=30)
+        # The endpoint is paginated, so ask for a wide window: this asserts the actions
+        # exist somewhere in the trail, not that they're on the first page.
+        r = requests.get(f"{API}/admin/audit-log?limit=500",
+                         headers=_headers(owner_token), timeout=30)
         assert r.status_code == 200, r.text
-        events = r.json()
+        # The endpoint returns {items, total} (paginated) since the Activity Log page.
+        body = r.json()
+        events = body["items"]
+        assert isinstance(body["total"], int) and body["total"] >= len(events)
         actions = {e["action"] for e in events}
         # after prior tests we should see these:
         expected = {"staff.create", "orders.purge_all", "user.delete", "order.delete"}
