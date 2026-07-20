@@ -11,7 +11,19 @@ const DEFAULT_AMBASSADOR = {
   name: "Shri Raghavendra",
   role: "The face of our faith",
   quote: "Every stone we bless carries the same truth we live by.",
+  primaryCta: { label: "Shop his picks", href: "/shop" },
+  secondaryCta: { label: "Book a consultation", href: "/consultation" },
 };
+
+// Route internally for "/..." links, open external "http(s)://" URLs in a new tab.
+function SmartLink({ href, className, children, ...rest }) {
+  const to = (href || "").trim();
+  if (!to) return null;
+  if (/^https?:\/\//i.test(to)) {
+    return <a href={to} target="_blank" rel="noreferrer" className={className} {...rest}>{children}</a>;
+  }
+  return <Link to={to} className={className} {...rest}>{children}</Link>;
+}
 
 const SLIDES = [
   { src: "/ambassador/ambassador-1.v2.webp", alt: "Brand ambassador offering a blessing" },
@@ -181,19 +193,19 @@ export default function AmbassadorHero() {
           )}
 
           <div className="mt-9 flex flex-wrap gap-4 justify-center lg:justify-start">
-            <Link
-              to="/shop"
+            <SmartLink
+              href={ambassador.primaryCta?.href || "/shop"}
               data-testid="ambassador-cta-shop"
               className="brand-gradient text-ivory px-8 py-4 text-sm uppercase tracking-widest inline-flex items-center gap-2 hover-lift"
             >
-              Shop his picks <ArrowRight size={16} />
-            </Link>
-            <Link
-              to="/consultation"
+              {ambassador.primaryCta?.label || "Shop his picks"} <ArrowRight size={16} />
+            </SmartLink>
+            <SmartLink
+              href={ambassador.secondaryCta?.href || "/consultation"}
               className="border border-gold text-gold px-8 py-4 text-sm uppercase tracking-widest inline-flex items-center gap-2 hover:bg-gold hover:text-maroon-deep transition-colors"
             >
-              <Calendar size={16} weight="duotone" /> Book a consultation
-            </Link>
+              <Calendar size={16} weight="duotone" /> {ambassador.secondaryCta?.label || "Book a consultation"}
+            </SmartLink>
           </div>
 
           {/* slide indicators */}

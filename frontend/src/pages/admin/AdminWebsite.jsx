@@ -5,6 +5,11 @@ import { useAuth } from "@/context/AuthContext";
 import { PlusCircle, Trash, FloppyDisk } from "@phosphor-icons/react";
 
 const inputCls = "w-full gold-line px-3 py-2 outline-none focus:border-maroon text-sm";
+// Legacy marketplaces were plain strings; the editor now wants { name, url } objects.
+const normHome = (h) => (!h ? h : {
+  ...h,
+  marketplaces: (h.marketplaces || []).map((m) => (typeof m === "string" ? { name: m, url: "" } : m)),
+});
 const Section = ({ title, hint, children }) => (
   <section className="gold-line-strong bg-ivory p-6 mb-8">
     <div className="font-serifd text-xl text-maroon-deep">{title}</div>
@@ -31,7 +36,7 @@ export default function AdminWebsite() {
   const [saving, setSaving] = useState("");
 
   useEffect(() => {
-    if (canContent) api.get("/admin/site-content").then((r) => { setAnnounce(r.data.announcement); setFooter(r.data.footer); setHome(r.data.home); }).catch(() => {});
+    if (canContent) api.get("/admin/site-content").then((r) => { setAnnounce(r.data.announcement); setFooter(r.data.footer); setHome(normHome(r.data.home)); }).catch(() => {});
     if (canTax) api.get("/admin/taxonomy").then((r) => { setPurposes(r.data.purposes); setRashi(r.data.rashi); }).catch(() => {});
   }, [canContent, canTax]);
 
@@ -187,6 +192,12 @@ export default function AdminWebsite() {
               {field("Role / subtitle", ["ambassador", "role"])}
               {field("Quote", ["ambassador", "quote"], { area: true, rows: 2 })}
             </div>
+            <div className="mt-4 grid md:grid-cols-2 gap-4 max-w-3xl">
+              {field("Primary button label", ["ambassador", "primaryCta", "label"], { ph: "Shop his picks" })}
+              {field("Primary button link", ["ambassador", "primaryCta", "href"], { ph: "/shop or https://…", cls: " font-mono text-xs" })}
+              {field("Secondary button label", ["ambassador", "secondaryCta", "label"], { ph: "Book a consultation" })}
+              {field("Secondary button link", ["ambassador", "secondaryCta", "href"], { ph: "/consultation or https://…", cls: " font-mono text-xs" })}
+            </div>
           </Section>
 
           <Section title="Hero slides" hint="The rotating headline carousel. In a title, wrap words in *asterisks* for the gold highlight and use a new line for a line break. Slide images are in Site Images (Hero 1–3).">
@@ -237,6 +248,12 @@ export default function AdminWebsite() {
               {field("Body", ["astroBand", "body"], { area: true, cls: " md:col-span-2" })}
               {field("Name plate", ["astroBand", "name"])}
               {field("Name plate role", ["astroBand", "role"])}
+            </div>
+            <div className="mt-4 grid md:grid-cols-2 gap-4 max-w-3xl">
+              {field("Primary button label", ["astroBand", "primaryCta", "label"], { ph: "Book a call" })}
+              {field("Primary button link", ["astroBand", "primaryCta", "href"], { ph: "/consultation or https://…", cls: " font-mono text-xs" })}
+              {field("Secondary button label", ["astroBand", "secondaryCta", "label"], { ph: "Free carat ↔ ratti tool" })}
+              {field("Secondary button link", ["astroBand", "secondaryCta", "href"], { ph: "/tools/carat-ratti or https://…", cls: " font-mono text-xs" })}
             </div>
             <div className="mt-4 max-w-xl">
               <div className="text-xs text-ink-muted mb-1">Feature chips</div>
@@ -324,19 +341,6 @@ export default function AdminWebsite() {
             {addBtn(["testimonials"], { by: "", rating: 5, title: "", body: "" }, "Add testimonial")}
           </Section>
 
-          <Section title="Journal cards" hint="The 'From the Tredev journal' previews. Card images are managed in Site Images (Blog 1–3).">
-            <div className="space-y-2">
-              {(home.posts || []).map((p, i) => (
-                <div key={i} className="flex flex-wrap gap-2 items-end gold-line bg-cream p-3">
-                  <div className="w-32">{field("Tag", ["posts", i, "tag"])}</div>
-                  <div className="flex-1 min-w-[200px]">{field("Title", ["posts", i, "title"])}</div>
-                  {rmBtn(["posts"], i)}
-                </div>
-              ))}
-            </div>
-            {addBtn(["posts"], { title: "", tag: "" }, "Add card")}
-          </Section>
-
           <Section title="Trust badges" hint="The GJEPC / GIA / IGI / BIS row. Abbreviation shows large; name is the small caption.">
             <div className="space-y-2">
               {(home.trustBadges || []).map((b, i) => (
@@ -350,16 +354,17 @@ export default function AdminWebsite() {
             {addBtn(["trustBadges"], { abbr: "", name: "" }, "Add badge")}
           </Section>
 
-          <Section title="Marketplaces" hint="The 'Also available on' row.">
-            <div className="space-y-2 max-w-md">
+          <Section title="Marketplaces" hint="The 'Also available on' row. Add a link to make each marketplace clickable on the site (leave the link blank to show plain text).">
+            <div className="space-y-2">
               {(home.marketplaces || []).map((m, i) => (
-                <div key={i} className="flex gap-2 items-center">
-                  <input value={m || ""} onChange={(e) => upd(["marketplaces", i], e.target.value)} className={inputCls} />
+                <div key={i} className="flex flex-wrap gap-2 items-end gold-line bg-cream p-3">
+                  <div className="w-40">{field("Name", ["marketplaces", i, "name"])}</div>
+                  <div className="flex-1 min-w-[220px]">{field("Link (optional)", ["marketplaces", i, "url"], { ph: "https://…", cls: " font-mono text-xs" })}</div>
                   {rmBtn(["marketplaces"], i)}
                 </div>
               ))}
             </div>
-            {addBtn(["marketplaces"], "", "Add marketplace")}
+            {addBtn(["marketplaces"], { name: "", url: "" }, "Add marketplace")}
           </Section>
 
           <div className="flex justify-end mb-10">{homeSave}</div>

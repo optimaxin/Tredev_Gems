@@ -1334,6 +1334,8 @@ _DEFAULT_HOME = {
         "name": "Shri Raghavendra",
         "role": "The face of our faith",
         "quote": "Every stone we bless carries the same truth we live by.",
+        "primaryCta": {"label": "Shop his picks", "href": "/shop"},
+        "secondaryCta": {"label": "Book a consultation", "href": "/consultation"},
     },
     "hero": [
         {"tag": "Est. Kashi · 2024",
@@ -1367,6 +1369,8 @@ _DEFAULT_HOME = {
         "body": "A human, on a scheduled call — who reads your chart and tells you honestly which stone or rudraksha suits you, or whether you need one at all. No guesswork, no upsell.",
         "name": "Shri Raghavendra", "role": "Founder & Guide",
         "features": ["Scheduled call", "Reads your chart", "Honest advice"],
+        "primaryCta": {"label": "Book a call", "href": "/consultation"},
+        "secondaryCta": {"label": "Free carat ↔ ratti tool", "href": "/tools/carat-ratti"},
     },
     "categories": [
         {"key": "gemstone", "label": "Gemstones", "hindi": "रत्न"},
@@ -1407,9 +1411,9 @@ _DEFAULT_HOME = {
         {"by": "Neha K., Delhi", "rating": 5, "title": "The QR sold me", "body": "I scanned before opening. Seeing the temple video and lab report right there is next-level."},
     ],
     "posts": [
-        {"title": "How to wear a Yellow Sapphire (Pukhraj) — a complete guide", "tag": "Guides"},
-        {"title": "Rudraksha mukhi meanings — 1 through 21", "tag": "Rudraksha"},
-        {"title": "Why Tredev signs every certificate with Ed25519", "tag": "Trust"},
+        {"title": "How to wear a Yellow Sapphire (Pukhraj) — a complete guide", "tag": "Guides", "link": ""},
+        {"title": "Rudraksha mukhi meanings — 1 through 21", "tag": "Rudraksha", "link": ""},
+        {"title": "Why Tredev signs every certificate with Ed25519", "tag": "Trust", "link": ""},
     ],
     "trustBadges": [
         {"abbr": "GJEPC", "name": "Gem & Jewellery Export Promotion Council"},
@@ -1417,7 +1421,12 @@ _DEFAULT_HOME = {
         {"abbr": "IGI", "name": "International Gemological Institute"},
         {"abbr": "BIS", "name": "Bureau of Indian Standards"},
     ],
-    "marketplaces": ["Amazon", "Flipkart", "Myntra", "Blinkit"],
+    "marketplaces": [
+        {"name": "Amazon", "url": ""},
+        {"name": "Flipkart", "url": ""},
+        {"name": "Myntra", "url": ""},
+        {"name": "Blinkit", "url": ""},
+    ],
 }
 _CONTENT_DEFAULTS = {
     "announcement": _DEFAULT_ANNOUNCEMENT, "footer": _DEFAULT_FOOTER,

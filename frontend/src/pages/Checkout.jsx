@@ -4,7 +4,8 @@ import { api, formatINR } from "@/lib/api";
 import { useCart } from "@/context/CartContext";
 import { getAffiliateRef } from "@/components/gemora/AffiliateTracker";
 import { toast } from "sonner";
-import { LockKey, CheckCircle } from "@phosphor-icons/react";
+import { CheckCircle } from "@phosphor-icons/react";
+import OrderTruckButton from "@/components/gemora/OrderTruckButton";
 
 export default function Checkout() {
   const { cart, refresh, subtotal } = useCart();
@@ -26,8 +27,10 @@ export default function Checkout() {
       if (data.order.mock_payment || !data.razorpay_key_id) {
         // Complete via mock endpoint (Razorpay keys not configured)
         const paid = await api.post(`/checkout/mock-pay/${data.order.order_id}`);
-        toast.success("Payment complete (test mode)");
         await refresh();
+        // Let the delivery-truck button finish its run before we leave the page.
+        await new Promise((r) => setTimeout(r, 3600));
+        toast.success("Payment complete (test mode)");
         nav(`/order-confirmed/${paid.data.order_id}`);
         return;
       }
@@ -126,14 +129,15 @@ export default function Checkout() {
             <span>Total</span>
             <span className="font-display text-3xl text-maroon-deep">{formatINR(total)}</span>
           </div>
-          <button
-            type="submit"
-            disabled={placing}
-            data-testid="checkout-place-order"
-            className="mt-6 w-full brand-gradient text-ivory py-4 text-sm uppercase tracking-widest inline-flex items-center justify-center gap-2 hover-lift disabled:opacity-50"
-          >
-            <LockKey size={16} weight="duotone" /> {placing ? "Processing…" : "Pay securely"}
-          </button>
+          <div className="mt-6">
+            <OrderTruckButton
+              type="submit"
+              disabled={placing}
+              data-testid="checkout-place-order"
+              idleLabel="Pay securely"
+              successLabel="On its way"
+            />
+          </div>
           <div className="mt-3 text-[11px] text-ink-muted flex items-center gap-1">
             <CheckCircle size={12} weight="duotone" className="text-verified" /> If Razorpay is not configured on the server, a test-mode payment completes the order.
           </div>

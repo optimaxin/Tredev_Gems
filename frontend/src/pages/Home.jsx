@@ -58,6 +58,8 @@ const DEFAULT_HOME = {
     body: "A human, on a scheduled call — who reads your chart and tells you honestly which stone or rudraksha suits you, or whether you need one at all. No guesswork, no upsell.",
     name: "Shri Raghavendra", role: "Founder & Guide",
     features: ["Scheduled call", "Reads your chart", "Honest advice"],
+    primaryCta: { label: "Book a call", href: "/consultation" },
+    secondaryCta: { label: "Free carat ↔ ratti tool", href: "/tools/carat-ratti" },
   },
   categories: [
     { key: "gemstone", label: "Gemstones", hindi: "रत्न" },
@@ -90,9 +92,9 @@ const DEFAULT_HOME = {
     { by: "Neha K., Delhi", rating: 5, title: "The QR sold me", body: "I scanned before opening. Seeing the temple video and lab report right there is next-level." },
   ],
   posts: [
-    { title: "How to wear a Yellow Sapphire (Pukhraj) — a complete guide", tag: "Guides" },
-    { title: "Rudraksha mukhi meanings — 1 through 21", tag: "Rudraksha" },
-    { title: "Why Tredev signs every certificate with Ed25519", tag: "Trust" },
+    { title: "How to wear a Yellow Sapphire (Pukhraj) — a complete guide", tag: "Guides", link: "" },
+    { title: "Rudraksha mukhi meanings — 1 through 21", tag: "Rudraksha", link: "" },
+    { title: "Why Tredev signs every certificate with Ed25519", tag: "Trust", link: "" },
   ],
   trustBadges: [
     { abbr: "GJEPC", name: "Gem & Jewellery Export Promotion Council" },
@@ -100,8 +102,25 @@ const DEFAULT_HOME = {
     { abbr: "IGI", name: "International Gemological Institute" },
     { abbr: "BIS", name: "Bureau of Indian Standards" },
   ],
-  marketplaces: ["Amazon", "Flipkart", "Myntra", "Blinkit"],
+  marketplaces: [
+    { name: "Amazon", url: "" },
+    { name: "Flipkart", url: "" },
+    { name: "Myntra", url: "" },
+    { name: "Blinkit", url: "" },
+  ],
 };
+
+// A CTA/link that routes internally for "/..." paths and opens external
+// "http(s)://" URLs in a new tab. Renders nothing when href is empty.
+function SmartLink({ href, className, children, ...rest }) {
+  const to = (href || "").trim();
+  if (!to) return null;
+  const external = /^https?:\/\//i.test(to);
+  if (external) {
+    return <a href={to} target="_blank" rel="noreferrer" className={className} {...rest}>{children}</a>;
+  }
+  return <Link to={to} className={className} {...rest}>{children}</Link>;
+}
 
 const HERO_IMGS = [
   HERO_IMG,
@@ -391,12 +410,12 @@ export default function Home() {
               })}
             </div>
             <div className="mt-8 flex flex-wrap gap-3">
-              <Link to="/consultation" className="brand-gradient text-ivory px-7 py-3.5 text-xs uppercase tracking-widest hover-lift flex items-center gap-2">
-                <Calendar size={14} weight="duotone" /> Book a call
-              </Link>
-              <Link to="/tools/carat-ratti" className="border border-gold text-gold px-7 py-3.5 text-xs uppercase tracking-widest hover:bg-gold hover:text-maroon-deep transition-colors">
-                Free carat ↔ ratti tool
-              </Link>
+              <SmartLink href={home.astroBand?.primaryCta?.href || "/consultation"} className="brand-gradient text-ivory px-7 py-3.5 text-xs uppercase tracking-widest hover-lift flex items-center gap-2">
+                <Calendar size={14} weight="duotone" /> {home.astroBand?.primaryCta?.label || "Book a call"}
+              </SmartLink>
+              <SmartLink href={home.astroBand?.secondaryCta?.href || "/tools/carat-ratti"} className="border border-gold text-gold px-7 py-3.5 text-xs uppercase tracking-widest hover:bg-gold hover:text-maroon-deep transition-colors">
+                {home.astroBand?.secondaryCta?.label || "Free carat ↔ ratti tool"}
+              </SmartLink>
             </div>
           </Reveal>
 
@@ -611,18 +630,33 @@ export default function Home() {
           </div>
         </div>
         <div className="grid md:grid-cols-3 gap-6">
-          {posts.map((p) => (
-            <article key={p.title} className="gold-line bg-ivory overflow-hidden hover-lift">
-              <div className="aspect-[16/10] overflow-hidden">
-                <img src={p.img} alt={p.title} className="w-full h-full object-cover img-hover" />
-              </div>
-              <div className="p-5">
-                <div className="text-[10px] uppercase tracking-widest text-gold-soft">{p.tag}</div>
-                <div className="font-serifd text-xl text-ink mt-2 leading-snug">{p.title}</div>
-                <div className="text-xs text-maroon mt-3 inline-flex items-center gap-1">Read the guide <ArrowRight size={10} /></div>
-              </div>
-            </article>
-          ))}
+          {posts.map((p) => {
+            const inner = (
+              <>
+                <div className="aspect-[16/10] overflow-hidden">
+                  <img src={p.img} alt={p.title} className="w-full h-full object-cover img-hover" />
+                </div>
+                <div className="p-5">
+                  <div className="text-[10px] uppercase tracking-widest text-gold-soft">{p.tag}</div>
+                  <div className="font-serifd text-xl text-ink mt-2 leading-snug">{p.title}</div>
+                  {p.link ? (
+                    <div className="text-xs text-maroon mt-3 inline-flex items-center gap-1">Read the guide <ArrowRight size={10} /></div>
+                  ) : (
+                    <div className="text-xs text-ink-muted mt-3">Coming soon</div>
+                  )}
+                </div>
+              </>
+            );
+            return p.link ? (
+              <SmartLink key={p.title} href={p.link} className="gold-line bg-ivory overflow-hidden hover-lift block">
+                {inner}
+              </SmartLink>
+            ) : (
+              <article key={p.title} className="gold-line bg-ivory overflow-hidden">
+                {inner}
+              </article>
+            );
+          })}
         </div>
       </section>
 
@@ -716,12 +750,22 @@ export default function Home() {
         <div className="mx-auto max-w-6xl px-6 lg:px-10 text-center">
           <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">Also available on</div>
           <div className="mt-6 flex items-center justify-center gap-10 flex-wrap text-ink-muted font-display text-2xl">
-            {(home.marketplaces || []).map((m, i) => (
-              <React.Fragment key={m + i}>
-                {i > 0 && <span>·</span>}
-                <span>{m}</span>
-              </React.Fragment>
-            ))}
+            {(home.marketplaces || []).map((m, i) => {
+              // Entries may be plain strings (legacy) or { name, url } objects.
+              const name = typeof m === "string" ? m : m?.name;
+              const url = typeof m === "string" ? "" : (m?.url || "");
+              if (!name) return null;
+              return (
+                <React.Fragment key={name + i}>
+                  {i > 0 && <span>·</span>}
+                  {url ? (
+                    <SmartLink href={url} className="hover:text-maroon transition-colors">{name}</SmartLink>
+                  ) : (
+                    <span>{name}</span>
+                  )}
+                </React.Fragment>
+              );
+            })}
           </div>
         </div>
       </section>
