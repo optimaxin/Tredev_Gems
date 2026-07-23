@@ -7,6 +7,7 @@ import { NAV } from "@/constants/testIds";
 import AnnouncementBar from "@/components/gemora/AnnouncementBar";
 import SearchOverlay from "@/components/gemora/SearchOverlay";
 import CartDrawer from "@/components/gemora/CartDrawer";
+import logo from "@/assets/logo.png";
 
 const MEGA = [
   {
@@ -153,9 +154,16 @@ export default function Header() {
         onMouseLeave={() => setMega(null)}
       >
         <div className="mx-auto max-w-7xl px-6 lg:px-10 pt-3 pb-2 flex items-center gap-6">
-          <Link to="/" className="flex items-baseline gap-2 shrink-0" data-testid={NAV.brand}>
-            <span className={`font-display tracking-tight text-maroon-deep ${scrolled ? "text-2xl" : "text-3xl"}`}>Tredev</span>
-            <span className="font-deva text-xs text-gold-soft hidden sm:inline">रत्न · प्रमाण</span>
+          <Link to="/" className="flex items-center gap-2.5 shrink-0" data-testid={NAV.brand}>
+            <img
+              src={logo}
+              alt="Tredev"
+              className={`rounded-full ring-1 ring-gold/50 object-cover transition-all duration-200 ${scrolled ? "h-9 w-9" : "h-11 w-11"}`}
+            />
+            <span className="flex items-baseline gap-2">
+              <span className={`font-display tracking-tight text-maroon-deep ${scrolled ? "text-2xl" : "text-3xl"}`}>Tredev</span>
+              <span className="font-deva text-xs text-gold-soft hidden sm:inline">रत्न · प्रमाण</span>
+            </span>
           </Link>
 
           <nav className="hidden lg:flex items-center gap-6 ml-4">

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ShieldCheck } from "@phosphor-icons/react";
 import { api } from "@/lib/api";
+import logo from "@/assets/logo.png";
 
 // Built-in defaults — used until the admin-edited footer (Admin → Website) loads, and
 // as a fallback for any field left blank.
@@ -58,7 +59,10 @@ export default function Footer() {
     <footer className="bg-cream border-t border-gold/40 mt-24 relative overflow-hidden geom-bg">
       <div className="mx-auto max-w-7xl px-6 lg:px-10 py-16 grid md:grid-cols-4 gap-10">
         <div>
-          <div className="font-display text-3xl text-maroon-deep">{f.brand}</div>
+          <div className="flex items-center gap-3">
+            <img src={logo} alt={f.brand} className="h-12 w-12 rounded-full ring-1 ring-gold/50 object-cover" />
+            <div className="font-display text-3xl text-maroon-deep">{f.brand}</div>
+          </div>
           {f.devanagari && <div className="font-deva text-gold-soft mt-1">{f.devanagari}</div>}
           {f.description && <p className="text-sm text-ink-soft mt-5 leading-relaxed">{f.description}</p>}
           {f.badge && (

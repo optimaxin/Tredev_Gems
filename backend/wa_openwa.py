@@ -29,6 +29,9 @@ import hashlib
 import hmac
 import logging
 import os
+import re
+import urllib.parse
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -214,6 +217,43 @@ async def register_webhook(url: str, events: Optional[List[str]] = None) -> dict
 async def list_webhooks() -> list:
     r = await _req("GET", f"/api/sessions/{SESSION_ID}/webhooks")
     return r if isinstance(r, list) else (r or {}).get("data", [])
+
+
+# ── Template rendering ───────────────────────────────────────────────────────
+_VAR_RE = re.compile(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}")
+
+
+def render_template(body: str, variables: Dict[str, Any]) -> str:
+    """Substitute {{name}} placeholders. An unknown/missing placeholder renders as
+    empty rather than leaving a literal '{{x}}' in a customer's message. Values are
+    inserted as plain text — WhatsApp has no markup injection to worry about."""
+    def _sub(m):
+        v = variables.get(m.group(1))
+        return "" if v is None else str(v)
+    out = _VAR_RE.sub(_sub, body or "")
+    # Collapse blank lines left by an empty optional line (e.g. a missing calendar link).
+    return re.sub(r"\n{3,}", "\n\n", out).strip()
+
+
+def google_calendar_link(title: str, start: datetime, *, duration_minutes: int = 30,
+                         details: str = "", location: str = "") -> str:
+    """A 'add to calendar' URL that opens Google Calendar with the event pre-filled.
+    Works from any WhatsApp client — WhatsApp itself has no native calendar button,
+    so a tappable link is the portable way to give an 'add to calendar' action."""
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    end = start + timedelta(minutes=duration_minutes)
+    fmt = "%Y%m%dT%H%M%SZ"
+    q = {
+        "action": "TEMPLATE",
+        "text": title,
+        "dates": f"{start.astimezone(timezone.utc).strftime(fmt)}/{end.astimezone(timezone.utc).strftime(fmt)}",
+    }
+    if details:
+        q["details"] = details
+    if location:
+        q["location"] = location
+    return "https://calendar.google.com/calendar/render?" + urllib.parse.urlencode(q)
 
 
 def verify_signature(raw_body: bytes, header_value: Optional[str]) -> bool:

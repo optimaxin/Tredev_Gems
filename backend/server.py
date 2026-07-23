@@ -8,6 +8,7 @@ import base64
 import copy
 import hashlib
 import hmac
+import asyncio
 import json
 import logging
 import os
@@ -2866,7 +2867,24 @@ async def _mark_paid(order: dict, payment_id: str) -> dict:
             """INSERT INTO order_events (id, order_id, from_status, to_status, reason)
                VALUES ($1,$2::uuid,'pending','paid','payment captured')""",
             uuid.uuid4(), order_id)
-    return await _load_order(order_id)
+    result = await _load_order(order_id)
+
+    # WhatsApp "order confirmed" — fired after the transaction commits so a WA outage
+    # can never roll back a captured payment. Buyer identity comes from the order.
+    buyer = await _load_user(user_id=order["user_id"]) if order.get("user_id") else None
+    to_phone = (buyer or {}).get("phone") or result.get("shipping_phone")
+    if to_phone:
+        items = result.get("items") or []
+        _wa_fire("order_placed", phone=to_phone,
+                 name=(buyer or {}).get("name") or result.get("shipping_name") or "friend",
+                 user_id=order.get("user_id"),
+                 variables={
+                     "order_id": result.get("order_id"),
+                     "item_count": sum((li.get("qty") or 1) for li in items) or len(items),
+                     "total": _rupees(result.get("total")),
+                     "order_url": f"{os.environ.get('PUBLIC_APP_URL', '').rstrip('/')}/account",
+                 })
+    return result
 
 
 class RazorpayVerifyIn(BaseModel):
@@ -3168,16 +3186,19 @@ async def admin_dispatch(body: DispatchIn, user_id: str = Depends(require_admin)
                    ON CONFLICT (user_id, product_unit_id) DO NOTHING""",
                 body.order_id, order["user_id"])
 
-    # Fire WhatsApp "order dispatched" notification (utility template — always allowed)
+    # WhatsApp "order shipped" — via the OpenWA gateway + the editable order_shipped
+    # template (was a fixed Meta utility template).
     buyer = await _load_user(user_id=order["user_id"]) if order.get("user_id") else None
-    if buyer and buyer.get("phone"):
-        try:
-            await wa_send_utility(
-                buyer["phone"], _META_WA_DISPATCH_TMPL,
-                [buyer.get("name", "friend"), order["order_id"], body.tracking_number or "—"],
-            )
-        except Exception as e:
-            log.warning(f"WA dispatch send failed: {e}")
+    to_phone = (buyer or {}).get("phone")
+    if to_phone:
+        _wa_fire("order_shipped", phone=to_phone,
+                 name=(buyer or {}).get("name") or "friend", user_id=order.get("user_id"),
+                 variables={
+                     "order_id": order["order_id"],
+                     "courier": body.courier or "our courier partner",
+                     "tracking_number": body.tracking_number or "—",
+                     "eta": body.estimated_delivery_date or "soon",
+                 })
     await audit_log(user_id, "order.dispatch", order["order_id"],
                     {"units": len(units), "eta": body.estimated_delivery_date})
     return {"ok": True, "units": len(units)}
@@ -3635,6 +3656,18 @@ async def book(body: ConsultationBookIn, user_id: Optional[str] = Depends(get_us
         booking_id, astro["astrologer_id"], astro["name"], slot_at, user_id,
         body.name, body.email, body.phone, body.concern, db.to_amount(astro["price"]),
         jitsi_room, f"https://meet.jit.si/{jitsi_room}")
+
+    # WhatsApp confirmation with a tappable "add to calendar" link.
+    if body.phone:
+        meeting_link = f"https://meet.jit.si/{jitsi_room}"
+        slot_human = slot_at.astimezone(timezone.utc).strftime("%d %b %Y, %H:%M UTC")
+        cal = wa_openwa.google_calendar_link(
+            f"Tredev consultation with {astro['name']}", slot_at,
+            duration_minutes=30,
+            details=f"Join: {meeting_link}", location=meeting_link)
+        _wa_fire("consultation_booked", phone=body.phone, name=body.name, user_id=user_id,
+                 variables={"astrologer_name": astro["name"], "slot": slot_human,
+                            "meeting_link": meeting_link, "calendar_link": cal})
     return await _load_consultation(str(booking_id))
 
 
@@ -3705,6 +3738,7 @@ class AstrologerIn(BaseModel):
     years: int = 0
     picture: str = ""
     email: Optional[EmailStr] = None       # login email; welcome mail is minted for this
+    phone: Optional[str] = None             # for the WhatsApp onboarding message
     commission_pct: float = 10.0            # 0-100, per-astrologer share of affiliate sales
     bio: Optional[str] = ""
 
@@ -4644,14 +4678,15 @@ async def admin_create_astrologer(body: AstrologerIn, actor: str = Depends(requi
         raise HTTPException(400, "commission_pct must be between 0 and 100")
     astro_id = uuid.uuid4()
     affiliate_code = _gen_affiliate_code(payload["name"])
+    astro_phone = normalize_phone(payload["phone"]) if payload.get("phone") else None
     await db.execute(
         """INSERT INTO astrologers (id, full_name, devanagari, expertise, price, years,
-                avatar_url, email, commission_pct, bio, is_active, affiliate_code)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8::citext,$9,$10,true,$11::citext)""",
+                avatar_url, email, phone, commission_pct, bio, is_active, affiliate_code)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8::citext,$9,$10,$11,true,$12::citext)""",
         astro_id, payload["name"], payload.get("devanagari") or "",
         payload.get("expertise") or [], db.to_amount(payload["price"]),
         payload.get("years") or 0, payload.get("picture") or None,
-        payload.get("email"),
+        payload.get("email"), astro_phone,
         # `or 10.0` would turn a deliberate 0% commission into 10% — 0 is falsy.
         10.0 if payload.get("commission_pct") is None else payload["commission_pct"],
         payload.get("bio") or "", affiliate_code)
@@ -4659,6 +4694,10 @@ async def admin_create_astrologer(body: AstrologerIn, actor: str = Depends(requi
     if payload.get("email"):
         token = _mint_astro_password_token(str(astro_id), purpose="set")
         welcome_url = _welcome_url(token)
+        # WhatsApp the set-password link straight to the astrologer, if we have a number.
+        if astro_phone:
+            _wa_fire("astrologer_welcome", phone=astro_phone, name=payload["name"],
+                     variables={"welcome_url": welcome_url})
     doc = _shape_astro(await db.fetch_one(_ASTRO_SELECT + " WHERE a.id = $1::uuid", str(astro_id)))
     await audit_log(actor, "astrologer.create", target=str(astro_id), meta={"email": payload.get("email")})
     return {**doc, "welcome_url": welcome_url}
@@ -5020,6 +5059,19 @@ async def admin_update_order_status(order_id: str, body: OrderStatusIn, actor: s
             db.ORDER_STATUS_TO_DB[body.status])
     await audit_log(actor, "order.status_change", order_id,
                     {"from": prev["status"], "to": body.status})
+
+    # WhatsApp update on the transitions the buyer cares about. Shipped is handled by
+    # the dispatch flow (which carries tracking), so it is not duplicated here.
+    _WA_STATUS_TEMPLATE = {"delivered": "order_delivered", "cancelled": "order_cancelled"}
+    tpl_key = _WA_STATUS_TEMPLATE.get(body.status)
+    if tpl_key and body.status != prev["status"]:
+        buyer = await _load_user(user_id=prev["user_id"]) if prev.get("user_id") else None
+        to_phone = (buyer or {}).get("phone") or prev.get("shipping_phone")
+        if to_phone:
+            _wa_fire(tpl_key, phone=to_phone,
+                     name=(buyer or {}).get("name") or prev.get("shipping_name") or "friend",
+                     user_id=prev.get("user_id"),
+                     variables={"order_id": order_id})
     return await _load_order(order_id)
 
 
@@ -5659,6 +5711,204 @@ async def openwa_webhook(request: Request):
             "UPDATE wa_chats SET unread_count = unread_count + 1, updated_at = now() "
             "WHERE id = $1::uuid", chat_row_id)
     return {"ok": True, "stored": bool(inserted)}
+
+
+# ── WhatsApp notifications: templates + event triggers ───────────────────────
+# Automated WhatsApp updates (order placed/shipped/delivered, consultation booked,
+# astrologer onboarding, offers). Each is a row in wa_templates with a {{variable}}
+# body; a template's `enabled` flag is the automation on/off switch. Sends are
+# best-effort and fire AFTER the originating transaction commits, so a WhatsApp
+# outage can never fail a checkout or a booking.
+
+# Money shown to customers: paise -> "₹1,234".
+def _rupees(paise: Optional[int]) -> str:
+    try:
+        return f"₹{(int(paise) / 100):,.0f}"
+    except (TypeError, ValueError):
+        return "₹0"
+
+
+async def _wa_mirror_outbound(phone: str, user_id: Optional[str], text: str,
+                              source: str, message_id: Optional[str],
+                              sent_by: Optional[str] = None,
+                              campaign_id: Optional[str] = None,
+                              status: str = "sent", error: Optional[str] = None) -> None:
+    """Persist a message we sent, so every outbound update is in the DB and the log.
+    Unlike inbound (which is privacy-gated), everything we initiate is stored."""
+    chat_id = wa_openwa.to_chat_id(phone)
+    chat_row_id = await _wa_upsert_chat(
+        wa_openwa.SESSION_ID, chat_id, user_id, preview=text, ts=now())
+    await _wa_store_message(
+        session_id=wa_openwa.SESSION_ID, chat_row_id=chat_row_id,
+        wa_message_id=message_id or uid("wa_"), direction="out", body_text=text,
+        to_phone=wa_openwa.phone_from_chat_id(chat_id), status=status, source=source,
+        sent_by_user_id=sent_by, campaign_id=campaign_id, error=error)
+
+
+async def _wa_optin_ok(user_id: Optional[str]) -> bool:
+    if not user_id:
+        return True  # no user row to consult; default is opted-in
+    v = await db.fetch_val(
+        """SELECT COALESCE((whatsapp ->> 'optin')::boolean, true)
+             FROM notification_preferences WHERE user_id = $1::uuid""", user_id)
+    return True if v is None else bool(v)
+
+
+async def _wa_notify(template_key: str, *, phone: Optional[str], name: str = "",
+                     user_id: Optional[str] = None, variables: Optional[dict] = None,
+                     source: str = "notification") -> dict:
+    """Render `template_key` and send it. Returns a small result dict; never raises —
+    callers fire this and move on. Marketing templates additionally require WhatsApp
+    opt-in; transactional/consultation/astrologer messages are expected by the
+    recipient (they placed an order / booked / were onboarded) and only need a phone."""
+    if not wa_openwa.configured():
+        return {"sent": False, "reason": "gateway_not_configured"}
+    if not phone:
+        return {"sent": False, "reason": "no_phone"}
+    tpl = await db.fetch_one(
+        """SELECT key, category, body, enabled, include_calendar
+             FROM wa_templates WHERE key = $1""", template_key)
+    if not tpl:
+        return {"sent": False, "reason": "no_template"}
+    if not tpl["enabled"]:
+        return {"sent": False, "reason": "disabled"}   # automation switched off
+    if tpl["category"] == "marketing" and not await _wa_optin_ok(user_id):
+        return {"sent": False, "reason": "opted_out"}
+
+    try:
+        norm = normalize_phone(phone)
+    except HTTPException:
+        return {"sent": False, "reason": "bad_phone"}
+    v = dict(variables or {})
+    v.setdefault("name", name or "friend")
+    body = wa_openwa.render_template(tpl["body"], v)
+    if not body:
+        return {"sent": False, "reason": "empty_body"}
+
+    try:
+        res = await wa_openwa.send_text(wa_openwa.to_chat_id(norm), body)
+    except wa_openwa.OpenWAError as e:
+        log.warning(f"WA notify '{template_key}' send failed: {e}")
+        try:
+            await _wa_mirror_outbound(norm, user_id, body, source, None,
+                                      status="failed", error=str(e)[:200])
+        except Exception:
+            pass
+        return {"sent": False, "reason": "send_failed"}
+    try:
+        await _wa_mirror_outbound(norm, user_id, body, source, res.get("messageId"))
+    except Exception as e:
+        log.warning(f"WA notify '{template_key}' mirror failed: {e}")
+    return {"sent": True, "message_id": res.get("messageId")}
+
+
+def _wa_fire(template_key: str, **kwargs) -> None:
+    """Fire-and-forget a notification so the customer's HTTP response isn't blocked on
+    WhatsApp latency. Exceptions are logged, never propagated to the request."""
+    async def _run():
+        try:
+            await _wa_notify(template_key, **kwargs)
+        except Exception as e:
+            log.warning(f"WA notify task '{template_key}' crashed: {e}")
+    try:
+        asyncio.get_running_loop().create_task(_run())
+    except RuntimeError:
+        pass  # no loop (shouldn't happen inside a request) — skip rather than crash
+
+
+# Static description of every automated trigger, for the admin "Automations" screen.
+# Keeps the documentation the user asked for next to the code it describes.
+WA_AUTOMATIONS = [
+    {"key": "order_placed", "event": "Order paid",
+     "when": "A customer completes payment", "to": "The buyer"},
+    {"key": "order_shipped", "event": "Order dispatched",
+     "when": "Admin dispatches the order (tracking added)", "to": "The buyer"},
+    {"key": "order_delivered", "event": "Order delivered",
+     "when": "Order status set to Delivered", "to": "The buyer"},
+    {"key": "order_cancelled", "event": "Order cancelled",
+     "when": "Order status set to Cancelled", "to": "The buyer"},
+    {"key": "consultation_booked", "event": "Consultation booked",
+     "when": "A customer books a consultation", "to": "The customer (with calendar link)"},
+    {"key": "astrologer_welcome", "event": "Astrologer onboarded",
+     "when": "Admin creates an astrologer with a phone number", "to": "The astrologer"},
+]
+
+
+class WaTemplateUpdateIn(BaseModel):
+    name: Optional[str] = None
+    body: Optional[str] = Field(default=None, max_length=4096)
+    enabled: Optional[bool] = None
+    include_calendar: Optional[bool] = None
+
+
+class WaTemplateTestIn(BaseModel):
+    phone: str
+
+
+@api.get("/admin/whatsapp/templates")
+async def wa_templates_list(_: str = Depends(require_perm("whatsapp"))):
+    return await db.fetch_all(
+        """SELECT key, name, category, trigger_event, body, variables, enabled,
+                  include_calendar, updated_at
+             FROM wa_templates ORDER BY
+             CASE category WHEN 'transactional' THEN 0 WHEN 'consultation' THEN 1
+                           WHEN 'astrologer' THEN 2 ELSE 3 END, key""")
+
+
+@api.put("/admin/whatsapp/templates/{key}")
+async def wa_template_update(key: str, body: WaTemplateUpdateIn,
+                             actor: str = Depends(require_perm("whatsapp"))):
+    fields = body.model_dump(exclude_unset=True)
+    if not fields:
+        raise HTTPException(400, "Nothing to update")
+    sets, args = [], []
+    for col in ("name", "body", "enabled", "include_calendar"):
+        if col in fields:
+            args.append(fields[col])
+            sets.append(f"{col} = ${len(args)}")
+    args.append(actor)
+    sets.append(f"updated_by = ${len(args)}::uuid")
+    args.append(key)
+    got = await db.fetch_val(
+        f"UPDATE wa_templates SET {', '.join(sets)}, updated_at = now() "
+        f"WHERE key = ${len(args)} RETURNING key", *args)
+    if not got:
+        raise HTTPException(404, "Template not found")
+    action = "whatsapp.template.toggle" if "enabled" in fields else "whatsapp.template.update"
+    await audit_log(actor, action, key, {k: fields[k] for k in fields if k != "body"})
+    return await db.fetch_one("SELECT * FROM wa_templates WHERE key = $1", key)
+
+
+@api.post("/admin/whatsapp/templates/{key}/test")
+async def wa_template_test(key: str, body: WaTemplateTestIn,
+                           actor: str = Depends(require_perm("whatsapp"))):
+    """Send the template (with placeholder sample values) to one number, so staff can
+    see exactly what a customer receives before enabling the automation."""
+    tpl = await db.fetch_one("SELECT variables FROM wa_templates WHERE key = $1", key)
+    if not tpl:
+        raise HTTPException(404, "Template not found")
+    sample = {v: f"[{v}]" for v in (tpl["variables"] or [])}
+    sample["name"] = "Test User"
+    res = await _wa_notify(key, phone=body.phone, variables=sample, source="system")
+    await audit_log(actor, "whatsapp.template.test", key, {"phone": body.phone})
+    if not res.get("sent"):
+        raise HTTPException(502, f"Test send did not go through: {res.get('reason')}")
+    return res
+
+
+@api.get("/admin/whatsapp/automations")
+async def wa_automations(_: str = Depends(require_perm("whatsapp"))):
+    """The trigger catalogue for the admin panel — what fires, when, to whom, and
+    whether it is currently on (driven by each template's `enabled` flag)."""
+    rows = {r["key"]: r for r in await db.fetch_all(
+        "SELECT key, name, enabled, category FROM wa_templates")}
+    out = []
+    for a in WA_AUTOMATIONS:
+        t = rows.get(a["key"])
+        out.append({**a, "template_name": t["name"] if t else a["key"],
+                    "enabled": bool(t["enabled"]) if t else False,
+                    "exists": t is not None})
+    return out
 
 
 # ── Admin: WhatsApp inbox, campaigns, session ────────────────────────────────

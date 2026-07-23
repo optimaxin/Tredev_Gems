@@ -136,6 +136,12 @@ export default function AmbassadorHero() {
     return () => clearInterval(t);
   }, []);
 
+  // Decode every slide up-front so the crossfade never swaps to an image that
+  // hasn't loaded yet (which showed the chakra with no portrait behind it).
+  useEffect(() => {
+    SLIDES.forEach((s) => { const im = new Image(); im.decoding = "async"; im.src = s.src; });
+  }, []);
+
   useEffect(() => {
     api.get("/site-content").then(({ data }) => {
       if (data?.home?.ambassador) setAmbassador((a) => ({ ...a, ...data.home.ambassador }));
@@ -253,6 +259,9 @@ export default function AmbassadorHero() {
                 key={idx}
                 src={SLIDES[idx].src}
                 alt={SLIDES[idx].alt}
+                loading="eager"
+                fetchpriority="high"
+                decoding="async"
                 className="absolute inset-0 w-full h-full object-contain object-bottom"
                 style={{ filter: "drop-shadow(0 24px 40px rgba(0,0,0,0.55))" }}
                 initial={{ opacity: 0, scale: reduce ? 1 : 1.05 }}
