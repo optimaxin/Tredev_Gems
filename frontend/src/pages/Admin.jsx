@@ -23,7 +23,7 @@ import AdminReviews from "@/pages/admin/AdminReviews";
 import AdminJournal from "@/pages/admin/AdminJournal";
 import AdminTeam from "@/pages/admin/AdminTeam";
 import AdminUsers from "@/pages/admin/AdminUsers";
-import AdminBroadcast from "@/pages/admin/AdminBroadcast";
+import AdminWhatsApp from "@/pages/admin/AdminWhatsApp";
 import AdminMedia from "@/pages/admin/AdminMedia";
 import AdminSiteAssets from "@/pages/admin/AdminSiteAssets";
 import AdminWebsite from "@/pages/admin/AdminWebsite";
@@ -47,7 +47,10 @@ const NAV_ITEMS = [
   { to: "consultations", label: "Consultations", Icon: Calendar, perm: "consultations" },
   { to: "queries", label: "Queries", Icon: ChatCircleDots, perm: "queries" },
   { to: "reviews", label: "Reviews", Icon: Star, adminAny: true },
-  { to: "broadcast", label: "WhatsApp", Icon: WhatsappLogo, ownerOnly: true },
+  // Backend gates every /admin/whatsapp/* route on require_perm("whatsapp") — the
+  // support inbox exposes customer conversations, so it is its own permission
+  // rather than folded into "owner only" or an existing broader one.
+  { to: "whatsapp", label: "WhatsApp", Icon: WhatsappLogo, perm: "whatsapp" },
   { to: "team", label: "Team", Icon: UsersFour, ownerOnly: true },
   { to: "users", label: "Users", Icon: ShieldStar, ownerOnly: true },
   // Owner-only: it exposes every admin's and staff member's actions.
@@ -147,7 +150,7 @@ export default function Admin() {
           <Route path="consultations" element={<AdminConsultations />} />
           <Route path="queries" element={<AdminQueries />} />
           <Route path="reviews" element={<AdminReviews />} />
-          <Route path="broadcast" element={<AdminBroadcast />} />
+          <Route path="whatsapp" element={<AdminWhatsApp />} />
           <Route path="team" element={<AdminTeam />} />
           <Route path="users" element={<AdminUsers />} />
           <Route path="logs" element={<AdminLogs />} />

@@ -166,16 +166,16 @@ export default function Header() {
             </span>
           </Link>
 
-          <nav className="hidden lg:flex items-center gap-6 ml-4">
+          <nav className="hidden lg:flex items-center gap-4 xl:gap-6 ml-3">
             {MEGA.map((m) => (
               <button
                 key={m.key}
                 onMouseEnter={() => setMega(m.key)}
                 onClick={() => setMega(mega === m.key ? null : m.key)}
                 data-testid={`nav-mega-${m.key}`}
-                className={`flex items-center gap-1 text-sm font-medium ${mega === m.key ? "text-maroon-deep" : "text-ink-soft hover:text-maroon"}`}
+                className={`flex items-center gap-1 shrink-0 whitespace-nowrap text-sm font-medium ${mega === m.key ? "text-maroon-deep" : "text-ink-soft hover:text-maroon"}`}
               >
-                {m.label} <CaretDown size={10} weight="bold" />
+                {m.label} <CaretDown size={10} weight="bold" className="shrink-0" />
               </button>
             ))}
           </nav>

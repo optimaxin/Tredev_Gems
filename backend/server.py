@@ -3752,6 +3752,7 @@ class AstrologerUpdateIn(BaseModel):
     picture: Optional[str] = None
     is_active: Optional[bool] = None
     email: Optional[EmailStr] = None
+    phone: Optional[str] = None
     commission_pct: Optional[float] = None
     bio: Optional[str] = None
 
@@ -4725,6 +4726,7 @@ _ASTRO_PATCH_COLS = {
     "years": ("years", lambda v: v),
     "picture": ("avatar_url", lambda v: v),
     "email": ("email", lambda v: v),
+    "phone": ("phone", lambda v: normalize_phone(v) if v else None),
     "commission_pct": ("commission_pct", lambda v: v),
     "bio": ("bio", lambda v: v),
     "is_active": ("is_active", lambda v: v),
@@ -5621,6 +5623,7 @@ async def _wa_store_message(*, session_id: str, chat_row_id: str, wa_message_id:
                             campaign_id: Optional[str] = None,
                             media_url: Optional[str] = None,
                             raw: Optional[dict] = None,
+                            error: Optional[str] = None,
                             ts: Optional[datetime] = None) -> Optional[str]:
     """Insert one message. ON CONFLICT DO NOTHING on (session_id, wa_message_id) makes
     this idempotent — OpenWA retries webhook deliveries, so the same message can arrive
@@ -5629,13 +5632,13 @@ async def _wa_store_message(*, session_id: str, chat_row_id: str, wa_message_id:
         """INSERT INTO wa_messages (chat_id, session_id, wa_message_id, direction,
                                     from_phone, to_phone, msg_type, body, media_url,
                                     status, sent_by_user_id, source, campaign_id, raw,
-                                    wa_timestamp)
-           VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::uuid,$12,$13::uuid,$14,$15)
+                                    error, wa_timestamp)
+           VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::uuid,$12,$13::uuid,$14,$15,$16)
            ON CONFLICT (session_id, wa_message_id) DO NOTHING
         RETURNING id::text""",
         chat_row_id, session_id, wa_message_id, direction, from_phone, to_phone,
         msg_type, body_text, media_url, status, sent_by_user_id, source, campaign_id,
-        raw or {}, ts or now())
+        raw or {}, error, ts or now())
 
 
 def _wa_event_ts(payload: dict) -> datetime:

@@ -7,7 +7,7 @@ import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
 
 const EMPTY = {
   name: "", devanagari: "", expertise: "", price: "1500", years: 10, picture: "",
-  email: "", commission_pct: 10, bio: "",
+  email: "", phone: "", commission_pct: 10, bio: "",
 };
 
 export default function AdminAstrologers() {
@@ -47,6 +47,7 @@ export default function AdminAstrologers() {
         commission_pct: Math.max(0, Math.min(100, parseFloat(form.commission_pct) || 0)),
         expertise: form.expertise.split(",").map((s) => s.trim()).filter(Boolean),
         email: form.email?.trim() || null,
+        phone: form.phone?.trim() || null,
       };
       if (editing === "new") {
         const { data } = await api.post("/admin/astrologers", payload);
@@ -87,6 +88,7 @@ export default function AdminAstrologers() {
       commission_pct: a.commission_pct ?? 10,
       expertise: (a.expertise || []).join(", "),
       email: a.email || "",
+      phone: a.phone || "",
     });
   };
   const startNew = () => { setEditing("new"); setForm(EMPTY); };
@@ -111,6 +113,8 @@ export default function AdminAstrologers() {
             <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} data-testid="astro-name" className="w-full gold-line px-3 py-2 outline-none focus:border-maroon" /></label>
           <label className="block"><div className="text-xs text-ink-muted mb-1">Login email {editing === "new" && "(welcome link will be generated)"}</div>
             <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} data-testid="astro-email" placeholder="ravi@example.com" className="w-full gold-line px-3 py-2 outline-none focus:border-maroon" /></label>
+          <label className="block"><div className="text-xs text-ink-muted mb-1">WhatsApp number {editing === "new" && "(onboarding message sent here)"}</div>
+            <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} data-testid="astro-phone" placeholder="9812345678" className="w-full gold-line px-3 py-2 outline-none focus:border-maroon" /></label>
           <label className="block"><div className="text-xs text-ink-muted mb-1">Devanagari</div>
             <input value={form.devanagari} onChange={(e) => setForm({ ...form, devanagari: e.target.value })} className="w-full gold-line px-3 py-2 outline-none focus:border-maroon font-deva" /></label>
           <label className="block"><div className="text-xs text-ink-muted mb-1">Expertise (comma-separated)</div>
