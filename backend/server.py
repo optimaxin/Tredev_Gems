@@ -43,13 +43,18 @@ from decimal import Decimal
 
 import db  # Postgres/Supabase access layer — see backend/MIGRATION.md
 import storage_sb  # Supabase Storage — replaces the Emergent object store
-import wa_openwa  # OpenWA gateway — two-way WhatsApp (send/receive/campaigns)
 from pydantic import BaseModel, EmailStr, Field
 from starlette.middleware.cors import CORSMiddleware
 from collections import defaultdict, deque
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
+
+# wa_openwa reads OPENWA_* as module-level constants AT IMPORT TIME, so it must be
+# imported only after load_dotenv() has populated os.environ from backend/.env —
+# importing it earlier (as a normal top-of-file import would) silently bakes in
+# empty values no matter what backend/.env actually contains.
+import wa_openwa  # noqa: E402  (OpenWA gateway — two-way WhatsApp send/receive/campaigns)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("gemora")
