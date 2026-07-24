@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useLocation } from "react-router-dom";
+import { api } from "@/lib/api";
 
 const KEY = "gemora_affiliate_ref";
 const KEY_META = "gemora_affiliate_meta";
@@ -34,6 +35,9 @@ export default function AffiliateTracker() {
       const expires_at = Date.now() + TTL_DAYS * 24 * 60 * 60 * 1000;
       localStorage.setItem(KEY, ref);
       localStorage.setItem(KEY_META, JSON.stringify({ expires_at, first_seen: new Date().toISOString() }));
+      // Records the click server-side (affiliate_visits) — attribution for purchases
+      // still runs through the localStorage ref at checkout, independent of this.
+      api.get(`/r/${ref}`).catch(() => {});
     } catch (_) { /* localStorage disabled — ignore */ }
   }, [search]);
   return null;

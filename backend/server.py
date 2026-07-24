@@ -5016,7 +5016,7 @@ async def resolve_affiliate(code: str, request: Request, response: FastAPIRespon
     anon = request.cookies.get("gemora_anon")
     if not anon:
         anon = uuid.uuid4().hex
-        response.set_cookie("gemora_anon", anon, max_age=60 * 60 * 24 * 365, samesite="lax", httponly=False)
+        response.set_cookie("gemora_anon", anon, max_age=60 * 60 * 24 * 365, httponly=False, **_cookie_kwargs())
     try:
         # visitor_hash is char(64) — the full sha256, not Mongo's truncated 16 chars.
         # ON CONFLICT does the daily dedupe the racy $setOnInsert upsert only approximated.
