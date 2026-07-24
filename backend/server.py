@@ -6189,7 +6189,8 @@ async def wa_admin_campaign_refresh(campaign_id: str,
         b = await wa_openwa.batch_status(row["batch_id"])
     except wa_openwa.OpenWAError:
         raise HTTPException(502, "Could not read campaign progress")
-    sent, failed = b.get("sent") or 0, b.get("failed") or 0
+    progress = b.get("progress") or {}
+    sent, failed = progress.get("sent") or 0, progress.get("failed") or 0
     status = (b.get("status") or row["status"]).lower()
     done = status in ("completed", "cancelled", "failed")
     await db.execute(

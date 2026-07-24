@@ -158,9 +158,16 @@ async def send_document(chat_id: str, url: str, filename: str = "") -> dict:
 
 async def send_bulk(chat_ids: List[str], text: str) -> dict:
     """Queue a campaign. Returns a batchId to poll — OpenWA paces the sends itself,
-    which matters: blasting messages back-to-back is what gets numbers banned."""
+    which matters: blasting messages back-to-back is what gets numbers banned.
+
+    API caps a batch at 100 messages; callers must chunk above that (not done here
+    since nothing in this app sends to more than a few dozen people yet).
+    """
+    if len(chat_ids) > 100:
+        raise OpenWAError("send_bulk supports at most 100 recipients per call")
+    messages = [{"chatId": cid, "type": "text", "content": {"text": text}} for cid in chat_ids]
     return await _req("POST", f"/api/sessions/{SESSION_ID}/messages/send-bulk",
-                      json={"chatIds": chat_ids, "text": text}) or {}
+                      json={"messages": messages}) or {}
 
 
 async def batch_status(batch_id: str) -> dict:
