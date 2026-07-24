@@ -79,6 +79,14 @@ export default function AdminAstrologers() {
     } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
 
+  // Login page needs no token — same URL for every astrologer, so just copy it.
+  const copyLoginLink = async () => {
+    const url = `${window.location.origin}/astrologer/login`;
+    const ok = await copyToClipboard(url);
+    if (ok) toast.success("Login link copied");
+    else window.prompt("Copy this link:", url);
+  };
+
   const startEdit = (a) => {
     setEditing(a);
     setForm({
@@ -172,6 +180,7 @@ export default function AdminAstrologers() {
               <button onClick={() => loadBookings(a.astrologer_id)} className="text-ink-soft inline-flex items-center gap-1"><Calendar size={12} /> {bookings[a.astrologer_id] ? "Hide" : "Bookings"}</button>
               <button onClick={() => loadAffiliate(a.astrologer_id)} data-testid={`astro-affiliate-${a.astrologer_id}`} className="text-ink-soft inline-flex items-center gap-1"><ChartBar size={12} /> {affiliates[a.astrologer_id] ? "Hide" : "Affiliate"}</button>
               {a.email && <button onClick={() => regenWelcome(a)} data-testid={`astro-welcome-${a.astrologer_id}`} className="text-ink-soft inline-flex items-center gap-1"><ArrowClockwise size={12} /> Welcome link</button>}
+              {a.email && <button onClick={copyLoginLink} data-testid={`astro-loginlink-${a.astrologer_id}`} className="text-ink-soft inline-flex items-center gap-1"><Copy size={12} /> Login link</button>}
               <button onClick={() => remove(a)} className="text-revoked inline-flex items-center gap-1 ml-auto"><Trash size={12} /> Remove</button>
             </div>
             {bookings[a.astrologer_id] && (

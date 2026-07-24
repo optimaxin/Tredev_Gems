@@ -909,7 +909,7 @@ async def auth_firebase_verify(body: FirebaseVerifyIn, _rl: None = Depends(rate_
 
 
 @api.post("/auth/signup")
-async def signup(body: SignupIn, _rl: None = Depends(rate_limit(10, 60))):
+async def signup(body: SignupIn, request: Request, _rl: None = Depends(rate_limit(10, 60))):
     if await _load_user(email=body.email.lower()):
         raise HTTPException(400, "Email already registered")
     phone = normalize_phone(body.phone)
@@ -918,6 +918,7 @@ async def signup(body: SignupIn, _rl: None = Depends(rate_limit(10, 60))):
     if await _load_user(phone=phone):
         raise HTTPException(400, "This phone number is already linked to another account")
     user = await _create_or_get_user(email=body.email, name=body.name, password=body.password, phone=phone, phone_verified=True, wa_optin=body.wa_optin)
+    await _claim_anon_cart(user["user_id"], request.cookies.get("gemora_anon"))
     token = make_jwt(user["user_id"])
     u = await _load_user(user_id=user["user_id"])
     return {"token": token, "user": _user_public(u)}
@@ -982,16 +983,17 @@ def _user_public(user: dict) -> dict:
 
 
 @api.post("/auth/login")
-async def login(body: LoginIn, _rl: None = Depends(rate_limit(10, 60))):
+async def login(body: LoginIn, request: Request, _rl: None = Depends(rate_limit(10, 60))):
     user = await _load_user(email=body.email.lower())
     if not user or not user.get("password_hash") or not verify_password(body.password, user["password_hash"]):
         raise HTTPException(401, "Invalid credentials")
+    await _claim_anon_cart(user["user_id"], request.cookies.get("gemora_anon"))
     token = make_jwt(user["user_id"])
     return {"token": token, "user": _user_public(user)}
 
 
 @api.post("/auth/google")
-async def auth_google(body: GoogleSignInIn, _rl: None = Depends(rate_limit(15, 60))):
+async def auth_google(body: GoogleSignInIn, request: Request, _rl: None = Depends(rate_limit(15, 60))):
     """Exchange a Firebase Google ID token for our own JWT.
 
     Replaces the Emergent OAuth round-trip (auth.emergentagent.com ->
@@ -1029,6 +1031,7 @@ async def auth_google(body: GoogleSignInIn, _rl: None = Depends(rate_limit(15, 6
             WHERE id = $1::uuid""",
         user["user_id"], decoded.get("uid"), decoded.get("picture") or "",
         decoded.get("name") or "")
+    await _claim_anon_cart(user["user_id"], request.cookies.get("gemora_anon"))
     user = await _load_user(user_id=user["user_id"])
     return {"token": make_jwt(user["user_id"]), "user": _user_public(user)}
 
@@ -2362,6 +2365,34 @@ _CART_SELECT = """
 """
 
 
+async def _claim_anon_cart(user_id: str, anon_key: Optional[str]) -> None:
+    """Hand a guest's session cart to the account they just created/logged into.
+
+    Buying now requires an account, so the common path is: browse as a guest, add
+    to cart, then sign up specifically to check out. Without this, that signup
+    would land them back on an empty account cart — losing everything they just
+    added. If the account already has its own non-empty cart, we leave the guest
+    cart behind rather than silently merging quantities into it."""
+    if not anon_key:
+        return
+    async with db.transaction() as conn:
+        anon_cart = await conn.fetchrow(
+            "SELECT id FROM carts WHERE session_token = $1 AND status = 'active'", anon_key)
+        if not anon_cart:
+            return
+        user_cart = await conn.fetchrow(
+            "SELECT id FROM carts WHERE user_id = $1::uuid AND status = 'active'", user_id)
+        if user_cart:
+            has_items = await conn.fetchval(
+                "SELECT EXISTS(SELECT 1 FROM cart_items WHERE cart_id = $1)", user_cart["id"])
+            if has_items:
+                return
+            await conn.execute("UPDATE carts SET status = 'converted' WHERE id = $1", user_cart["id"])
+        await conn.execute(
+            "UPDATE carts SET user_id = $1::uuid, session_token = NULL WHERE id = $2",
+            user_id, anon_cart["id"])
+
+
 async def _get_or_create_cart(user_id: Optional[str], anon_key: Optional[str]) -> dict:
     if not user_id and not anon_key:
         # Mongo matched {"anon_key": None} here, which silently collided with any
@@ -2674,7 +2705,10 @@ async def _load_order(order_id: str, conn=None) -> Optional[dict]:
 
 
 @api.post("/checkout")
-async def checkout(body: CheckoutIn, request: Request, user_id: Optional[str] = Depends(get_user_id_optional)):
+async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(require_user)):
+    # Buying requires an account — the frontend hides the total and gates this call
+    # behind login/signup, and require_user enforces it here too so the rule holds
+    # even for a direct API call.
     anon_key = request.cookies.get("gemora_anon")
     cart = await _get_or_create_cart(user_id, anon_key)
     items = cart.get("items", [])
@@ -2713,29 +2747,7 @@ async def checkout(body: CheckoutIn, request: Request, user_id: Optional[str] = 
             "SELECT id::text FROM astrologers WHERE affiliate_code = $1::citext AND is_active",
             aff_ref)
 
-    # orders.user_id is NOT NULL: this schema says every order belongs to someone.
-    # A guest checkout therefore creates a claimable user from the (always required)
-    # checkout email — they have no auth method until they set a password.
-    if user_id:
-        buyer_id = user_id
-    else:
-        buyer_id = await db.fetch_val(
-            "SELECT id::text FROM users WHERE email = $1::citext AND deleted_at IS NULL",
-            body.email.lower())
-        if not buyer_id:
-            buyer_id = str(uuid.uuid4())
-            # No phone on the user: shipping_phone is a delivery contact, not an account
-            # identity, and users.phone is UNIQUE — two guests sharing a number (or one
-            # guest ordering twice) would collide. The phone lives on the address.
-            await db.execute(
-                """INSERT INTO users (id, email, full_name, status)
-                   VALUES ($1::uuid, $2::citext, $3, 'active')""",
-                buyer_id, body.email.lower(), body.shipping_name)
-            rid = await db.fetch_val("SELECT id FROM roles WHERE name='customer'")
-            if rid:
-                await db.execute(
-                    "INSERT INTO user_roles (user_id, role_id) VALUES ($1::uuid,$2) ON CONFLICT DO NOTHING",
-                    buyer_id, rid)
+    buyer_id = user_id
 
     # Razorpay: create order if keys available, else mock
     rp_key = os.environ.get("RAZORPAY_KEY_ID", "")
@@ -2769,7 +2781,7 @@ async def checkout(body: CheckoutIn, request: Request, user_id: Optional[str] = 
                     shipping_address_id, billing_address_id, affiliate_code,
                     affiliate_astrologer_id, placed_at)
                VALUES ($1,$2::uuid,$3,'pending','INR',$4,0,$5,0,$6,$7,$7,$8::citext,$9::uuid, now())""",
-            order_id, buyer_id, None if user_id else anon_key,
+            order_id, buyer_id, None,
             db.to_amount(subtotal), db.to_amount(gst), db.to_amount(total),
             addr_id, aff_ref if aff_astro_id else None, aff_astro_id)
 

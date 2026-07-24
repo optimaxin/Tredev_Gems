@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { GoogleLogo, WhatsappLogo, Envelope } from "@phosphor-icons/react";
@@ -8,6 +8,10 @@ import PhoneVerify from "@/components/gemora/PhoneVerify";
 export default function Login() {
   const { loginJwt, googleLogin, refresh } = useAuth();
   const nav = useNavigate();
+  const location = useLocation();
+  // e.g. the cart sends { from: "/cart" } so logging in to see the total/checkout
+  // lands back on the cart instead of the generic account page.
+  const dest = location.state?.from || "/account";
   const [mode, setMode] = useState("password");
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
@@ -19,7 +23,7 @@ export default function Login() {
     try {
       await loginJwt(email, pw);
       toast.success("Welcome back");
-      nav("/account");
+      nav(dest);
     } catch (err) {
       toast.error(err.response?.data?.detail || "Login failed");
     } finally { setLoading(false); }
@@ -32,10 +36,10 @@ export default function Login() {
       localStorage.setItem("gemora_jwt", session.token);
       await refresh();
       toast.success("Welcome back");
-      nav("/account");
+      nav(dest);
     } else {
       toast.error("No account with that phone number. Please sign up.");
-      nav("/signup");
+      nav("/signup", { state: location.state });
     }
   };
 
@@ -46,7 +50,7 @@ export default function Login() {
     setLoading(true);
     try {
       await googleLogin();
-      nav("/account");
+      nav(dest);
     } catch (err) {
       if (err?.code === "auth/popup-closed-by-user") return; // user just dismissed it
       toast.error(err?.response?.data?.detail || err?.message || "Google sign-in failed");
@@ -98,7 +102,7 @@ export default function Login() {
           <GoogleLogo size={16} weight="bold" /> Continue with Google
         </button>
         <div className="mt-4 text-center text-sm text-ink-muted">
-          New here? <Link to="/signup" className="text-maroon underline underline-offset-4 decoration-gold-soft">Create an account</Link>
+          New here? <Link to="/signup" state={location.state} className="text-maroon underline underline-offset-4 decoration-gold-soft">Create an account</Link>
         </div>
       </div>
     </div>

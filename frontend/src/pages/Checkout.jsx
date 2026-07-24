@@ -1,7 +1,8 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, formatINR } from "@/lib/api";
 import { useCart } from "@/context/CartContext";
+import { useAuth } from "@/context/AuthContext";
 import { getAffiliateRef } from "@/components/gemora/AffiliateTracker";
 import { toast } from "sonner";
 import { CheckCircle } from "@phosphor-icons/react";
@@ -9,9 +10,17 @@ import OrderTruckButton from "@/components/gemora/OrderTruckButton";
 
 export default function Checkout() {
   const { cart, refresh, subtotal } = useCart();
+  const { user, loading: authLoading } = useAuth();
   const nav = useNavigate();
   // idle → loading (collecting payment) → delivering (truck plays, then we navigate)
   const [phase, setPhase] = useState("idle");
+
+  // Buying requires an account — bounce anyone who lands here directly (e.g. a
+  // bookmarked/typed /checkout URL) back to login instead of showing the form.
+  // The backend enforces this too (POST /checkout requires auth either way).
+  useEffect(() => {
+    if (!authLoading && !user) nav("/login", { state: { from: "/cart" }, replace: true });
+  }, [authLoading, user, nav]);
   const [form, setForm] = useState({
     shipping_name: "", shipping_phone: "", shipping_address: "",
     shipping_city: "", shipping_state: "", shipping_pincode: "", email: "",
@@ -92,6 +101,7 @@ export default function Checkout() {
     }
   };
 
+  if (authLoading || !user) return null; // redirecting to /login
   if (!cart.items?.length) return <div className="p-16 text-center">Your cart is empty.</div>;
 
   return (

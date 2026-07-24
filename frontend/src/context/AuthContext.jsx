@@ -1,11 +1,17 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
+import { identify, reset as resetAnalytics } from "@/lib/analytics";
 
 const AuthCtx = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (user) identify(user.id, { email: user.email, name: user.name });
+    else resetAnalytics();
+  }, [user]);
 
   const refresh = useCallback(async () => {
     // Only probe /auth/me if we have a token to send — avoids anonymous 401 console noise.

@@ -10,6 +10,7 @@ import Header from "@/components/gemora/Header";
 import Footer from "@/components/gemora/Footer";
 import EventStrip from "@/components/gemora/EventStrip";
 import AffiliateTracker from "@/components/gemora/AffiliateTracker";
+import { pageview } from "@/lib/analytics";
 import Home from "@/pages/Home";
 import Shop from "@/pages/Shop";
 import ProductDetail from "@/pages/ProductDetail";
@@ -32,7 +33,7 @@ import AstrologerSetPassword from "@/pages/AstrologerSetPassword";
 
 function ScrollToTop() {
   const { pathname } = useLocation();
-  useEffect(() => { window.scrollTo(0, 0); }, [pathname]);
+  useEffect(() => { window.scrollTo(0, 0); pageview(); }, [pathname]);
   return null;
 }
 

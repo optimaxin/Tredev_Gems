@@ -2,11 +2,13 @@ import React from "react";
 import { Link } from "react-router-dom";
 import { X } from "@phosphor-icons/react";
 import { useCart } from "@/context/CartContext";
+import { useAuth } from "@/context/AuthContext";
 import { formatINR, describeOptions } from "@/lib/api";
-import { ShieldCheck, TrashSimple, ShoppingBag } from "@phosphor-icons/react";
+import { ShieldCheck, TrashSimple, ShoppingBag, LockKey } from "@phosphor-icons/react";
 
 export default function CartDrawer({ open, onClose }) {
   const { cart, remove, subtotal } = useCart();
+  const { user } = useAuth();
   const items = cart.items || [];
   return (
     <>
@@ -56,19 +58,39 @@ export default function CartDrawer({ open, onClose }) {
         </div>
         {items.length > 0 && (
           <div className="p-6 border-t border-gold/30 bg-cream">
-            <div className="flex justify-between items-baseline">
-              <span className="text-sm">Subtotal</span>
-              <span className="font-display text-2xl text-maroon-deep">{formatINR(subtotal)}</span>
-            </div>
-            <div className="text-xs text-ink-muted mt-1">GST added at checkout</div>
-            <Link
-              to="/cart"
-              onClick={onClose}
-              data-testid="cart-drawer-view"
-              className="mt-4 w-full brand-gradient text-ivory py-3 text-sm uppercase tracking-widest flex items-center justify-center gap-2 hover-lift"
-            >
-              <ShoppingBag size={16} weight="duotone" /> View cart & checkout
-            </Link>
+            {user ? (
+              <>
+                <div className="flex justify-between items-baseline">
+                  <span className="text-sm">Subtotal</span>
+                  <span className="font-display text-2xl text-maroon-deep">{formatINR(subtotal)}</span>
+                </div>
+                <div className="text-xs text-ink-muted mt-1">GST added at checkout</div>
+                <Link
+                  to="/cart"
+                  onClick={onClose}
+                  data-testid="cart-drawer-view"
+                  className="mt-4 w-full brand-gradient text-ivory py-3 text-sm uppercase tracking-widest flex items-center justify-center gap-2 hover-lift"
+                >
+                  <ShoppingBag size={16} weight="duotone" /> View cart & checkout
+                </Link>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center gap-2 text-sm text-ink-soft">
+                  <LockKey size={16} weight="duotone" className="text-gold-soft shrink-0" />
+                  Log in to see your total and check out.
+                </div>
+                <Link
+                  to="/login"
+                  state={{ from: "/cart" }}
+                  onClick={onClose}
+                  data-testid="cart-drawer-login"
+                  className="mt-4 w-full brand-gradient text-ivory py-3 text-sm uppercase tracking-widest flex items-center justify-center gap-2 hover-lift"
+                >
+                  Log in to continue
+                </Link>
+              </>
+            )}
           </div>
         )}
       </aside>

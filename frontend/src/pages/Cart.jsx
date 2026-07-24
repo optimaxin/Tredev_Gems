@@ -1,12 +1,14 @@
 import React from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useCart } from "@/context/CartContext";
+import { useAuth } from "@/context/AuthContext";
 import { formatINR, describeOptions } from "@/lib/api";
-import { TrashSimple, ShieldCheck, ShoppingBag, Plus, Minus } from "@phosphor-icons/react";
+import { TrashSimple, ShieldCheck, ShoppingBag, Plus, Minus, LockKey } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
 export default function Cart() {
   const { cart, remove, setQty, subtotal } = useCart();
+  const { user } = useAuth();
   const nav = useNavigate();
   const items = cart.items || [];
 
@@ -80,26 +82,52 @@ export default function Cart() {
 
           <aside className="gold-line-strong bg-cream p-6 h-fit">
             <div className="text-xs uppercase tracking-widest text-ink-muted">Summary</div>
-            <div className="mt-4 flex items-baseline justify-between">
-              <span>Subtotal</span><span className="font-display text-xl">{formatINR(subtotal)}</span>
-            </div>
-            <div className="mt-2 flex items-baseline justify-between text-sm text-ink-muted">
-              <span>GST (3%)</span><span>{formatINR(Math.round(subtotal * 0.03))}</span>
-            </div>
-            <div className="mt-4 pt-4 border-t border-gold/40 flex items-baseline justify-between">
-              <span className="text-sm">Total</span>
-              <span className="font-display text-3xl text-maroon-deep">{formatINR(subtotal + Math.round(subtotal * 0.03))}</span>
-            </div>
-            <button
-              data-testid="cart-checkout-btn"
-              onClick={() => nav("/checkout")}
-              className="mt-6 w-full brand-gradient text-ivory py-4 text-sm uppercase tracking-widest inline-flex items-center justify-center gap-2 hover-lift"
-            >
-              <ShoppingBag size={16} weight="duotone" /> Proceed to checkout
-            </button>
-            <div className="mt-4 text-xs text-ink-muted leading-relaxed">
-              Payments are processed through Razorpay. Your unique units are only marked "sold" after a signature-verified payment.
-            </div>
+            {user ? (
+              <>
+                <div className="mt-4 flex items-baseline justify-between">
+                  <span>Subtotal</span><span className="font-display text-xl">{formatINR(subtotal)}</span>
+                </div>
+                <div className="mt-2 flex items-baseline justify-between text-sm text-ink-muted">
+                  <span>GST (3%)</span><span>{formatINR(Math.round(subtotal * 0.03))}</span>
+                </div>
+                <div className="mt-4 pt-4 border-t border-gold/40 flex items-baseline justify-between">
+                  <span className="text-sm">Total</span>
+                  <span className="font-display text-3xl text-maroon-deep">{formatINR(subtotal + Math.round(subtotal * 0.03))}</span>
+                </div>
+                <button
+                  data-testid="cart-checkout-btn"
+                  onClick={() => nav("/checkout")}
+                  className="mt-6 w-full brand-gradient text-ivory py-4 text-sm uppercase tracking-widest inline-flex items-center justify-center gap-2 hover-lift"
+                >
+                  <ShoppingBag size={16} weight="duotone" /> Proceed to checkout
+                </button>
+                <div className="mt-4 text-xs text-ink-muted leading-relaxed">
+                  Payments are processed through Razorpay. Your unique units are only marked "sold" after a signature-verified payment.
+                </div>
+              </>
+            ) : (
+              <div className="mt-4 text-center" data-testid="cart-login-gate">
+                <LockKey size={28} weight="duotone" className="mx-auto text-gold-soft" />
+                <p className="mt-3 text-sm text-ink-soft leading-relaxed">
+                  Log in or create an account to see your order total and check out.
+                </p>
+                <Link
+                  to="/login"
+                  state={{ from: "/cart" }}
+                  data-testid="cart-login-cta"
+                  className="mt-5 w-full brand-gradient text-ivory py-3 text-sm uppercase tracking-widest inline-flex items-center justify-center gap-2 hover-lift"
+                >
+                  Log in
+                </Link>
+                <Link
+                  to="/signup"
+                  state={{ from: "/cart" }}
+                  className="mt-3 w-full border border-maroon text-maroon py-3 text-sm uppercase tracking-widest inline-flex items-center justify-center gap-2 hover:bg-maroon hover:text-ivory transition-colors"
+                >
+                  Create account
+                </Link>
+              </div>
+            )}
           </aside>
         </div>
       )}

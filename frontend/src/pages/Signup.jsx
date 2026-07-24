@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { GoogleLogo, ShieldCheck, CheckCircle } from "@phosphor-icons/react";
@@ -9,6 +9,8 @@ import { api } from "@/lib/api";
 export default function Signup() {
   const { refresh, googleLogin } = useAuth();
   const nav = useNavigate();
+  const location = useLocation();
+  const dest = location.state?.from || "/account";
 
   const [step, setStep] = useState(1); // 1 = verify phone, 2 = account details
   const [phone, setPhone] = useState("");
@@ -33,7 +35,7 @@ export default function Signup() {
       localStorage.setItem("gemora_jwt", data.token);
       await refresh();
       toast.success("Welcome to Tredev");
-      nav("/account");
+      nav(dest);
     } catch (err) {
       toast.error(err.response?.data?.detail || "Signup failed");
     } finally {
@@ -46,7 +48,7 @@ export default function Signup() {
   const google = async () => {
     try {
       await googleLogin();
-      nav("/account");
+      nav(dest);
     } catch (err) {
       if (err?.code === "auth/popup-closed-by-user") return;
       toast.error(err?.response?.data?.detail || err?.message || "Google sign-in failed");
@@ -134,7 +136,7 @@ export default function Signup() {
       </div>
 
       <div className="mt-6 text-center text-sm text-ink-muted">
-        Already have an account? <Link to="/login" className="text-maroon underline underline-offset-4 decoration-gold-soft">Sign in</Link>
+        Already have an account? <Link to="/login" state={location.state} className="text-maroon underline underline-offset-4 decoration-gold-soft">Sign in</Link>
       </div>
     </div>
   );

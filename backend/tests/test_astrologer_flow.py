@@ -19,6 +19,8 @@ API = f"{BASE_URL}/api"
 
 ADMIN_EMAIL = "admin@gemora.in"
 ADMIN_PASS = "admin@1234"
+BUYER_EMAIL = "priya@example.com"
+BUYER_PASS = "priya@1234"
 
 
 def _headers(tok):
@@ -29,6 +31,15 @@ def _headers(tok):
 def owner_token():
     requests.post(f"{API}/dev/seed", timeout=60)
     r = requests.post(f"{API}/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASS}, timeout=30)
+    assert r.status_code == 200, r.text
+    return r.json()["token"]
+
+
+@pytest.fixture(scope="module")
+def buyer_token(owner_token):
+    # Checkout requires an account now (buying is gated behind login) — seeded by /dev/seed
+    # via owner_token, same demo buyer test_gemora_backend.py logs into.
+    r = requests.post(f"{API}/auth/login", json={"email": BUYER_EMAIL, "password": BUYER_PASS}, timeout=30)
     assert r.status_code == 200, r.text
     return r.json()["token"]
 
@@ -295,10 +306,11 @@ def _pick_product():
 
 class TestAffiliateCommission:
 
-    def test_01_end_to_end_commission(self, owner_token, created_astrologer):
+    def test_01_end_to_end_commission(self, owner_token, buyer_token, created_astrologer):
         product, unit = _pick_product()
         assert product, "No product available"
         s = requests.Session()
+        s.headers.update(_headers(buyer_token))
         cart_payload = {"product_id": product["product_id"], "qty": 1}
         if unit:
             cart_payload["unit_id"] = unit["unit_id"]
@@ -336,7 +348,7 @@ class TestAffiliateCommission:
         assert aff2["summary"]["orders"] == 1
         assert aff2["summary"]["total_commission"] == expected
 
-    def test_02_zero_pct_no_commission(self, owner_token, rand):
+    def test_02_zero_pct_no_commission(self, owner_token, buyer_token, rand):
         # Create fresh astrologer with pct=0
         email = f"qa+zero{rand}@example.com"
         cr = requests.post(f"{API}/admin/astrologers", json={
@@ -351,6 +363,7 @@ class TestAffiliateCommission:
         if not product:
             pytest.skip("no product available")
         s = requests.Session()
+        s.headers.update(_headers(buyer_token))
         cart_payload = {"product_id": product["product_id"], "qty": 1}
         if unit:
             cart_payload["unit_id"] = unit["unit_id"]
