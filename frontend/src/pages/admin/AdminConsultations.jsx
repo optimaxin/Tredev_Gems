@@ -19,6 +19,25 @@ export default function AdminConsultations() {
     toast.success(`Marked ${status}`); refresh();
   };
 
+  const joinMeeting = async (id) => {
+    try {
+      const { data } = await api.post(`/admin/consultations/${id}/join-link`);
+      window.open(data.url, "_blank", "noopener");
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not get a meeting link"); }
+  };
+
+  const openRecording = async (id) => {
+    try {
+      const { data } = await api.get(`/admin/consultations/${id}/recording`);
+      window.open(data.url, "_blank", "noopener");
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not open recording"); }
+  };
+
+  const RECORDING_LABEL = {
+    none: null, pending: "Recording pending", processing: "Processing recording…",
+    ready: null, failed: "Recording failed",
+  };
+
   return (
     <div>
       <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">Bookings</div>
@@ -48,6 +67,20 @@ export default function AdminConsultations() {
                   {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
+            </div>
+            <div className="mt-3 pt-3 border-t border-gold/20 flex items-center gap-4 text-xs flex-wrap">
+              {b.pnm_room_id && (
+                <button onClick={() => joinMeeting(b.booking_id)} data-testid={`consult-join-${b.booking_id}`} className="text-maroon inline-flex items-center gap-1">
+                  Join meeting
+                </button>
+              )}
+              {b.recording_ready ? (
+                <button onClick={() => openRecording(b.booking_id)} data-testid={`consult-recording-${b.booking_id}`} className="text-verified inline-flex items-center gap-1">
+                  Download recording
+                </button>
+              ) : RECORDING_LABEL[b.recording_status] && (
+                <span className="text-ink-muted">{RECORDING_LABEL[b.recording_status]}</span>
+              )}
             </div>
           </div>
         ))}

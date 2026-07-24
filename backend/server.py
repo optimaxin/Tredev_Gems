@@ -14,6 +14,8 @@ import logging
 import os
 import re
 import secrets
+import subprocess
+import tempfile
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -23,6 +25,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import bcrypt
+import imageio_ffmpeg
 import jwt as pyjwt
 import qrcode
 from qrcode.image.pil import PilImage
@@ -34,7 +37,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 from cryptography.hazmat.primitives import serialization
 from dotenv import load_dotenv
-from fastapi import APIRouter, Cookie, Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from fastapi.responses import Response as FastAPIResponse
 
@@ -43,6 +46,7 @@ from decimal import Decimal
 
 import db  # Postgres/Supabase access layer — see backend/MIGRATION.md
 import storage_sb  # Supabase Storage — replaces the Emergent object store
+import plugnmeet  # Video consultations — room create/join, recording fetch
 from pydantic import BaseModel, EmailStr, Field
 from starlette.middleware.cors import CORSMiddleware
 from collections import defaultdict, deque
@@ -695,6 +699,13 @@ def _cookie_kwargs() -> dict:
     if os.environ.get("PUBLIC_APP_URL", "").startswith("https://"):
         return {"secure": True, "samesite": "none"}
     return {"secure": False, "samesite": "lax"}
+
+
+def _backend_base_url(request: Request) -> str:
+    """This service's own public URL — for webhook/join links plugNmeet or a
+    customer's browser must reach from outside. Render injects RENDER_EXTERNAL_URL
+    automatically; local dev falls back to the request's own host."""
+    return os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/") or str(request.base_url).rstrip("/")
 
 
 def _cors_origins() -> list[str]:
@@ -3630,10 +3641,15 @@ _CONSULT_SELECT = """
            c.status::text                 AS status,
            c.jitsi_room                   AS jitsi_room,
            c.meeting_link                 AS meeting_link,
+           c.pnm_room_id                  AS pnm_room_id,
+           c.recording_status             AS recording_status,
+           rec.bucket                     AS recording_bucket,
+           rec.object_key                 AS recording_object_key,
            c.notes                        AS notes,
            c.created_at                   AS created_at,
            c.updated_at                   AS updated_at
       FROM consultations c
+      LEFT JOIN media_assets rec ON rec.id = c.recording_media_id
 """
 
 
@@ -3641,8 +3657,12 @@ def _shape_consult(row: Optional[dict]) -> Optional[dict]:
     if not row:
         return None
     r = dict(row)
+    bucket = r.pop("recording_bucket", None)
+    object_key = r.pop("recording_object_key", None)
+    has_recording = bool(bucket and object_key)
     return {**{k: v for k, v in r.items() if k != "amount_n"},
-            "amount": db.to_paise(r["amount_n"])}
+            "amount": db.to_paise(r["amount_n"]),
+            "recording_ready": has_recording}
 
 
 async def _load_consultation(booking_id: str) -> Optional[dict]:
@@ -3659,7 +3679,8 @@ async def list_astrologers():
 
 
 @api.post("/consultation/book")
-async def book(body: ConsultationBookIn, user_id: Optional[str] = Depends(get_user_id_optional)):
+async def book(body: ConsultationBookIn, request: Request,
+                user_id: Optional[str] = Depends(get_user_id_optional)):
     astro = _shape_astro(await db.fetch_one(
         _ASTRO_SELECT + " WHERE a.id = $1::uuid", body.astrologer_id))
     if not astro:
@@ -3674,21 +3695,39 @@ async def book(body: ConsultationBookIn, user_id: Optional[str] = Depends(get_us
         slot_at = slot_at.replace(tzinfo=timezone.utc)
 
     booking_id = uuid.uuid4()
-    # Auto-generated Jitsi meeting room — public meet.jit.si, no config needed
-    jitsi_room = f"gemora-{booking_id}"
+    backend_base = _backend_base_url(request)
+    # Video room: plugNmeet when configured (auto-recorded — see /plugnmeet/webhook),
+    # else fall back to a public Jitsi room so local dev without those env vars
+    # still works. meeting_link always points at OUR redirect endpoint rather than
+    # a raw provider URL: plugNmeet join tokens are short-lived/one-time, so the
+    # actual token is minted fresh whenever this link is opened, however long after
+    # booking that is.
+    pnm_room_id = None
+    if plugnmeet.configured():
+        pnm_room_id = f"consult-{booking_id}"
+        try:
+            await plugnmeet.create_room(
+                pnm_room_id, f"Consultation with {astro['name']}",
+                webhook_url=f"{backend_base}/api/plugnmeet/webhook")
+        except Exception as e:
+            log.warning(f"plugNmeet room create failed, falling back to Jitsi: {e}")
+            pnm_room_id = None
+    jitsi_room = None if pnm_room_id else f"gemora-{booking_id}"
+    meeting_link = (f"{backend_base}/api/consultation/{booking_id}/join" if pnm_room_id
+                    else f"https://meet.jit.si/{jitsi_room}")
+
     await db.execute(
         """INSERT INTO consultations (id, astrologer_id, astrologer_name_snapshot, slot_at,
                 user_id, contact_name, contact_email, contact_phone, concern, amount,
-                status, jitsi_room, meeting_link)
+                status, jitsi_room, meeting_link, pnm_room_id)
            VALUES ($1,$2::uuid,$3,$4,$5::uuid,$6,$7::citext,$8,$9,$10,
-                   'requested',$11,$12)""",
+                   'requested',$11,$12,$13)""",
         booking_id, astro["astrologer_id"], astro["name"], slot_at, user_id,
         body.name, body.email, body.phone, body.concern, db.to_amount(astro["price"]),
-        jitsi_room, f"https://meet.jit.si/{jitsi_room}")
+        jitsi_room, meeting_link, pnm_room_id)
 
     # WhatsApp confirmation with a tappable "add to calendar" link.
     if body.phone:
-        meeting_link = f"https://meet.jit.si/{jitsi_room}"
         slot_human = slot_at.astimezone(timezone.utc).strftime("%d %b %Y, %H:%M UTC")
         cal = wa_openwa.google_calendar_link(
             f"Tredev consultation with {astro['name']}", slot_at,
@@ -3698,6 +3737,18 @@ async def book(body: ConsultationBookIn, user_id: Optional[str] = Depends(get_us
                  variables={"astrologer_name": astro["name"], "slot": slot_human,
                             "meeting_link": meeting_link, "calendar_link": cal})
     return await _load_consultation(str(booking_id))
+
+
+@api.get("/consultation/{booking_id}/join")
+async def consultation_join(booking_id: str, request: Request):
+    """Public redirect a customer's WhatsApp/calendar link points to. Mints a fresh
+    plugNmeet participant token on every hit — never stored, since tokens are
+    short-lived and one-time-use."""
+    c = await _load_consultation(booking_id)
+    if not c or not c.get("pnm_room_id"):
+        raise HTTPException(404, "No video room for this booking")
+    token = await plugnmeet.get_join_token(c["pnm_room_id"], c["name"], booking_id, is_admin=False)
+    return RedirectResponse(plugnmeet.join_url(token), status_code=307)
 
 
 # ── Dev seed (idempotent) ─────────────────────────────────────────────────────
@@ -5092,6 +5143,115 @@ async def admin_update_consultation(booking_id: str, body: dict, actor: str = De
         raise HTTPException(404, "Booking not found")
     await audit_log(actor, "consultation.update", booking_id, updates)
     return await _load_consultation(booking_id)
+
+
+@api.post("/admin/consultations/{booking_id}/join-link")
+async def admin_consultation_join_link(booking_id: str, actor: str = Depends(require_perm("consultations"))):
+    """Mints a fresh moderator join token — the admin/staff "check the meet link"
+    button. Never persisted: plugNmeet join tokens are short-lived and one-time-use,
+    so a stored link would just go stale."""
+    c = await _load_consultation(booking_id)
+    if not c:
+        raise HTTPException(404, "Booking not found")
+    if not c.get("pnm_room_id"):
+        raise HTTPException(400, "No plugNmeet room on this booking (booked before video "
+                                  "was enabled, or plugNmeet isn't configured)")
+    token = await plugnmeet.get_join_token(c["pnm_room_id"], "Tredev Staff", actor, is_admin=True)
+    return {"url": plugnmeet.join_url(token)}
+
+
+@api.get("/admin/consultations/{booking_id}/recording")
+async def admin_consultation_recording(booking_id: str, _: str = Depends(require_perm("consultations"))):
+    """Signed, time-limited URL to the compressed recording. Returned as JSON
+    (not a redirect) — this route needs the admin's Bearer token, which a plain
+    `<a href>` navigation can't send, so the frontend fetches this then opens
+    the resulting Supabase URL itself. Recordings are private, so access stays
+    gated behind the `consultations` permission rather than the public
+    /media/file/{path} route."""
+    row = await db.fetch_one(
+        """SELECT m.bucket, m.object_key FROM consultations c
+             JOIN media_assets m ON m.id = c.recording_media_id
+            WHERE c.id = $1::uuid""", booking_id)
+    if not row:
+        raise HTTPException(404, "No recording available for this booking")
+    signed = await storage_sb.sign(row["object_key"], 3600, bucket=row["bucket"])
+    return {"url": signed}
+
+
+@api.post("/plugnmeet/webhook")
+async def plugnmeet_webhook(request: Request, background: BackgroundTasks,
+                             authorization: Optional[str] = Header(None)):
+    body = await request.body()
+    try:
+        payload = plugnmeet.verify_webhook(body, authorization)
+    except ValueError as e:
+        raise HTTPException(401, str(e))
+    event = payload.get("event")
+    room = payload.get("room") or {}
+    room_id = room.get("room_id") or room.get("name")
+    # room_finished is a fallback in case a short/test session never emits its own
+    # end_recording event — _process_recording no-ops safely if nothing's there yet.
+    if event in ("end_recording", "room_finished") and room_id:
+        booking_id = await db.fetch_val(
+            "SELECT id::text FROM consultations WHERE pnm_room_id = $1", room_id)
+        if booking_id:
+            await db.execute(
+                "UPDATE consultations SET recording_status = 'pending' WHERE id = $1::uuid"
+                " AND recording_status = 'none'", booking_id)
+            background.add_task(_process_recording, booking_id, room_id)
+    return {"ok": True}
+
+
+async def _process_recording(booking_id: str, room_id: str) -> None:
+    """Fetch the plugNmeet cloud recording, compress it, and file it under
+    media_assets (bucket 'recordings') — the compressed copy this feature exists
+    to produce. Runs as a background task so the webhook responds immediately.
+
+    ponytail: single-instance, in-process ffmpeg, whole file held in memory —
+    fine at low consultation volume; move to a queue/worker if volume grows
+    enough for that to matter.
+    """
+    await db.execute(
+        "UPDATE consultations SET recording_status = 'processing' WHERE id = $1::uuid", booking_id)
+    try:
+        recordings = await plugnmeet.fetch_recordings(room_id)
+        if not recordings:
+            raise RuntimeError("no recordings found for room")
+        rec = recordings[0]  # order_by DESC — most recent first
+        token = await plugnmeet.get_download_token(rec["record_id"])
+        async with httpx.AsyncClient(timeout=300) as client:
+            resp = await client.get(plugnmeet.download_url(token))
+            resp.raise_for_status()
+            raw = resp.content
+
+        with tempfile.TemporaryDirectory() as tmp:
+            src, dst = os.path.join(tmp, "src.mp4"), os.path.join(tmp, "out.mp4")
+            with open(src, "wb") as f:
+                f.write(raw)
+            subprocess.run(
+                [imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-i", src,
+                 "-vcodec", "libx264", "-crf", "28", "-preset", "veryfast",
+                 "-vf", "scale='min(1280,iw)':-2", "-acodec", "aac", "-b:a", "96k", dst],
+                check=True, capture_output=True, timeout=1800)
+            with open(dst, "rb") as f:
+                compressed = f.read()
+
+        object_key = f"{booking_id}.mp4"
+        await storage_sb.put(object_key, compressed, "video/mp4", bucket="recordings")
+        media_id = uuid.uuid4()
+        await db.execute(
+            """INSERT INTO media_assets (id, owner_type, storage_provider, bucket, object_key,
+                    mime_type, file_size_bytes, original_filename, is_public)
+               VALUES ($1,'recording','supabase','recordings',$2,'video/mp4',$3,$4,false)""",
+            media_id, object_key, len(compressed), f"consultation-{booking_id}.mp4")
+        await db.execute(
+            """UPDATE consultations SET recording_media_id = $2::uuid,
+                    recording_status = 'ready' WHERE id = $1::uuid""",
+            booking_id, media_id)
+    except Exception as e:
+        log.error(f"recording processing failed for booking {booking_id}: {e}")
+        await db.execute(
+            "UPDATE consultations SET recording_status = 'failed' WHERE id = $1::uuid", booking_id)
 
 
 # --- Order status (perm: orders) ---------------------------------------------

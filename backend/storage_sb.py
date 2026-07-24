@@ -52,11 +52,11 @@ def configured() -> bool:
     return bool(os.environ.get("SUPABASE_URL") and os.environ.get("SUPABASE_SERVICE_ROLE_KEY"))
 
 
-async def put(path: str, data: bytes, content_type: str) -> dict:
+async def put(path: str, data: bytes, content_type: str, bucket: str = BUCKET) -> dict:
     """Upload bytes. `path` is the object key within the bucket."""
-    async with httpx.AsyncClient(timeout=60) as c:
+    async with httpx.AsyncClient(timeout=120) as c:
         r = await c.post(
-            f"{_base_url()}/object/{BUCKET}/{path}",
+            f"{_base_url()}/object/{bucket}/{path}",
             content=data,
             headers=_headers({
                 "Content-Type": content_type,
@@ -69,10 +69,10 @@ async def put(path: str, data: bytes, content_type: str) -> dict:
     return {"path": path, "size": len(data)}
 
 
-async def get(path: str) -> Tuple[bytes, str]:
+async def get(path: str, bucket: str = BUCKET) -> Tuple[bytes, str]:
     """Download bytes + content-type. Raises FileNotFoundError when absent."""
-    async with httpx.AsyncClient(timeout=60) as c:
-        r = await c.get(f"{_base_url()}/object/{BUCKET}/{path}", headers=_headers())
+    async with httpx.AsyncClient(timeout=120) as c:
+        r = await c.get(f"{_base_url()}/object/{bucket}/{path}", headers=_headers())
     if r.status_code == 404:
         raise FileNotFoundError(path)
     if r.status_code >= 400:
@@ -88,7 +88,7 @@ async def delete(path: str) -> None:
         log.warning(f"Supabase storage delete failed [{r.status_code}]: {r.text[:200]}")
 
 
-async def sign(path: str, expires_in: int = 604800) -> str:
+async def sign(path: str, expires_in: int = 604800, bucket: str = BUCKET) -> str:
     """A time-limited, direct-to-Supabase URL for a private object.
 
     Lets the browser fetch bytes straight from Supabase's storage/CDN instead of
@@ -98,7 +98,7 @@ async def sign(path: str, expires_in: int = 604800) -> str:
     """
     async with httpx.AsyncClient(timeout=15) as c:
         r = await c.post(
-            f"{_base_url()}/object/sign/{BUCKET}/{path}",
+            f"{_base_url()}/object/sign/{bucket}/{path}",
             json={"expiresIn": expires_in},
             headers=_headers({"Content-Type": "application/json"}),
         )

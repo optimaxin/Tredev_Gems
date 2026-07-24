@@ -1,15 +1,17 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { api, formatINR } from "@/lib/api";
 import { toast } from "sonner";
 import { Calendar, User, Phone, EnvelopeSimple } from "@phosphor-icons/react";
 
-function nextSlots(n = 6) {
+// Exact time is negotiated over WhatsApp after booking (see the confirm toast below),
+// so the picker only needs a date — the nominal hour is a placeholder for slot_iso.
+function nextDates(n = 5) {
   const out = [];
   const now = new Date();
   for (let i = 0; i < n; i++) {
     const d = new Date(now);
-    d.setDate(d.getDate() + Math.ceil(i / 2));
-    d.setHours(10 + (i % 4) * 2, 0, 0, 0);
+    d.setDate(d.getDate() + i);
+    d.setHours(10, 0, 0, 0);
     out.push(d.toISOString());
   }
   return out;
@@ -20,11 +22,18 @@ export default function Consultation() {
   const [sel, setSel] = useState(null);
   const [slot, setSlot] = useState(null);
   const [form, setForm] = useState({ name: "", phone: "", email: "", concern: "" });
-  const slots = nextSlots(6);
+  const slots = nextDates(5);
+  const formRef = useRef(null);
 
   useEffect(() => {
     api.get("/consultation/astrologers").then((r) => setAstros(r.data));
   }, []);
+
+  // Selecting an astrologer opens the booking form below the grid — scroll to it so
+  // the click visibly "opens" the profile instead of silently rendering off-screen.
+  useEffect(() => {
+    if (sel) formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [sel]);
 
   const book = async (e) => {
     e.preventDefault();
@@ -48,7 +57,7 @@ export default function Consultation() {
           <button
             key={a.astrologer_id}
             onClick={() => setSel(a)}
-            className={`text-left gold-line bg-ivory p-5 hover-lift ${sel?.astrologer_id === a.astrologer_id ? "border-maroon" : ""}`}
+            className={`text-left gold-line bg-ivory p-5 hover-lift transition-opacity ${sel?.astrologer_id === a.astrologer_id ? "border-maroon" : sel ? "opacity-50" : ""}`}
           >
             <div className="aspect-[4/3] overflow-hidden gold-line mb-4">
               <img src={a.picture} alt={a.name} className="w-full h-full object-cover" />
@@ -62,9 +71,9 @@ export default function Consultation() {
       </div>
 
       {sel && (
-        <form onSubmit={book} className="mt-12 gold-line bg-ivory p-8 grid md:grid-cols-2 gap-8">
+        <form ref={formRef} onSubmit={book} className="mt-12 gold-line bg-ivory p-8 grid md:grid-cols-2 gap-8">
           <div>
-            <div className="text-xs uppercase tracking-widest text-ink-muted mb-3 flex items-center gap-2"><Calendar size={14} weight="duotone" /> Choose a slot</div>
+            <div className="text-xs uppercase tracking-widest text-ink-muted mb-3 flex items-center gap-2"><Calendar size={14} weight="duotone" /> Choose a date</div>
             <div className="grid grid-cols-2 gap-2">
               {slots.map((s) => (
                 <button
@@ -73,7 +82,7 @@ export default function Consultation() {
                   onClick={() => setSlot(s)}
                   className={`text-xs p-3 border ${slot === s ? "border-maroon bg-cream" : "border-gold/40 hover:border-maroon"}`}
                 >
-                  {new Date(s).toLocaleString("en-IN", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                  {new Date(s).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })}
                 </button>
               ))}
             </div>
