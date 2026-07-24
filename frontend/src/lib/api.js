@@ -68,6 +68,15 @@ export const mediaSrc = (ref) => {
   return `${process.env.REACT_APP_BACKEND_URL || ""}${ref}`;
 };
 
+// Journal post URLs are derived from the title (no manual link field) — same
+// title always yields the same /journal/<slug> path.
+export const slugify = (text) =>
+  String(text || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
 export const formatINR = (paise) => {
   if (paise == null) return "—";
   const rupees = Math.round(paise) / 100;

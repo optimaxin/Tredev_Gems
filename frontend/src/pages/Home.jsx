@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { api, formatINR } from "@/lib/api";
+import { api, formatINR, slugify } from "@/lib/api";
 import { ShieldCheck, QrCode, Certificate, Fingerprint, Sparkle, ArrowRight, Star, Truck, Package, HandHeart, CaretRight, CaretLeft, Play, ChatCircle, Calendar, Compass } from "@phosphor-icons/react";
 import { HOME } from "@/constants/testIds";
 import ProductCard from "@/components/gemora/ProductCard";
@@ -92,9 +92,9 @@ const DEFAULT_HOME = {
     { by: "Neha K., Delhi", rating: 5, title: "The QR sold me", body: "I scanned before opening. Seeing the temple video and lab report right there is next-level." },
   ],
   posts: [
-    { title: "How to wear a Yellow Sapphire (Pukhraj) — a complete guide", tag: "Guides", link: "" },
-    { title: "Rudraksha mukhi meanings — 1 through 21", tag: "Rudraksha", link: "" },
-    { title: "Why Tredev signs every certificate with Ed25519", tag: "Trust", link: "" },
+    { title: "How to wear a Yellow Sapphire (Pukhraj) — a complete guide", tag: "Guides", body: "" },
+    { title: "Rudraksha mukhi meanings — 1 through 21", tag: "Rudraksha", body: "" },
+    { title: "Why Tredev signs every certificate with Ed25519", tag: "Trust", body: "" },
   ],
   trustBadges: [
     { abbr: "GJEPC", name: "Gem & Jewellery Export Promotion Council" },
@@ -191,7 +191,11 @@ export default function Home() {
     [getAsset]
   );
   const posts = useMemo(
-    () => (home.posts || []).map((p, i) => ({ ...p, img: getAsset(`home_blog_${i + 1}`, POST_IMGS[i] || POST_IMGS[0]) })),
+    () => (home.posts || []).map((p, i) => ({
+      ...p,
+      img: getAsset(`home_blog_${i + 1}`, POST_IMGS[i] || POST_IMGS[0]),
+      link: p.body?.trim() ? `/journal/${slugify(p.title)}` : "",
+    })),
     [home.posts, getAsset]
   );
   const astroBandBg = getAsset("home_astro_band_bg", "https://images.pexels.com/photos/15286007/pexels-photo-15286007.jpeg");

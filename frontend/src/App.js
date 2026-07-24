@@ -14,6 +14,7 @@ import Home from "@/pages/Home";
 import Shop from "@/pages/Shop";
 import ProductDetail from "@/pages/ProductDetail";
 import Verify from "@/pages/Verify";
+import JournalPost from "@/pages/JournalPost";
 import Cart from "@/pages/Cart";
 import Checkout from "@/pages/Checkout";
 import Login from "@/pages/Login";
@@ -65,6 +66,7 @@ function AuthRouter() {
         <Route path="/product/:slug" element={<ProductDetail />} />
         <Route path="/verify" element={<Verify />} />
         <Route path="/verify/:qrToken" element={<Verify />} />
+        <Route path="/journal/:slug" element={<JournalPost />} />
         <Route path="/cart" element={<Cart />} />
         <Route path="/checkout" element={<Checkout />} />
         <Route path="/login" element={<Login />} />

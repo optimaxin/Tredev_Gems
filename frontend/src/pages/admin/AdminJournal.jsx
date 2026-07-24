@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from "react";
-import { api } from "@/lib/api";
+import { api, slugify } from "@/lib/api";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
-import { PlusCircle, Trash, FloppyDisk, ArrowSquareOut } from "@phosphor-icons/react";
+import { PlusCircle, Trash, FloppyDisk } from "@phosphor-icons/react";
 
 const inputCls = "w-full gold-line px-3 py-2 outline-none focus:border-maroon text-sm";
 
@@ -23,7 +23,7 @@ export default function AdminJournal() {
   const posts = home?.posts || [];
   const setPosts = (next) => setHome((h) => ({ ...(h || {}), posts: next }));
   const setPost = (i, k, v) => setPosts(posts.map((p, j) => (j === i ? { ...p, [k]: v } : p)));
-  const addPost = () => setPosts([...posts, { title: "", tag: "", link: "" }]);
+  const addPost = () => setPosts([...posts, { title: "", tag: "", body: "" }]);
   const rmPost = (i) => setPosts(posts.filter((_, j) => j !== i));
 
   const save = async () => {
@@ -47,9 +47,8 @@ export default function AdminJournal() {
       <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">Content</div>
       <h1 className="font-display text-4xl text-ink mt-1 mb-1">Journal</h1>
       <p className="text-sm text-ink-muted mb-6">
-        The “From the Tredev journal” cards on the homepage. Add a link to make a card clickable — an internal
-        path like <span className="font-mono">/verify</span> or a full <span className="font-mono">https://…</span> URL.
-        Card images are set under <span className="text-maroon">Site Images</span> (Blog 1–3).
+        The “From the Tredev journal” cards on the homepage. Write the article below — its page URL is generated
+        automatically from the title. Card images are set under <span className="text-maroon">Site Images</span> (Blog 1–3).
       </p>
 
       {home === null ? (
@@ -75,9 +74,18 @@ export default function AdminJournal() {
                   </label>
                 </div>
                 <label className="block mt-3">
-                  <div className="text-xs text-ink-muted mb-1 flex items-center gap-1">Link <ArrowSquareOut size={11} /></div>
-                  <input value={p.link || ""} onChange={(e) => setPost(i, "link", e.target.value)} placeholder="/journal/pukhraj-guide or https://…" className={inputCls + " font-mono text-xs"} />
+                  <div className="text-xs text-ink-muted mb-1">Content</div>
+                  <textarea
+                    rows={8}
+                    value={p.body || ""}
+                    onChange={(e) => setPost(i, "body", e.target.value)}
+                    placeholder="Write the journal article here…"
+                    className={inputCls + " resize-y"}
+                  />
                 </label>
+                {p.title && (
+                  <div className="mt-2 text-[11px] font-mono text-ink-muted">/journal/{slugify(p.title)}</div>
+                )}
               </div>
             ))}
           </div>
