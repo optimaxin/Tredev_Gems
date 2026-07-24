@@ -235,6 +235,18 @@ def render_template(body: str, variables: Dict[str, Any]) -> str:
     return re.sub(r"\n{3,}", "\n\n", out).strip()
 
 
+def extract_variables(body: str) -> List[str]:
+    """List the distinct {{placeholders}} a template body references, in first-seen
+    order. Used when a staff-authored template is saved, so its `variables` column
+    (shown in the editor, filled with sample values by the "Test" button) never
+    drifts out of sync with what the body actually contains."""
+    seen: List[str] = []
+    for name in _VAR_RE.findall(body or ""):
+        if name not in seen:
+            seen.append(name)
+    return seen
+
+
 def google_calendar_link(title: str, start: datetime, *, duration_minutes: int = 30,
                          details: str = "", location: str = "") -> str:
     """A 'add to calendar' URL that opens Google Calendar with the event pre-filled.

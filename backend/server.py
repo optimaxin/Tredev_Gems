@@ -2875,7 +2875,7 @@ async def _mark_paid(order: dict, payment_id: str) -> dict:
     to_phone = (buyer or {}).get("phone") or result.get("shipping_phone")
     if to_phone:
         items = result.get("items") or []
-        _wa_fire("order_placed", phone=to_phone,
+        _wa_fire_event("order.placed", phone=to_phone,
                  name=(buyer or {}).get("name") or result.get("shipping_name") or "friend",
                  user_id=order.get("user_id"),
                  variables={
@@ -3191,7 +3191,7 @@ async def admin_dispatch(body: DispatchIn, user_id: str = Depends(require_admin)
     buyer = await _load_user(user_id=order["user_id"]) if order.get("user_id") else None
     to_phone = (buyer or {}).get("phone")
     if to_phone:
-        _wa_fire("order_shipped", phone=to_phone,
+        _wa_fire_event("order.shipped", phone=to_phone,
                  name=(buyer or {}).get("name") or "friend", user_id=order.get("user_id"),
                  variables={
                      "order_id": order["order_id"],
@@ -3665,7 +3665,7 @@ async def book(body: ConsultationBookIn, user_id: Optional[str] = Depends(get_us
             f"Tredev consultation with {astro['name']}", slot_at,
             duration_minutes=30,
             details=f"Join: {meeting_link}", location=meeting_link)
-        _wa_fire("consultation_booked", phone=body.phone, name=body.name, user_id=user_id,
+        _wa_fire_event("consultation.booked", phone=body.phone, name=body.name, user_id=user_id,
                  variables={"astrologer_name": astro["name"], "slot": slot_human,
                             "meeting_link": meeting_link, "calendar_link": cal})
     return await _load_consultation(str(booking_id))
@@ -4697,7 +4697,7 @@ async def admin_create_astrologer(body: AstrologerIn, actor: str = Depends(requi
         welcome_url = _welcome_url(token)
         # WhatsApp the set-password link straight to the astrologer, if we have a number.
         if astro_phone:
-            _wa_fire("astrologer_welcome", phone=astro_phone, name=payload["name"],
+            _wa_fire_event("astrologer.created", phone=astro_phone, name=payload["name"],
                      variables={"welcome_url": welcome_url})
     doc = _shape_astro(await db.fetch_one(_ASTRO_SELECT + " WHERE a.id = $1::uuid", str(astro_id)))
     await audit_log(actor, "astrologer.create", target=str(astro_id), meta={"email": payload.get("email")})
@@ -5064,16 +5064,16 @@ async def admin_update_order_status(order_id: str, body: OrderStatusIn, actor: s
 
     # WhatsApp update on the transitions the buyer cares about. Shipped is handled by
     # the dispatch flow (which carries tracking), so it is not duplicated here.
-    _WA_STATUS_TEMPLATE = {"delivered": "order_delivered", "cancelled": "order_cancelled"}
-    tpl_key = _WA_STATUS_TEMPLATE.get(body.status)
-    if tpl_key and body.status != prev["status"]:
+    _WA_STATUS_EVENT = {"delivered": "order.delivered", "cancelled": "order.cancelled"}
+    event = _WA_STATUS_EVENT.get(body.status)
+    if event and body.status != prev["status"]:
         buyer = await _load_user(user_id=prev["user_id"]) if prev.get("user_id") else None
         to_phone = (buyer or {}).get("phone") or prev.get("shipping_phone")
         if to_phone:
-            _wa_fire(tpl_key, phone=to_phone,
-                     name=(buyer or {}).get("name") or prev.get("shipping_name") or "friend",
-                     user_id=prev.get("user_id"),
-                     variables={"order_id": order_id})
+            _wa_fire_event(event, phone=to_phone,
+                           name=(buyer or {}).get("name") or prev.get("shipping_name") or "friend",
+                           user_id=prev.get("user_id"),
+                           variables={"order_id": order_id})
     return await _load_order(order_id)
 
 
@@ -5805,40 +5805,74 @@ async def _wa_notify(template_key: str, *, phone: Optional[str], name: str = "",
     return {"sent": True, "message_id": res.get("messageId")}
 
 
-def _wa_fire(template_key: str, **kwargs) -> None:
-    """Fire-and-forget a notification so the customer's HTTP response isn't blocked on
-    WhatsApp latency. Exceptions are logged, never propagated to the request."""
+def _wa_fire_event(event: str, **kwargs) -> None:
+    """Fire-and-forget EVERY enabled template bound to `event` (fire-and-forget, so
+    the triggering request isn't blocked on WhatsApp latency; exceptions are logged,
+    never propagated). Unlike firing a single fixed key, this means a template a
+    staff member creates and binds to an existing event (via
+    POST /admin/whatsapp/templates) starts firing immediately — no code change or
+    deploy needed here. Multiple templates can be bound to the same event; all
+    enabled ones send."""
     async def _run():
         try:
-            await _wa_notify(template_key, **kwargs)
+            rows = await db.fetch_all(
+                "SELECT key FROM wa_templates WHERE trigger_event = $1 AND enabled", event)
         except Exception as e:
-            log.warning(f"WA notify task '{template_key}' crashed: {e}")
+            log.warning(f"WA fire-event '{event}' lookup crashed: {e}")
+            return
+        for row in rows:
+            try:
+                await _wa_notify(row["key"], **kwargs)
+            except Exception as e:
+                log.warning(f"WA notify '{row['key']}' (event {event}) crashed: {e}")
     try:
         asyncio.get_running_loop().create_task(_run())
     except RuntimeError:
         pass  # no loop (shouldn't happen inside a request) — skip rather than crash
 
 
-# Static description of every automated trigger, for the admin "Automations" screen.
-# Keeps the documentation the user asked for next to the code it describes.
-WA_AUTOMATIONS = [
-    {"key": "order_placed", "event": "Order paid",
-     "when": "A customer completes payment", "to": "The buyer"},
-    {"key": "order_shipped", "event": "Order dispatched",
-     "when": "Admin dispatches the order (tracking added)", "to": "The buyer"},
-    {"key": "order_delivered", "event": "Order delivered",
-     "when": "Order status set to Delivered", "to": "The buyer"},
-    {"key": "order_cancelled", "event": "Order cancelled",
-     "when": "Order status set to Cancelled", "to": "The buyer"},
-    {"key": "consultation_booked", "event": "Consultation booked",
-     "when": "A customer books a consultation", "to": "The customer (with calendar link)"},
-    {"key": "astrologer_welcome", "event": "Astrologer onboarded",
-     "when": "Admin creates an astrologer with a phone number", "to": "The astrologer"},
-]
+# The real event hooks wired into the app. A template's `trigger_event` must be one
+# of these keys, or "manual" (never fires automatically — usable only via Campaigns
+# or the Templates "Test" button). This is both the validation set for creating a
+# template AND the catalogue the admin "Automations" screen renders, so the two can
+# never drift apart.
+WA_TRIGGER_EVENTS = {
+    "order.placed": {"label": "Order paid",
+                     "when": "A customer completes payment", "to": "The buyer"},
+    "order.shipped": {"label": "Order dispatched",
+                      "when": "Admin dispatches the order (tracking added)", "to": "The buyer"},
+    "order.delivered": {"label": "Order delivered",
+                        "when": "Order status set to Delivered", "to": "The buyer"},
+    "order.cancelled": {"label": "Order cancelled",
+                        "when": "Order status set to Cancelled", "to": "The buyer"},
+    "consultation.booked": {"label": "Consultation booked",
+                            "when": "A customer books a consultation",
+                            "to": "The customer (with calendar link)"},
+    "astrologer.created": {"label": "Astrologer onboarded",
+                           "when": "Admin creates an astrologer with a phone number",
+                           "to": "The astrologer"},
+}
+WA_TEMPLATE_CATEGORIES = {"transactional", "consultation", "astrologer", "marketing"}
+
+
+def _wa_validate_trigger_event(v: str) -> None:
+    if v != "manual" and v not in WA_TRIGGER_EVENTS:
+        raise HTTPException(
+            400, f"Unknown trigger_event. Allowed: manual, {sorted(WA_TRIGGER_EVENTS)}")
+
+
+class WaTemplateCreateIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    category: str = "transactional"
+    trigger_event: str = "manual"
+    body: str = Field(min_length=1, max_length=4096)
+    include_calendar: bool = False
 
 
 class WaTemplateUpdateIn(BaseModel):
     name: Optional[str] = None
+    category: Optional[str] = None
+    trigger_event: Optional[str] = None
     body: Optional[str] = Field(default=None, max_length=4096)
     enabled: Optional[bool] = None
     include_calendar: Optional[bool] = None
@@ -5848,6 +5882,16 @@ class WaTemplateTestIn(BaseModel):
     phone: str
 
 
+@api.get("/admin/whatsapp/meta")
+async def wa_meta(_: str = Depends(require_perm("whatsapp"))):
+    """Feeds the "new automation / template" form: which events exist to bind to,
+    and which categories are valid."""
+    return {
+        "trigger_events": [{"key": k, **v} for k, v in WA_TRIGGER_EVENTS.items()],
+        "categories": sorted(WA_TEMPLATE_CATEGORIES),
+    }
+
+
 @api.get("/admin/whatsapp/templates")
 async def wa_templates_list(_: str = Depends(require_perm("whatsapp"))):
     return await db.fetch_all(
@@ -5855,7 +5899,33 @@ async def wa_templates_list(_: str = Depends(require_perm("whatsapp"))):
                   include_calendar, updated_at
              FROM wa_templates ORDER BY
              CASE category WHEN 'transactional' THEN 0 WHEN 'consultation' THEN 1
-                           WHEN 'astrologer' THEN 2 ELSE 3 END, key""")
+                           WHEN 'astrologer' THEN 2 ELSE 3 END, name""")
+
+
+@api.post("/admin/whatsapp/templates")
+async def wa_template_create(body: WaTemplateCreateIn,
+                             actor: str = Depends(require_perm("whatsapp"))):
+    """Create a new template. Bind it to a real trigger_event to make it a live
+    automation (it fires alongside any other enabled template on that event); leave
+    it as "manual" for a reusable message that's only sent via Campaigns or a
+    deliberate Test send."""
+    _wa_validate_trigger_event(body.trigger_event)
+    if body.category not in WA_TEMPLATE_CATEGORIES:
+        raise HTTPException(400, f"Unknown category. Allowed: {sorted(WA_TEMPLATE_CATEGORIES)}")
+    variables = wa_openwa.extract_variables(body.body)
+    base_key = re.sub(r"[^a-z0-9]+", "_", body.name.strip().lower()).strip("_") or "template"
+    key = base_key
+    if await db.fetch_val("SELECT 1 FROM wa_templates WHERE key = $1", key):
+        key = f"{base_key}_{uuid.uuid4().hex[:6]}"
+    await db.execute(
+        """INSERT INTO wa_templates (key, name, category, trigger_event, body,
+                                     variables, enabled, include_calendar, updated_by)
+           VALUES ($1,$2,$3,$4,$5,$6,true,$7,$8::uuid)""",
+        key, body.name, body.category, body.trigger_event, body.body, variables,
+        body.include_calendar, actor)
+    await audit_log(actor, "whatsapp.template.create", key,
+                    {"name": body.name, "trigger_event": body.trigger_event})
+    return await db.fetch_one("SELECT * FROM wa_templates WHERE key = $1", key)
 
 
 @api.put("/admin/whatsapp/templates/{key}")
@@ -5864,8 +5934,17 @@ async def wa_template_update(key: str, body: WaTemplateUpdateIn,
     fields = body.model_dump(exclude_unset=True)
     if not fields:
         raise HTTPException(400, "Nothing to update")
+    if "trigger_event" in fields:
+        _wa_validate_trigger_event(fields["trigger_event"])
+    if "category" in fields and fields["category"] not in WA_TEMPLATE_CATEGORIES:
+        raise HTTPException(400, f"Unknown category. Allowed: {sorted(WA_TEMPLATE_CATEGORIES)}")
+    # Body changed -> re-derive variables so the editor/test-send never drift from
+    # what the text actually references.
+    if "body" in fields:
+        fields["variables"] = wa_openwa.extract_variables(fields["body"])
     sets, args = [], []
-    for col in ("name", "body", "enabled", "include_calendar"):
+    for col in ("name", "category", "trigger_event", "body", "variables",
+               "enabled", "include_calendar"):
         if col in fields:
             args.append(fields[col])
             sets.append(f"{col} = ${len(args)}")
@@ -5878,8 +5957,17 @@ async def wa_template_update(key: str, body: WaTemplateUpdateIn,
     if not got:
         raise HTTPException(404, "Template not found")
     action = "whatsapp.template.toggle" if "enabled" in fields else "whatsapp.template.update"
-    await audit_log(actor, action, key, {k: fields[k] for k in fields if k != "body"})
+    await audit_log(actor, action, key, {k: v for k, v in fields.items() if k != "body"})
     return await db.fetch_one("SELECT * FROM wa_templates WHERE key = $1", key)
+
+
+@api.delete("/admin/whatsapp/templates/{key}")
+async def wa_template_delete(key: str, actor: str = Depends(require_perm("whatsapp"))):
+    got = await db.fetch_val("DELETE FROM wa_templates WHERE key = $1 RETURNING key", key)
+    if not got:
+        raise HTTPException(404, "Template not found")
+    await audit_log(actor, "whatsapp.template.delete", key)
+    return {"ok": True}
 
 
 @api.post("/admin/whatsapp/templates/{key}/test")
@@ -5901,17 +5989,18 @@ async def wa_template_test(key: str, body: WaTemplateTestIn,
 
 @api.get("/admin/whatsapp/automations")
 async def wa_automations(_: str = Depends(require_perm("whatsapp"))):
-    """The trigger catalogue for the admin panel — what fires, when, to whom, and
-    whether it is currently on (driven by each template's `enabled` flag)."""
-    rows = {r["key"]: r for r in await db.fetch_all(
-        "SELECT key, name, enabled, category FROM wa_templates")}
-    out = []
-    for a in WA_AUTOMATIONS:
-        t = rows.get(a["key"])
-        out.append({**a, "template_name": t["name"] if t else a["key"],
-                    "enabled": bool(t["enabled"]) if t else False,
-                    "exists": t is not None})
-    return out
+    """Every real event hook and every template currently bound to it — 0, 1, or
+    many. All ENABLED templates on an event fire when it happens. A template staff
+    create and bind to an event shows up here immediately."""
+    rows = await db.fetch_all(
+        "SELECT key, name, enabled, trigger_event FROM wa_templates "
+        "WHERE trigger_event != 'manual' ORDER BY name")
+    by_event: Dict[str, list] = {}
+    for r in rows:
+        by_event.setdefault(r["trigger_event"], []).append(
+            {"key": r["key"], "name": r["name"], "enabled": r["enabled"]})
+    return [{"event": event, **meta, "templates": by_event.get(event, [])}
+            for event, meta in WA_TRIGGER_EVENTS.items()]
 
 
 # ── Admin: WhatsApp inbox, campaigns, session ────────────────────────────────
