@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, Link } from "react-router-dom";
 import { api } from "@/lib/api";
 import ProductCard from "@/components/gemora/ProductCard";
 import CategoryBanner from "@/components/gemora/CategoryBanner";
@@ -124,15 +124,28 @@ export default function Shop() {
               <div className="mt-7">
                 <div className="text-[11px] uppercase tracking-[0.2em] text-ink-muted mb-3">Rashi</div>
                 <div className="flex flex-wrap gap-2.5">
-                  {rashiList.map((r) => (
-                    <button
-                      key={r.key}
-                      onClick={() => setFilter("rashi", rashi === r.key ? "" : r.key)}
-                      className={`text-sm px-3.5 py-2 border transition-colors ${rashi === r.key ? "bg-maroon text-ivory border-maroon" : "border-gold/40 text-ink-soft hover:border-maroon"}`}
-                    >
-                      {r.label}
-                    </button>
-                  ))}
+                  {rashiList.map((r) => {
+                    const chipCls = `text-sm px-3.5 py-2 border transition-colors ${rashi === r.key ? "bg-maroon text-ivory border-maroon" : "border-gold/40 text-ink-soft hover:border-maroon"}`;
+                    // A mapped rashi (stone + page URL, set under Admin → Website → Rashi)
+                    // sends buyers straight to that page instead of just filtering in place.
+                    if (r.url?.trim()) {
+                      const external = /^https?:\/\//i.test(r.url);
+                      return external ? (
+                        <a key={r.key} href={r.url} target="_blank" rel="noreferrer" className={chipCls}>{r.label}</a>
+                      ) : (
+                        <Link key={r.key} to={r.url} className={chipCls}>{r.label}</Link>
+                      );
+                    }
+                    return (
+                      <button
+                        key={r.key}
+                        onClick={() => setFilter("rashi", rashi === r.key ? "" : r.key)}
+                        className={chipCls}
+                      >
+                        {r.label}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}

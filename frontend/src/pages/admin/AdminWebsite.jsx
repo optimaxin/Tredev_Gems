@@ -62,7 +62,7 @@ export default function AdminWebsite() {
   const rmLink = (ci, li) => setFooter((f) => ({ ...f, columns: f.columns.map((c, i) => (i !== ci ? c : { ...c, links: c.links.filter((_, j) => j !== li) })) }));
 
   // ── Taxonomy (purposes / rashi) ──
-  const setTax = (setter, i, v) => setter((list) => list.map((it, j) => (j === i ? { ...it, label: v } : it)));
+  const setTax = (setter, i, k, v) => setter((list) => list.map((it, j) => (j === i ? { ...it, [k]: v } : it)));
   const addTax = (setter) => setter((list) => [...(list || []), { key: "", label: "" }]);
   const rmTax = (setter, i) => setter((list) => list.filter((_, j) => j !== i));
 
@@ -96,14 +96,27 @@ export default function AdminWebsite() {
   );
   const homeSave = <SaveBtn saving={saving === "home"} onClick={() => save("home", "/admin/site-content/home", home)} />;
 
-  const taxEditor = (label, list, setter, url, saveKey) => (
-    <Section title={label} hint="Buyers filter the shop by these. New entries appear as filter options; the key is auto-generated from the name.">
+  const taxEditor = (label, list, setter, url, saveKey, opts = {}) => (
+    <Section
+      title={label}
+      hint={opts.mapStone
+        ? "Buyers filter the shop by these. New entries appear as filter options; the key is auto-generated from the name. Map each to a stone and, optionally, a page to send buyers to — leave the page blank to use the shop filter."
+        : "Buyers filter the shop by these. New entries appear as filter options; the key is auto-generated from the name."}
+    >
       <div className="space-y-2 max-w-xl">
         {(list || []).map((it, i) => (
-          <div key={i} className="flex gap-2 items-center">
-            <input value={it.label} onChange={(e) => setTax(setter, i, e.target.value)} placeholder="Name (e.g. Wealth)" className={inputCls} />
-            {it.key && <span className="font-mono text-[10px] text-ink-muted w-24 shrink-0 truncate">{it.key}</span>}
-            <button onClick={() => rmTax(setter, i)} className="text-ink-muted hover:text-revoked shrink-0"><Trash size={14} /></button>
+          <div key={i} className={opts.mapStone ? "gold-line bg-cream p-3" : "flex gap-2 items-center"}>
+            <div className="flex gap-2 items-center">
+              <input value={it.label} onChange={(e) => setTax(setter, i, "label", e.target.value)} placeholder="Name (e.g. Wealth)" className={inputCls} />
+              {it.key && <span className="font-mono text-[10px] text-ink-muted w-24 shrink-0 truncate">{it.key}</span>}
+              <button onClick={() => rmTax(setter, i)} className="text-ink-muted hover:text-revoked shrink-0"><Trash size={14} /></button>
+            </div>
+            {opts.mapStone && (
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <input value={it.stone || ""} onChange={(e) => setTax(setter, i, "stone", e.target.value)} placeholder="Stone (e.g. Yellow Sapphire)" className={inputCls} />
+                <input value={it.url || ""} onChange={(e) => setTax(setter, i, "url", e.target.value)} placeholder={`/shop?rashi=${it.key || "..."} or https://…`} className={inputCls + " font-mono text-xs"} />
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -373,7 +386,7 @@ export default function AdminWebsite() {
 
       {/* Taxonomy */}
       {canTax && purposes && taxEditor("Purposes", purposes, setPurposes, "/admin/taxonomy/purposes", "purposes")}
-      {canTax && rashi && taxEditor("Rashi", rashi, setRashi, "/admin/taxonomy/rashi", "rashi")}
+      {canTax && rashi && taxEditor("Rashi", rashi, setRashi, "/admin/taxonomy/rashi", "rashi", { mapStone: true })}
     </div>
   );
 }

@@ -1297,12 +1297,18 @@ _DEFAULT_PURPOSES = [
     {"key": "health", "label": "Health"},
 ]
 _DEFAULT_RASHI = [
-    {"key": "mesha", "label": "Mesha (Aries)"}, {"key": "vrishabha", "label": "Vrishabha (Taurus)"},
-    {"key": "mithuna", "label": "Mithuna (Gemini)"}, {"key": "karka", "label": "Karka (Cancer)"},
-    {"key": "simha", "label": "Simha (Leo)"}, {"key": "kanya", "label": "Kanya (Virgo)"},
-    {"key": "tula", "label": "Tula (Libra)"}, {"key": "vrishchika", "label": "Vrishchika (Scorpio)"},
-    {"key": "dhanu", "label": "Dhanu (Sagittarius)"}, {"key": "makara", "label": "Makara (Capricorn)"},
-    {"key": "kumbha", "label": "Kumbha (Aquarius)"}, {"key": "meena", "label": "Meena (Pisces)"},
+    {"key": "mesha", "label": "Mesha (Aries)", "stone": "", "url": ""},
+    {"key": "vrishabha", "label": "Vrishabha (Taurus)", "stone": "", "url": ""},
+    {"key": "mithuna", "label": "Mithuna (Gemini)", "stone": "", "url": ""},
+    {"key": "karka", "label": "Karka (Cancer)", "stone": "", "url": ""},
+    {"key": "simha", "label": "Simha (Leo)", "stone": "", "url": ""},
+    {"key": "kanya", "label": "Kanya (Virgo)", "stone": "", "url": ""},
+    {"key": "tula", "label": "Tula (Libra)", "stone": "", "url": ""},
+    {"key": "vrishchika", "label": "Vrishchika (Scorpio)", "stone": "", "url": ""},
+    {"key": "dhanu", "label": "Dhanu (Sagittarius)", "stone": "", "url": ""},
+    {"key": "makara", "label": "Makara (Capricorn)", "stone": "", "url": ""},
+    {"key": "kumbha", "label": "Kumbha (Aquarius)", "stone": "", "url": ""},
+    {"key": "meena", "label": "Meena (Pisces)", "stone": "", "url": ""},
 ]
 _DEFAULT_ANNOUNCEMENT = {"messages": [
     {"text": "100% Lab-Certified · Ed25519 signed · Dispatched in 48h", "deva": "प्रमाणित"},
@@ -1516,7 +1522,9 @@ async def admin_put_taxonomy(name: str, body: SiteContentIn,
     if name not in _TAXONOMY_KEYS:
         raise HTTPException(400, f"Unknown taxonomy. Allowed: {sorted(_TAXONOMY_KEYS)}")
     # Normalise to a clean [{key,label}] list: label required, key slugified from it
-    # if missing, duplicates and blanks dropped.
+    # if missing, duplicates and blanks dropped. Rashi additionally carries the
+    # mapped stone name + an optional page URL (custom link, else the shop filter
+    # is used as the default destination on the frontend).
     items, seen = [], set()
     for it in (body.value or []):
         label = (it.get("label") or "").strip()
@@ -1526,7 +1534,11 @@ async def admin_put_taxonomy(name: str, body: SiteContentIn,
         if not k or k in seen:
             continue
         seen.add(k)
-        items.append({"key": k, "label": label})
+        entry = {"key": k, "label": label}
+        if name == "rashi":
+            entry["stone"] = (it.get("stone") or "").strip()
+            entry["url"] = (it.get("url") or "").strip()
+        items.append(entry)
     await _upsert_content(name, items)
     await audit_log(actor, "taxonomy.update", name, {"count": len(items)})
     return {"ok": True, "name": name, "items": items}
