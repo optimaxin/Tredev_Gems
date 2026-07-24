@@ -18,6 +18,7 @@ export default function AdminAstrologers() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY);
   const [welcomeModal, setWelcomeModal] = useState(null); // { name, email, url }
+  const [detailId, setDetailId] = useState(null); // astrologer_id whose detail modal is open
 
   const refresh = useCallback(async () => {
     const { data } = await api.get("/admin/astrologers");
@@ -157,7 +158,7 @@ export default function AdminAstrologers() {
       <div className="grid md:grid-cols-2 gap-4">
         {astros.filter((a) => matchesQuery(query, [a.name, a.email, a.devanagari, a.affiliate_code, ...(a.expertise || [])])).map((a) => (
           <div key={a.astrologer_id} data-testid={`astro-card-${a.astrologer_id}`} className={`gold-line bg-ivory p-4 ${a.is_active === false ? "opacity-60" : ""}`}>
-            <div className="flex gap-4">
+            <div className="flex gap-4 cursor-pointer" onClick={() => setDetailId(a.astrologer_id)} data-testid={`astro-open-detail-${a.astrologer_id}`}>
               {a.picture ? <div className="w-20 h-20 gold-line overflow-hidden shrink-0"><img src={a.picture} alt="" className="w-full h-full object-cover" /></div> : <div className="w-20 h-20 gold-line bg-cream" />}
               <div className="flex-1 min-w-0">
                 <div className="font-deva text-gold-soft text-sm">{a.devanagari}</div>
@@ -225,6 +226,112 @@ export default function AdminAstrologers() {
       </div>
 
       {welcomeModal && <WelcomeLinkModal m={welcomeModal} onClose={() => setWelcomeModal(null)} />}
+      {detailId && <AstrologerDetailModal astrologerId={detailId} onClose={() => setDetailId(null)} />}
+    </div>
+  );
+}
+
+function AstrologerDetailModal({ astrologerId, onClose }) {
+  const [data, setData] = useState(null);
+  const [busyId, setBusyId] = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      const { data } = await api.get(`/admin/astrologers/${astrologerId}/affiliate`);
+      setData(data);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Could not load astrologer details");
+      onClose();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [astrologerId]);
+  useEffect(() => { load(); }, [load]);
+
+  const toggleStatus = async (c) => {
+    const next = c.status === "paid" ? "pending" : "paid";
+    setBusyId(c.commission_id);
+    try {
+      await api.patch(`/admin/affiliate-commissions/${c.commission_id}`, { status: next });
+      toast.success(next === "paid" ? "Marked as paid" : "Marked as pending");
+      await load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+    finally { setBusyId(null); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4" data-testid="astro-detail-modal">
+      <div className="absolute inset-0 bg-maroon-deep/70 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-ivory gold-line-strong w-full max-w-2xl max-h-[85vh] overflow-y-auto p-6">
+        <button onClick={onClose} className="absolute top-3 right-3 text-ink-muted hover:text-maroon"><X size={18} /></button>
+        {!data ? (
+          <div className="py-16 text-center text-ink-muted">Loading…</div>
+        ) : (
+          <>
+            <div className="flex gap-4">
+              {data.astrologer.picture ? <div className="w-24 h-24 gold-line overflow-hidden shrink-0"><img src={data.astrologer.picture} alt="" className="w-full h-full object-cover" /></div> : <div className="w-24 h-24 gold-line bg-cream shrink-0" />}
+              <div className="min-w-0">
+                <div className="font-deva text-gold-soft text-sm">{data.astrologer.devanagari}</div>
+                <div className="font-display text-2xl text-maroon-deep truncate">{data.astrologer.name}</div>
+                <div className="text-xs text-ink-muted">{data.astrologer.years} yrs · {(data.astrologer.expertise || []).join(", ")}</div>
+                <div className="flex items-baseline gap-3 mt-1">
+                  <div className="font-display text-lg text-maroon-deep">{formatINR(data.astrologer.price)}</div>
+                  <div className="text-[11px] uppercase tracking-widest text-gold-soft">{data.astrologer.commission_pct ?? 0}% commission</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-x-6 gap-y-1 text-xs mt-4 text-ink-muted">
+              <div>Email: <span className="font-mono text-ink">{data.astrologer.email || "—"}</span></div>
+              <div>Phone: <span className="font-mono text-ink">{data.astrologer.phone || "—"}</span></div>
+              <div>Affiliate code: <span className="font-mono text-ink">{data.astrologer.affiliate_code || "—"}</span></div>
+              <div>Status: <span className="text-ink">{data.astrologer.is_active === false ? "Inactive" : "Active"}</span></div>
+            </div>
+            {data.astrologer.bio && <p className="text-sm text-ink-soft mt-3">{data.astrologer.bio}</p>}
+
+            <div className="mt-5 grid grid-cols-4 gap-2 text-center">
+              {[["Clicks", data.summary.visits], ["Orders", data.summary.orders],
+                ["Total", formatINR(data.summary.total_commission)],
+                ["Pending", formatINR(data.summary.pending_commission)]].map(([l, v]) => (
+                <div key={l} className="bg-cream border border-gold/30 p-2">
+                  <div className="text-[9px] uppercase tracking-widest text-gold-soft">{l}</div>
+                  <div className="text-sm text-ink mt-0.5">{v}</div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-5">
+              <div className="text-xs uppercase tracking-widest text-gold-soft mb-2">Earnings</div>
+              {data.commissions.length === 0 ? (
+                <div className="text-sm text-ink-muted">No commissions yet.</div>
+              ) : (
+                <div className="divide-y divide-gold/20 max-h-64 overflow-y-auto">
+                  {data.commissions.map((c) => (
+                    <div key={c.commission_id} data-testid={`commission-row-${c.commission_id}`} className="py-2 flex items-center justify-between gap-3 text-xs">
+                      <div className="min-w-0">
+                        <div className="font-mono text-ink-muted">{new Date(c.created_at).toLocaleDateString()} · {c.order_id.slice(0, 8)}</div>
+                        <div className="font-display text-maroon-deep text-sm">{formatINR(c.commission_amount)}</div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className={`uppercase tracking-widest text-[10px] px-2 py-1 border ${c.status === "paid" ? "text-verified border-verified/40" : "text-gold-soft border-gold/40"}`}>
+                          {c.status}
+                        </span>
+                        <button
+                          onClick={() => toggleStatus(c)}
+                          disabled={busyId === c.commission_id}
+                          data-testid={`commission-toggle-${c.commission_id}`}
+                          className="border border-maroon text-maroon hover:bg-maroon hover:text-ivory px-2 py-1 text-[10px] uppercase tracking-widest disabled:opacity-50"
+                        >
+                          {busyId === c.commission_id ? "…" : c.status === "paid" ? "Mark pending" : "Mark paid"}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }

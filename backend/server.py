@@ -4825,6 +4825,32 @@ async def admin_astrologer_affiliate(astrologer_id: str, _: str = Depends(requir
     return {"astrologer": a, "summary": summary, "commissions": commissions}
 
 
+class CommissionStatusIn(BaseModel):
+    status: str  # "pending" | "paid"
+
+
+@api.patch("/admin/affiliate-commissions/{commission_id}")
+async def admin_update_commission_status(commission_id: str, body: CommissionStatusIn,
+                                          actor: str = Depends(require_perm("astrologers"))):
+    """Toggle a commission between pending/paid. Every change is written to the
+    audit trail (admin_events) — who flipped it, and from what to what."""
+    if body.status not in ("pending", "paid"):
+        raise HTTPException(400, "status must be 'pending' or 'paid'")
+    row = await db.fetch_one(
+        "SELECT id::text, status::text AS status, astrologer_id::text FROM affiliate_commissions WHERE id = $1::uuid",
+        commission_id)
+    if not row:
+        raise HTTPException(404, "Commission not found")
+    await db.execute(
+        """UPDATE affiliate_commissions SET status = $2::commission_status,
+                paid_at = CASE WHEN $2 = 'paid' THEN now() ELSE NULL END
+           WHERE id = $1::uuid""",
+        commission_id, body.status)
+    await audit_log(actor, "affiliate_commission.status_change", target=commission_id,
+                     meta={"astrologer_id": row["astrologer_id"], "from": row["status"], "to": body.status})
+    return {"ok": True, "commission_id": commission_id, "status": body.status}
+
+
 # --- Astrologer-side (self-serve) auth & workspace ---------------------------
 @api.post("/astrologer/auth/login")
 async def astro_login(body: AstroLoginIn, _rl: None = Depends(rate_limit(10, 60))):
