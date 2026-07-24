@@ -5156,13 +5156,16 @@ async def add_my_query_note(query_id: str, body: QueryReplyIn, user_id: str = De
     """Let a buyer add a follow-up note to their OWN query and see the full thread.
 
     Author is the buyer's own user_id, so the UI can tell their replies from staff
-    ones (staff notes carry a different author_id). A reply on a resolved/closed
-    query bumps it back to in_progress so the support inbox surfaces it again.
+    ones (staff notes carry a different author_id). A reply on a resolved query
+    bumps it back to in_progress so the support inbox surfaces it again. A closed
+    query is terminal — staff closed it, so the buyer must raise a fresh query.
     """
     owned = await db.fetch_one(
-        "SELECT id FROM queries WHERE id = $1::uuid AND user_id = $2::uuid", query_id, user_id)
+        "SELECT id, status FROM queries WHERE id = $1::uuid AND user_id = $2::uuid", query_id, user_id)
     if not owned:
         raise HTTPException(404, "Query not found")
+    if owned["status"] == "closed":
+        raise HTTPException(409, "This query is closed. Please raise a new query.")
     note = (body.note or "").strip()
     if not note:
         raise HTTPException(400, "Note is empty")
@@ -5174,7 +5177,7 @@ async def add_my_query_note(query_id: str, body: QueryReplyIn, user_id: str = De
         await conn.execute(
             """UPDATE queries
                   SET updated_at = now(),
-                      status = CASE WHEN status IN ('resolved','closed')
+                      status = CASE WHEN status = 'resolved'
                                     THEN 'in_progress'::query_status ELSE status END
                 WHERE id = $1::uuid""", query_id)
     return await db.fetch_one(_QUERY_SELECT + " WHERE q.id = $1::uuid", query_id)

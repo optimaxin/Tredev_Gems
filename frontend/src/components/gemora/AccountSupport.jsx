@@ -113,28 +113,34 @@ function QueryModal({ query, onClose, onUpdated }) {
         </div>
 
         {/* reply box */}
-        <div className="border-t border-gold/30 p-4 bg-ivory">
-          <div className="flex items-end gap-2">
-            <textarea
-              rows={2}
-              value={reply}
-              onChange={(e) => setReply(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send(); }}
-              placeholder="Add a note or reply to support…"
-              data-testid="query-reply-input"
-              className="flex-1 gold-line bg-ivory px-3 py-2.5 text-sm outline-none focus:border-maroon resize-none"
-            />
-            <button
-              onClick={send}
-              disabled={sending || !reply.trim()}
-              data-testid="query-reply-send"
-              className="brand-gradient text-ivory px-5 py-3 text-xs uppercase tracking-widest inline-flex items-center gap-2 hover-lift disabled:opacity-40 shrink-0"
-            >
-              <PaperPlaneTilt size={15} weight="duotone" /> {sending ? "Sending…" : "Send"}
-            </button>
+        {query.status === "closed" ? (
+          <div className="border-t border-gold/30 p-4 bg-ivory text-center text-xs text-ink-muted">
+            This query is closed. Please raise a new query if you need further help.
           </div>
-          <div className="text-[10px] text-ink-muted mt-2">Press ⌘/Ctrl + Enter to send. Our team is notified of every reply.</div>
-        </div>
+        ) : (
+          <div className="border-t border-gold/30 p-4 bg-ivory">
+            <div className="flex items-end gap-2">
+              <textarea
+                rows={2}
+                value={reply}
+                onChange={(e) => setReply(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send(); }}
+                placeholder="Add a note or reply to support…"
+                data-testid="query-reply-input"
+                className="flex-1 gold-line bg-ivory px-3 py-2.5 text-sm outline-none focus:border-maroon resize-none"
+              />
+              <button
+                onClick={send}
+                disabled={sending || !reply.trim()}
+                data-testid="query-reply-send"
+                className="brand-gradient text-ivory px-5 py-3 text-xs uppercase tracking-widest inline-flex items-center gap-2 hover-lift disabled:opacity-40 shrink-0"
+              >
+                <PaperPlaneTilt size={15} weight="duotone" /> {sending ? "Sending…" : "Send"}
+              </button>
+            </div>
+            <div className="text-[10px] text-ink-muted mt-2">Press ⌘/Ctrl + Enter to send. Our team is notified of every reply.</div>
+          </div>
+        )}
       </div>
     </div>
   );

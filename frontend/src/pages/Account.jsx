@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { api, formatINR } from "@/lib/api";
+import { api, formatINR, describeOptions } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
-import { ShieldCheck, Package, Heart, Certificate as CertIcon, ArrowRight, Phone, WhatsappLogo, Gear, PencilSimple, LockKey, ChatCircleDots } from "@phosphor-icons/react";
+import { ShieldCheck, Package, Heart, Certificate as CertIcon, ArrowRight, Phone, WhatsappLogo, Gear, PencilSimple, LockKey, ChatCircleDots, CaretDown, CaretUp, MapPin, Truck } from "@phosphor-icons/react";
 import PhoneVerify from "@/components/gemora/PhoneVerify";
 import AccountSupport from "@/components/gemora/AccountSupport";
 import { toast } from "sonner";
@@ -17,6 +17,7 @@ export default function Account() {
   const [showVerify, setShowVerify] = useState(false);
   const [changingPhone, setChangingPhone] = useState(false);
   const [payingId, setPayingId] = useState(null);
+  const [expandedOrder, setExpandedOrder] = useState(null);
 
   const loadOrders = () => api.get("/orders").then((r) => setOrders(r.data)).catch(() => {});
 
@@ -224,26 +225,93 @@ export default function Account() {
         {tab === "orders" && (
           <div className="space-y-4">
             {orders.length === 0 && <div className="gold-line p-10 text-center text-ink-muted">No orders yet.</div>}
-            {orders.map((o) => (
+            {orders.map((o) => {
+              const isOpen = expandedOrder === o.order_id;
+              return (
               <div key={o.order_id} data-testid={`order-${o.order_id}`} className="gold-line bg-ivory p-6">
-                <div className="flex items-baseline justify-between">
+                <button
+                  type="button"
+                  onClick={() => setExpandedOrder(isOpen ? null : o.order_id)}
+                  data-testid={`order-toggle-${o.order_id}`}
+                  className="w-full flex items-baseline justify-between text-left"
+                >
                   <div>
                     <div className="font-mono text-xs text-ink-muted">{o.order_id}</div>
                     <div className="mt-1 text-sm">{new Date(o.created_at).toLocaleString()}</div>
                   </div>
-                  <div className="text-right">
-                    <div className="font-display text-2xl text-maroon-deep">{formatINR(o.total)}</div>
-                    <div className={`text-xs uppercase tracking-widest ${o.status === "shipped" ? "text-verified" : o.status === "paid" ? "text-gold-soft" : "text-ink-muted"}`}>{fmtStatus(o.status)}</div>
-                  </div>
-                </div>
-                <div className="mt-4 grid md:grid-cols-2 gap-2 text-sm text-ink-soft">
-                  {o.items.map((li) => (
-                    <div key={li.line_id} className="flex justify-between">
-                      <span>{li.name}</span>
-                      <span className="font-mono">{formatINR(li.price * li.qty)}</span>
+                  <div className="flex items-center gap-3">
+                    <div className="text-right">
+                      <div className="font-display text-2xl text-maroon-deep">{formatINR(o.total)}</div>
+                      <div className={`text-xs uppercase tracking-widest ${o.status === "shipped" ? "text-verified" : o.status === "paid" ? "text-gold-soft" : "text-ink-muted"}`}>{fmtStatus(o.status)}</div>
                     </div>
-                  ))}
-                </div>
+                    {isOpen ? <CaretUp size={18} className="text-ink-muted shrink-0" /> : <CaretDown size={18} className="text-ink-muted shrink-0" />}
+                  </div>
+                </button>
+
+                {!isOpen && (
+                  <div className="mt-4 grid md:grid-cols-2 gap-2 text-sm text-ink-soft">
+                    {o.items.map((li) => (
+                      <div key={li.line_id} className="flex justify-between">
+                        <span>{li.name}</span>
+                        <span className="font-mono">{formatINR(li.price * li.qty)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {isOpen && (
+                  <div className="mt-5 pt-4 border-t border-gold/30 space-y-4" data-testid={`order-details-${o.order_id}`}>
+                    <div>
+                      <div className="text-xs uppercase tracking-widest text-ink-muted mb-2">Items</div>
+                      <div className="space-y-3">
+                        {o.items.map((li) => (
+                          <div key={li.line_id} className="flex items-center gap-3 text-sm">
+                            {li.image && <img src={li.image} alt="" className="w-14 h-14 object-cover gold-line shrink-0" />}
+                            <div className="flex-1 min-w-0">
+                              <div className="truncate">{li.name} {li.qty > 1 ? <span className="text-ink-muted">× {li.qty}</span> : null}</div>
+                              {describeOptions(li.options_list) && (
+                                <div className="text-xs text-ink-muted">{describeOptions(li.options_list)}</div>
+                              )}
+                              {li.serials?.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mt-1">
+                                  {li.serials.map((s) => <span key={s} className="text-[10px] font-mono bg-cream gold-line px-1 py-0.5">{s}</span>)}
+                                </div>
+                              )}
+                            </div>
+                            <span className="font-mono text-xs shrink-0">{formatINR(li.price * li.qty)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="gold-line bg-cream p-4 text-sm">
+                      <div className="flex justify-between"><span className="text-ink-muted">Subtotal</span><span className="font-mono">{formatINR(o.subtotal)}</span></div>
+                      <div className="flex justify-between mt-1"><span className="text-ink-muted">GST</span><span className="font-mono">{formatINR(o.gst)}</span></div>
+                      <div className="flex justify-between mt-2 pt-2 border-t border-gold/30 font-display text-lg text-maroon-deep"><span>Total</span><span>{formatINR(o.total)}</span></div>
+                    </div>
+
+                    <div className="gold-line bg-cream p-4">
+                      <div className="text-xs uppercase tracking-widest text-ink-muted flex items-center gap-1.5 mb-2">
+                        <MapPin size={14} weight="duotone" /> Delivery address
+                      </div>
+                      <div className="text-sm">{o.shipping?.shipping_name} · {o.shipping?.shipping_phone}</div>
+                      <div className="text-sm text-ink-soft mt-0.5">{o.shipping?.shipping_address}</div>
+                      <div className="text-sm text-ink-soft">
+                        {[o.shipping?.shipping_city, o.shipping?.shipping_state, o.shipping?.shipping_pincode].filter(Boolean).join(", ")}
+                      </div>
+                    </div>
+
+                    {(o.courier || o.tracking_number || o.estimated_delivery_date) && (
+                      <div className="text-xs text-ink-muted flex items-center gap-1.5">
+                        <Truck size={14} weight="duotone" />
+                        {o.courier && <span>{o.courier}</span>}
+                        {o.tracking_number && <span className="font-mono">{o.tracking_number}</span>}
+                        {o.estimated_delivery_date && <span>Est. delivery {new Date(o.estimated_delivery_date).toLocaleDateString()}</span>}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {o.status === "pending_payment" && (
                   <div className="mt-5 pt-4 border-t border-gold/30 flex flex-wrap items-center justify-between gap-3">
                     <div className="text-xs text-ink-muted">Payment for this order is incomplete.</div>
@@ -258,7 +326,8 @@ export default function Account() {
                   </div>
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
