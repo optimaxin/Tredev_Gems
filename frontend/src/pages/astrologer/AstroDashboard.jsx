@@ -45,7 +45,7 @@ export default function AstroDashboard() {
                 <Calendar size={14} weight="duotone" /> Consultations
               </div>
               <div className="mt-3 font-display text-2xl text-ink">Manage your bookings</div>
-              <p className="text-sm text-ink-muted mt-2">See who's booked, join via Jitsi, add notes, mark complete.</p>
+              <p className="text-sm text-ink-muted mt-2">See who's booked, join the consultation, add notes, mark complete.</p>
             </Link>
             <Link to="/astrologer/affiliate" className="gold-line-strong bg-ivory p-6 hover-lift">
               <div className="flex items-center gap-2 text-gold-soft text-xs uppercase tracking-widest">

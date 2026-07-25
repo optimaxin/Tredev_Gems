@@ -90,7 +90,7 @@ export default function AstroConsultations() {
                   {c.meeting_link && (
                     <a href={c.meeting_link} target="_blank" rel="noreferrer" data-testid={`astro-join-${c.booking_id}`}
                        className="brand-gradient text-ivory px-4 py-2 text-[11px] uppercase tracking-widest inline-flex items-center gap-2">
-                      <VideoCamera size={12} weight="duotone" /> Join Jitsi
+                      <VideoCamera size={12} weight="duotone" /> Join Consultation
                     </a>
                   )}
                   <div className="flex gap-1">
