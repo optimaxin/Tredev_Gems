@@ -209,10 +209,10 @@ export default function Consultation() {
               style={{ background: "radial-gradient(circle, rgba(242,140,40,0.35) 0%, rgba(212,175,55,0.15) 40%, transparent 70%)" }}
             />
             <img
-              src="/ambassador/ambassador-consultation.png"
-              alt="Consultation blessing"
+              src="/ambassador/founder.v1.webp"
+              alt="Shri Raghavendra, Tredev's founder & guide"
               loading="eager"
-              className="relative w-full h-80 object-cover object-top"
+              className="relative w-full h-80 object-contain object-bottom"
               style={{ filter: "drop-shadow(0 12px 30px rgba(0,0,0,0.5))" }}
             />
           </div>
