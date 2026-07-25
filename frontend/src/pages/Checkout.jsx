@@ -14,6 +14,11 @@ export default function Checkout() {
   const nav = useNavigate();
   // idle → loading (collecting payment) → delivering (truck plays, then we navigate)
   const [phase, setPhase] = useState("idle");
+  const [credit, setCredit] = useState(null); // { available, amount, expires_at }
+
+  useEffect(() => {
+    if (user) api.get("/me/consultation-credit").then((r) => setCredit(r.data)).catch(() => {});
+  }, [user]);
 
   // Buying requires an account — bounce anyone who lands here directly (e.g. a
   // bookmarked/typed /checkout URL) back to login instead of showing the form.
@@ -26,7 +31,9 @@ export default function Checkout() {
     shipping_city: "", shipping_state: "", shipping_pincode: "", email: "",
   });
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
-  const total = subtotal + Math.round(subtotal * 0.03);
+  const gst = Math.round(subtotal * 0.03);
+  const discount = credit?.available ? Math.min(credit.amount, subtotal) : 0;
+  const total = subtotal + gst - discount;
   const DELIVER_MS = 4200; // matches the truck animation length
 
   // Payment is confirmed by here — play the delivery truck, then leave for the
@@ -146,8 +153,13 @@ export default function Checkout() {
             ))}
           </div>
           <div className="mt-5 pt-4 border-t border-gold/40 flex justify-between text-sm">
-            <span>GST</span><span>{formatINR(Math.round(subtotal * 0.03))}</span>
+            <span>GST</span><span>{formatINR(gst)}</span>
           </div>
+          {discount > 0 && (
+            <div className="mt-2 flex justify-between text-sm text-verified">
+              <span>Consultation credit</span><span>−{formatINR(discount)}</span>
+            </div>
+          )}
           <div className="mt-4 flex items-baseline justify-between">
             <span>Total</span>
             <span className="font-display text-3xl text-maroon-deep">{formatINR(total)}</span>

@@ -47,7 +47,7 @@ from decimal import Decimal
 import db  # Postgres/Supabase access layer — see backend/MIGRATION.md
 import storage_sb  # Supabase Storage — replaces the Emergent object store
 import plugnmeet  # Video consultations — room create/join, recording fetch
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from starlette.middleware.cors import CORSMiddleware
 from collections import defaultdict, deque
 
@@ -666,6 +666,25 @@ class ConsultationBookIn(BaseModel):
     concern: str = ""
 
 
+_TIME_OF_DAY_HOUR = {"morning": 10, "afternoon": 14, "evening": 18}
+
+
+class ConsultationRequestIn(BaseModel):
+    preferred_date: str          # "YYYY-MM-DD"
+    time_of_day: str             # morning | afternoon | evening
+    name: str
+    phone: str
+    email: EmailStr
+    concern: str = ""
+
+    @field_validator("time_of_day")
+    @classmethod
+    def _valid_time_of_day(cls, v):
+        if v not in _TIME_OF_DAY_HOUR:
+            raise ValueError("time_of_day must be morning, afternoon or evening")
+        return v
+
+
 # ── Media / Site-Assets / Events models ───────────────────────────────────────
 class SiteAssetPutIn(BaseModel):
     media_id: Optional[str] = None  # None → clear the slot
@@ -1215,6 +1234,10 @@ async def get_product(slug: str):
             p["product_id"])
     else:
         p["in_stock"] = None
+    # Out of stock = staff's manual override (works for any product, set from Admin →
+    # Products), or — for serialized items only — genuinely zero pieces in the vault.
+    # The count itself isn't part of the buyer-facing contract, only this flag.
+    p["out_of_stock"] = bool(p["attrs"].get("out_of_stock")) or (p["is_serialized"] and p["in_stock"] == 0)
     # Merge in the selectors that aren't stored per product (shared designs catalog,
     # standard ring sizes) so the page renders the complete option set.
     p["variant_options"] = _effective_variant_options(
@@ -1459,12 +1482,14 @@ _DEFAULT_HOME = {
         {"name": "Blinkit", "url": ""},
     ],
 }
+_DEFAULT_CONSULTATION = {"fee_paise": 39900}   # ₹399 — admin-editable via /admin/site-content/consultation
 _CONTENT_DEFAULTS = {
     "announcement": _DEFAULT_ANNOUNCEMENT, "footer": _DEFAULT_FOOTER,
     "home": _DEFAULT_HOME,
     "purposes": _DEFAULT_PURPOSES, "rashi": _DEFAULT_RASHI,
+    "consultation": _DEFAULT_CONSULTATION,
 }
-_CONTENT_KEYS = {"announcement", "footer", "home"}   # gated by the "content" permission
+_CONTENT_KEYS = {"announcement", "footer", "home", "consultation"}   # gated by the "content" permission
 _TAXONOMY_KEYS = {"purposes", "rashi"}        # gated by the "taxonomy" permission
 
 
@@ -2432,6 +2457,7 @@ async def cart_add(body: CartAddIn, request: Request, response: Response, user_i
     product = await db.fetch_one(
         """SELECT p.id::text AS product_id, p.title, p.base_price, p.is_serialized,
                   p.variant_options AS variant_options, p.category_key::text AS category_key,
+                  p.attributes AS attributes,
                   v.id::text AS variant_id
              FROM products p
              JOIN product_variants v ON v.product_id = p.id AND v.is_active
@@ -2439,6 +2465,8 @@ async def cart_add(body: CartAddIn, request: Request, response: Response, user_i
             ORDER BY v.created_at LIMIT 1""", body.product_id)
     if not product:
         raise HTTPException(404, "Product not found")
+    if (product["attributes"] or {}).get("out_of_stock"):
+        raise HTTPException(409, f"“{product['title']}” is out of stock")
 
     # Price is decided here, from the product's admin-configured surcharges — the
     # client only ever supplies which choices it wants, never a price. Priced against
@@ -2588,6 +2616,8 @@ _ORDER_SELECT = """
            o.subtotal                    AS subtotal_n,
            o.tax_total                   AS gst_n,
            o.grand_total                 AS total_n,
+           o.discount_total              AS discount_n,
+           o.consultation_credit_id::text AS consultation_credit_id,
            o.currency                    AS currency,
            o.status::text                AS status_db,
            o.affiliate_code::text        AS affiliate_code,
@@ -2700,11 +2730,12 @@ async def _shape_order(row: Optional[dict], conn=None, items: Optional[list] = N
     shipping = {f"shipping_{k}": v for k, v in shipping.items()}
     shipping["email"] = r.pop("shipping_email", None)
     return {**{k: v for k, v in r.items()
-               if k not in ("subtotal_n", "gst_n", "total_n", "status_db")},
+               if k not in ("subtotal_n", "gst_n", "total_n", "discount_n", "status_db")},
             "items": items,
             "subtotal": db.to_paise(r["subtotal_n"]),
             "gst": db.to_paise(r["gst_n"]),
             "total": db.to_paise(r["total_n"]),
+            "discount": db.to_paise(r["discount_n"]),
             "status": db.ORDER_STATUS_FROM_DB.get(r["status_db"], r["status_db"]),
             "shipping": shipping}
 
@@ -2735,19 +2766,29 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
         qty_by_product[li["product_id"]] = qty_by_product.get(li["product_id"], 0) + li["qty"]
     for pid, total_qty in qty_by_product.items():
         chk = await db.fetch_one(
-            """SELECT p.is_serialized,
+            """SELECT p.is_serialized, p.attributes,
                       (SELECT count(*) FROM product_units pu
                         WHERE pu.product_id = p.id AND pu.status = 'in_stock') AS avail
                  FROM products p WHERE p.id = $1::uuid""", pid)
-        if chk and chk["is_serialized"] and chk["avail"] < total_qty:
-            name = next((li["name"] for li in items if li["product_id"] == pid), "An item")
+        if not chk:
+            continue
+        name = next((li["name"] for li in items if li["product_id"] == pid), "An item")
+        if (chk["attributes"] or {}).get("out_of_stock"):
+            raise HTTPException(409, f"“{name}” is out of stock")
+        if chk["is_serialized"] and chk["avail"] < total_qty:
             raise HTTPException(
                 409, f"“{name}” is out of stock — only {chk['avail']} of "
                      f"{total_qty} available.")
 
     subtotal = sum(li["price"] * li["qty"] for li in items)
     gst = int(round(subtotal * 0.03))  # 3% GST on gemstones (illustrative)
-    total = subtotal + gst
+
+    # A paid consultation credits its fee toward the buyer's next purchase. Reserved
+    # here by reference (not yet marked redeemed — that happens in _mark_paid, once
+    # the payment actually completes) so an abandoned checkout doesn't burn it.
+    credit = await _find_eligible_credit(user_id)
+    discount = min(db.to_paise(credit["amount"]), subtotal) if credit else 0
+    total = subtotal + gst - discount
 
     order_id = uuid.uuid4()
     # Attribute affiliate — either explicit in body, or fall back to cart's tracked ref
@@ -2790,11 +2831,12 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
             """INSERT INTO orders (id, user_id, guest_session_token, status, currency,
                     subtotal, discount_total, tax_total, shipping_total, grand_total,
                     shipping_address_id, billing_address_id, affiliate_code,
-                    affiliate_astrologer_id, placed_at)
-               VALUES ($1,$2::uuid,$3,'pending','INR',$4,0,$5,0,$6,$7,$7,$8::citext,$9::uuid, now())""",
+                    affiliate_astrologer_id, placed_at, consultation_credit_id)
+               VALUES ($1,$2::uuid,$3,'pending','INR',$4,$5,$6,0,$7,$8,$8,$9::citext,$10::uuid, now(),$11::uuid)""",
             order_id, buyer_id, None,
-            db.to_amount(subtotal), db.to_amount(gst), db.to_amount(total),
-            addr_id, aff_ref if aff_astro_id else None, aff_astro_id)
+            db.to_amount(subtotal), db.to_amount(discount), db.to_amount(gst), db.to_amount(total),
+            addr_id, aff_ref if aff_astro_id else None, aff_astro_id,
+            credit["id"] if credit else None)
 
         for li in items:
             await conn.execute(
@@ -2907,6 +2949,16 @@ async def _mark_paid(order: dict, payment_id: str) -> dict:
             """INSERT INTO order_events (id, order_id, from_status, to_status, reason)
                VALUES ($1,$2::uuid,'pending','paid','payment captured')""",
             uuid.uuid4(), order_id)
+
+        # Consultation credit was only reserved by reference at checkout — now that
+        # payment actually captured, spend it. The status='available' guard makes this
+        # a no-op (order keeps its already-applied discount) if it was somehow already
+        # redeemed elsewhere, rather than erroring the whole payment out.
+        if order.get("consultation_credit_id"):
+            await conn.execute(
+                """UPDATE consultation_credits SET status='redeemed', redeemed_order_id=$1
+                    WHERE id=$2::uuid AND status='available'""",
+                order_id, order["consultation_credit_id"])
     result = await _load_order(order_id)
 
     # WhatsApp "order confirmed" — fired after the transaction commits so a WA outage
@@ -3639,6 +3691,9 @@ _CONSULT_SELECT = """
            COALESCE(c.concern, '')        AS concern,
            c.amount                       AS amount_n,
            c.status::text                 AS status,
+           c.payment_status                AS payment_status,
+           c.preferred_date                AS preferred_date,
+           c.time_of_day                   AS time_of_day,
            c.jitsi_room                   AS jitsi_room,
            c.meeting_link                 AS meeting_link,
            c.pnm_room_id                  AS pnm_room_id,
@@ -3749,6 +3804,136 @@ async def consultation_join(booking_id: str, request: Request):
         raise HTTPException(404, "No video room for this booking")
     token = await plugnmeet.get_join_token(c["pnm_room_id"], c["name"], booking_id, is_admin=False)
     return RedirectResponse(plugnmeet.join_url(token), status_code=307)
+
+
+# ── Consultation v2: pay-first, astrologer assigned by admin afterward ────────
+# No astrologer picker on the public page — the buyer pays a fixed fee, picks a
+# date + time-of-day preference, and we assign whoever's free from the admin
+# panel (see admin_update_consultation below), which is when the video room is
+# created and both parties are WhatsApp-notified with the meet link.
+@api.get("/consultation/fee")
+async def consultation_fee():
+    content = await _site_content("consultation")
+    return {"fee": (content or _DEFAULT_CONSULTATION)["fee_paise"]}
+
+
+@api.post("/consultation/request")
+async def consultation_request(body: ConsultationRequestIn,
+                               user_id: Optional[str] = Depends(get_user_id_optional)):
+    try:
+        pref_date = date.fromisoformat(body.preferred_date)
+    except ValueError:
+        raise HTTPException(400, "preferred_date must be YYYY-MM-DD")
+    # Nominal hour per bucket — the real time is agreed over WhatsApp once we assign
+    # an astrologer. Kept as a real timestamptz so existing slot_at consumers (the
+    # calendar-link helper, admin listing) don't need a second code path.
+    slot_at = datetime.combine(pref_date, dtime(hour=_TIME_OF_DAY_HOUR[body.time_of_day]),
+                               tzinfo=timezone.utc)
+
+    fee = (await _site_content("consultation") or _DEFAULT_CONSULTATION)["fee_paise"]
+    booking_id = uuid.uuid4()
+
+    rp_key = os.environ.get("RAZORPAY_KEY_ID", "")
+    rp_secret = os.environ.get("RAZORPAY_KEY_SECRET", "")
+    rp_order_id = f"mock_{booking_id}"
+    if rp_key and rp_secret:
+        try:
+            import razorpay
+            rp = razorpay.Client(auth=(rp_key, rp_secret))
+            rp_order = rp.order.create({"amount": fee, "currency": "INR",
+                                        "receipt": str(booking_id)[:40], "payment_capture": 1})
+            rp_order_id = rp_order["id"]
+        except Exception as e:
+            log.warning(f"razorpay create failed (consultation): {e} — falling back to mock")
+
+    await db.execute(
+        """INSERT INTO consultations (id, astrologer_id, astrologer_name_snapshot, slot_at,
+                preferred_date, time_of_day, user_id, contact_name, contact_email,
+                contact_phone, concern, amount, status, payment_status, razorpay_order_id)
+           VALUES ($1,NULL,NULL,$2,$3,$4,$5::uuid,$6,$7::citext,$8,$9,$10,
+                   'requested','pending',$11)""",
+        booking_id, slot_at, pref_date, body.time_of_day, user_id,
+        body.name, body.email, body.phone, body.concern, db.to_amount(fee), rp_order_id)
+
+    consult = await _load_consultation(str(booking_id))
+    return {"consultation": consult, "razorpay_key_id": rp_key or None}
+
+
+@api.post("/consultation/{booking_id}/verify")
+async def consultation_verify(booking_id: str, body: RazorpayVerifyIn):
+    secret = os.environ.get("RAZORPAY_KEY_SECRET", "")
+    if not secret:
+        raise HTTPException(400, "Razorpay not configured — use /api/consultation/{id}/mock-pay for dev.")
+    expected = hmac.new(secret.encode(),
+                        f"{body.razorpay_order_id}|{body.razorpay_payment_id}".encode(),
+                        hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, body.razorpay_signature):
+        raise HTTPException(400, "Bad signature")
+    consult = await _load_consultation(booking_id)
+    if not consult:
+        raise HTTPException(404, "Consultation not found")
+    if consult["payment_status"] == "paid":
+        return consult
+    return await _mark_consultation_paid(booking_id, body.razorpay_payment_id)
+
+
+@api.post("/consultation/{booking_id}/mock-pay")
+async def consultation_mock_pay(booking_id: str):
+    _require_dev_env()
+    consult = await _load_consultation(booking_id)
+    if not consult:
+        raise HTTPException(404, "Consultation not found")
+    if consult["payment_status"] == "paid":
+        return consult
+    return await _mark_consultation_paid(booking_id, f"mock_pay_{uid()}")
+
+
+async def _mark_consultation_paid(booking_id: str, payment_id: str) -> dict:
+    consult = await _load_consultation(booking_id)
+    async with db.transaction() as conn:
+        await conn.execute(
+            """UPDATE consultations
+                  SET payment_status='paid', razorpay_payment_id=$2, updated_at=now()
+                WHERE id=$1::uuid""", booking_id, payment_id)
+        await conn.execute(
+            """INSERT INTO consultation_credits (id, consultation_id, user_id, phone, email,
+                    amount, expires_at)
+               VALUES ($1,$2::uuid,$3::uuid,$4,$5::citext,$6, now() + interval '90 days')""",
+            uuid.uuid4(), booking_id, consult["user_id"], consult["phone"], consult["email"],
+            db.to_amount(consult["amount"]))
+    return await _load_consultation(booking_id)
+
+
+@api.get("/me/consultations")
+async def my_consultations(user_id: str = Depends(require_user)):
+    rows = await db.fetch_all(
+        _CONSULT_SELECT + " WHERE c.user_id = $1::uuid ORDER BY c.created_at DESC LIMIT 100",
+        user_id)
+    return [_shape_consult(r) for r in rows]
+
+
+async def _find_eligible_credit(user_id: str) -> Optional[dict]:
+    """The buyer's oldest unexpired, unredeemed consultation credit — matched by their
+    own account id, or (for a guest-booked consultation) by their own verified phone/
+    email. Both sides of the phone/email match come from the `users` row for user_id,
+    never from client input, so a checkout can't be spoofed into claiming someone
+    else's credit by typing their phone number."""
+    return await db.fetch_one(
+        """SELECT cc.* FROM consultation_credits cc, users u
+            WHERE u.id = $1::uuid
+              AND cc.status='available' AND cc.expires_at > now()
+              AND (cc.user_id = $1::uuid
+                   OR (cc.user_id IS NULL AND (cc.phone = u.phone OR cc.email = u.email)))
+            ORDER BY cc.created_at ASC LIMIT 1""", user_id)
+
+
+@api.get("/me/consultation-credit")
+async def my_consultation_credit(user_id: str = Depends(require_user)):
+    credit = await _find_eligible_credit(user_id)
+    if not credit:
+        return {"available": False}
+    return {"available": True, "amount": db.to_paise(credit["amount"]),
+            "expires_at": credit["expires_at"]}
 
 
 # ── Dev seed (idempotent) ─────────────────────────────────────────────────────
@@ -4254,8 +4439,9 @@ async def admin_purge_inventory(actor: str = Depends(require_owner)):
 
 
 @api.get("/admin/inventory/low-stock")
-async def admin_low_stock(_: str = Depends(require_perm("inventory")), threshold: int = 2):
-    """List serialised products where available units ≤ threshold."""
+async def admin_low_stock(_: str = Depends(require_perm("inventory")), threshold: int = 0):
+    """List serialised products where available units ≤ threshold — the dashboard uses
+    threshold=0, i.e. actually out of stock, not merely running low."""
     # Was: N+1 (a unit query per product) plus a full reservations scan in Python.
     return await db.fetch_all(
         """SELECT p.id::text  AS product_id,
@@ -5125,15 +5311,58 @@ async def admin_list_consultations(_: str = Depends(require_perm("consultations"
 
 
 @api.patch("/admin/consultations/{booking_id}")
-async def admin_update_consultation(booking_id: str, body: dict, actor: str = Depends(require_perm("consultations"))):
-    updates = {k: v for k, v in body.items() if k in {"status", "meeting_link", "notes"}}
+async def admin_update_consultation(booking_id: str, body: dict, request: Request,
+                                    actor: str = Depends(require_perm("consultations"))):
+    updates = {k: v for k, v in body.items()
+              if k in {"status", "meeting_link", "notes", "astrologer_id"}}
     if not updates:
         raise HTTPException(400, "Nothing to update")
+
+    before = await _load_consultation(booking_id)
+    if not before:
+        raise HTTPException(404, "Booking not found")
+
+    # First-time assignment (no astrologer yet): mint the video room now that we know
+    # who's hosting it, and bump status out of "requested" — the WhatsApp notify to
+    # both parties fires after the row is saved, below.
+    astro = None
+    assigning = bool(updates.get("astrologer_id")) and not before.get("astrologer_id")
+    if assigning:
+        astro = _shape_astro(await db.fetch_one(
+            _ASTRO_SELECT + " WHERE a.id = $1::uuid", updates["astrologer_id"]))
+        if not astro:
+            raise HTTPException(404, "Astrologer not found")
+        astro["phone"] = await db.fetch_val(
+            "SELECT phone FROM astrologers WHERE id = $1::uuid", updates["astrologer_id"])
+        updates["astrologer_name_snapshot"] = astro["name"]
+        updates.setdefault("status", "confirmed")
+
+        backend_base = _backend_base_url(request)
+        pnm_room_id = None
+        if plugnmeet.configured():
+            pnm_room_id = f"consult-{booking_id}"
+            try:
+                await plugnmeet.create_room(
+                    pnm_room_id, f"Consultation with {astro['name']}",
+                    webhook_url=f"{backend_base}/api/plugnmeet/webhook")
+            except Exception as e:
+                log.warning(f"plugNmeet room create failed, falling back to Jitsi: {e}")
+                pnm_room_id = None
+        jitsi_room = None if pnm_room_id else f"gemora-{booking_id}"
+        updates.setdefault(
+            "meeting_link",
+            f"{backend_base}/api/consultation/{booking_id}/join" if pnm_room_id
+            else f"https://meet.jit.si/{jitsi_room}")
+        updates["pnm_room_id"] = pnm_room_id
+        updates["jitsi_room"] = jitsi_room
+
     sets, args = [], []
-    for k in ("status", "meeting_link", "notes"):
+    for k in ("status", "meeting_link", "notes", "astrologer_id", "astrologer_name_snapshot",
+             "pnm_room_id", "jitsi_room"):
         if k in updates:
             args.append(updates[k])
-            sets.append(f"{k} = ${len(args)}" + ("::consultation_status" if k == "status" else ""))
+            cast = "::consultation_status" if k == "status" else "::uuid" if k == "astrologer_id" else ""
+            sets.append(f"{k} = ${len(args)}{cast}")
     sets.append("updated_at = now()")
     args.append(booking_id)
     got = await db.fetch_val(
@@ -5141,8 +5370,23 @@ async def admin_update_consultation(booking_id: str, body: dict, actor: str = De
         f"RETURNING id::text", *args)
     if not got:
         raise HTTPException(404, "Booking not found")
-    await audit_log(actor, "consultation.update", booking_id, updates)
-    return await _load_consultation(booking_id)
+    await audit_log(actor, "consultation.update", booking_id,
+                    {k: v for k, v in updates.items()
+                     if k in ("status", "meeting_link", "notes", "astrologer_id")})
+
+    consult = await _load_consultation(booking_id)
+    if assigning:
+        when = f"{consult.get('preferred_date') or ''} ({consult.get('time_of_day') or 'time TBC'})"
+        if consult.get("phone"):
+            _wa_fire_event("consultation.assigned", phone=consult["phone"], name=consult["name"],
+                          user_id=consult.get("user_id"),
+                          variables={"astrologer_name": astro["name"], "date": when,
+                                     "meeting_link": consult["meeting_link"]})
+        if astro.get("phone"):
+            _wa_fire_event("consultation.astrologer_assigned", phone=astro["phone"], name=astro["name"],
+                          variables={"customer_name": consult["name"], "concern": consult.get("concern") or "",
+                                     "date": when, "meeting_link": consult["meeting_link"]})
+    return consult
 
 
 @api.post("/admin/consultations/{booking_id}/join-link")
@@ -6066,6 +6310,12 @@ WA_TRIGGER_EVENTS = {
     "consultation.booked": {"label": "Consultation booked",
                             "when": "A customer books a consultation",
                             "to": "The customer (with calendar link)"},
+    "consultation.assigned": {"label": "Consultation assigned",
+                              "when": "Admin assigns an astrologer to a paid consultation",
+                              "to": "The customer (with astrologer name + meet link)"},
+    "consultation.astrologer_assigned": {"label": "New consultation for astrologer",
+                                         "when": "Admin assigns an astrologer to a paid consultation",
+                                         "to": "The astrologer (with customer + meet link)"},
     "astrologer.created": {"label": "Astrologer onboarded",
                            "when": "Admin creates an astrologer with a phone number",
                            "to": "The astrologer"},

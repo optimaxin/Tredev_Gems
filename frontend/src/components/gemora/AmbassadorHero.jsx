@@ -213,6 +213,9 @@ export default function AmbassadorHero() {
               <Calendar size={16} weight="duotone" /> {ambassador.secondaryCta?.label || "Book a consultation"}
             </SmartLink>
           </div>
+          <div className="mt-3 text-xs text-gold-soft/80 text-center lg:text-left">
+            ₹399 · credited toward your next purchase within 90 days
+          </div>
 
           {/* slide indicators */}
           <div className="mt-10 flex items-center gap-3 justify-center lg:justify-start">

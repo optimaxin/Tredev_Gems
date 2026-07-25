@@ -8,7 +8,7 @@ export default function AdminDashboard() {
   const [days, setDays] = useState(30);
   useEffect(() => {
     api.get(`/admin/sales?days=${days}`).then((r) => setData(r.data)).catch(() => setData({ error: true }));
-    api.get("/admin/inventory/low-stock?threshold=2").then((r) => setLow(r.data)).catch(() => {});
+    api.get("/admin/inventory/low-stock?threshold=0").then((r) => setLow(r.data)).catch(() => {});
   }, [days]);
 
   if (!data) return <div className="text-ink-muted">Loading sales…</div>;
@@ -80,21 +80,19 @@ export default function AdminDashboard() {
 
       <div className="mt-6 gold-line bg-ivory p-6" data-testid="low-stock-card">
         <div className="flex items-baseline justify-between">
-          <div className="font-serifd text-xl text-maroon-deep">Low-stock inventory</div>
-          <div className="text-xs text-ink-muted">SKUs with ≤ 2 units available</div>
+          <div className="font-serifd text-xl text-maroon-deep">Out-of-stock inventory</div>
+          <div className="text-xs text-ink-muted">Serialised SKUs with 0 units available</div>
         </div>
         {low.length === 0 ? (
-          <div className="mt-4 text-sm text-verified">All serialised SKUs healthy.</div>
+          <div className="mt-4 text-sm text-verified">All serialised SKUs in stock.</div>
         ) : (
           <div className="mt-4 grid md:grid-cols-2 lg:grid-cols-3 gap-3">
             {low.map((p) => (
-              <div key={p.product_id} className={`gold-line p-3 flex items-center gap-3 ${p.available === 0 ? "border-revoked" : "border-suspicious"}`}>
+              <div key={p.product_id} className="gold-line p-3 flex items-center gap-3 border-revoked">
                 {p.image && <div className="w-14 h-14 gold-line overflow-hidden shrink-0"><img src={p.image} alt="" className="w-full h-full object-cover" /></div>}
                 <div className="flex-1 min-w-0">
                   <div className="font-serifd truncate">{p.name}</div>
-                  <div className="text-xs text-ink-muted">
-                    <span className={`font-mono ${p.available === 0 ? "text-revoked" : "text-suspicious"}`}>{p.available}</span> available · needs intake
-                  </div>
+                  <div className="text-xs text-revoked">Out of stock · needs intake</div>
                 </div>
               </div>
             ))}

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api, formatINR } from "@/lib/api";
 import { toast } from "sonner";
-import { PencilSimple, PlusCircle, Trash, Stack } from "@phosphor-icons/react";
+import { PencilSimple, PlusCircle, Trash, Stack, Prohibit, CheckCircle } from "@phosphor-icons/react";
 import SearchBar from "@/components/gemora/SearchBar";
 
 const EMPTY = {
@@ -47,6 +47,18 @@ export default function AdminProducts() {
       setAddQty((s) => ({ ...s, [p.product_id]: "" }));
       api.get("/admin/products/stock").then((r) => setStock(r.data)).catch(() => {});
     } catch (e) { toast.error(e.response?.data?.detail || "Could not add units"); }
+  };
+
+  // Manual override — works for serialized and non-serialized products alike, unlike
+  // the automatic "0 units left" signal, which only applies to serialized stock.
+  // attrs is fully replaced on PATCH, so the current value has to be spread through.
+  const toggleOutOfStock = async (p) => {
+    const next = !p.attrs?.out_of_stock;
+    try {
+      await api.patch(`/admin/products/${p.product_id}`, { attrs: { ...p.attrs, out_of_stock: next } });
+      toast.success(next ? `${p.name} marked out of stock` : `${p.name} marked back in stock`);
+      refresh();
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not update stock status"); }
   };
 
   // Client-side product search over name, slug and category.
@@ -393,10 +405,26 @@ export default function AdminProducts() {
               {p.is_serialized && (
                 <div className="mt-1 text-xs text-ink-muted">In stock: <span className="text-ink font-medium">{stock[p.product_id] || 0}</span></div>
               )}
+              {p.attrs?.out_of_stock && (
+                <div className="mt-1 text-xs text-revoked uppercase tracking-widest">Marked out of stock</div>
+              )}
               <div className="mt-2 flex gap-3 text-xs">
                 <button onClick={() => startEdit(p)} className="text-maroon inline-flex items-center gap-1"><PencilSimple size={12} /> Edit</button>
                 <button onClick={() => del(p)} className="text-revoked inline-flex items-center gap-1 ml-auto"><Trash size={12} /> Remove</button>
               </div>
+              <button
+                onClick={() => toggleOutOfStock(p)}
+                data-testid={`toggle-out-of-stock-${p.product_id}`}
+                className={`mt-2 w-full text-xs uppercase tracking-widest border px-3 py-1.5 inline-flex items-center justify-center gap-1 transition-colors ${
+                  p.attrs?.out_of_stock
+                    ? "border-verified text-verified hover:bg-verified hover:text-ivory"
+                    : "border-revoked text-revoked hover:bg-revoked hover:text-ivory"
+                }`}
+              >
+                {p.attrs?.out_of_stock
+                  ? <><CheckCircle size={12} weight="duotone" /> Mark back in stock</>
+                  : <><Prohibit size={12} weight="duotone" /> Mark out of stock</>}
+              </button>
               {p.is_serialized && (
                 <div className="mt-3 pt-3 border-t border-gold/20 flex items-center gap-2">
                   <input

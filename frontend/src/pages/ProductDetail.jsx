@@ -50,10 +50,11 @@ export default function ProductDetail() {
   if (p === null) return <div className="p-16 text-ink-muted">Loading…</div>;
   if (!p) return <div className="p-16">Not found.</div>;
 
-  // in_stock is a count for serialized products, null (unlimited) for non-serialized.
-  const stock = p.in_stock;
-  const soldOut = p.is_serialized && stock != null && stock <= 0;
-  const maxQty = p.is_serialized && stock != null ? stock : 99;
+  // out_of_stock is computed server-side (staff's manual toggle, or zero serialized
+  // units) — the count itself is never shown to buyers, only this flag. The quantity
+  // stepper isn't capped to real stock either; checkout's stock guard is the real limit.
+  const soldOut = !!p.out_of_stock;
+  const maxQty = 99;
 
   // Option groups come from the product's category (rudraksha gets certification/
   // style/size, gemstone gets pooja/form/metal/designs/ring-size, everything gets
@@ -345,10 +346,8 @@ export default function ProductDetail() {
           <div className="mt-8">
             <div className="flex items-center justify-between">
               <div className="text-xs uppercase tracking-widest text-ink-muted">Quantity</div>
-              {p.is_serialized && stock != null && (
-                <div className={`text-xs ${soldOut ? "text-revoked" : "text-verified"}`}>
-                  {soldOut ? "Out of stock" : `${stock} in stock`}
-                </div>
+              {soldOut && (
+                <div className="text-xs text-revoked">Out of stock</div>
               )}
             </div>
             <div className="mt-3 inline-flex items-center gold-line-strong bg-ivory">

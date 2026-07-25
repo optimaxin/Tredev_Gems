@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, formatINR, describeOptions } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
-import { ShieldCheck, Package, Heart, Certificate as CertIcon, ArrowRight, Phone, WhatsappLogo, Gear, PencilSimple, LockKey, ChatCircleDots, CaretDown, CaretUp, MapPin, Truck } from "@phosphor-icons/react";
+import { ShieldCheck, Package, Heart, Certificate as CertIcon, ArrowRight, Phone, WhatsappLogo, Gear, PencilSimple, LockKey, ChatCircleDots, CaretDown, CaretUp, MapPin, Truck, Calendar } from "@phosphor-icons/react";
 import PhoneVerify from "@/components/gemora/PhoneVerify";
 import AccountSupport from "@/components/gemora/AccountSupport";
 import { toast } from "sonner";
@@ -14,6 +14,7 @@ export default function Account() {
   const [orders, setOrders] = useState([]);
   const [vault, setVault] = useState([]);
   const [wish, setWish] = useState([]);
+  const [consultations, setConsultations] = useState([]);
   const [showVerify, setShowVerify] = useState(false);
   const [changingPhone, setChangingPhone] = useState(false);
   const [payingId, setPayingId] = useState(null);
@@ -27,6 +28,7 @@ export default function Account() {
     loadOrders();
     api.get("/me/verified-items").then((r) => setVault(r.data)).catch(() => {});
     api.get("/me/wishlist").then((r) => setWish(r.data)).catch(() => {});
+    api.get("/me/consultations").then((r) => setConsultations(r.data)).catch(() => {});
   }, [user, loading, nav]);
 
   // Human-readable order status — the API returns snake_case enums like "pending_payment".
@@ -182,6 +184,7 @@ export default function Account() {
           ["vault", "Verified Items", ShieldCheck, vault.length],
           ["orders", "Orders", Package, orders.length],
           ["wishlist", "Wishlist", Heart, wish.length],
+          ["consultations", "Consultations", Calendar, consultations.length],
           ["support", "Help & Support", ChatCircleDots, null],
           ["settings", "Settings", Gear, null],
         ].map(([k, l, Icon, count]) => (
@@ -341,6 +344,36 @@ export default function Account() {
                 <div className="text-sm text-maroon-deep">{formatINR(p.price)}</div>
               </Link>
             ))}
+          </div>
+        )}
+
+        {tab === "consultations" && (
+          <div>
+            <Link to="/consultation" className="inline-flex items-center gap-2 brand-gradient text-ivory px-5 py-3 text-xs uppercase tracking-widest hover-lift">
+              <Calendar size={14} weight="duotone" /> Book a consultation
+            </Link>
+            <div className="mt-6 space-y-3">
+              {consultations.length === 0 && <div className="gold-line p-10 text-center text-ink-muted">No consultations yet.</div>}
+              {consultations.map((c) => (
+                <div key={c.booking_id} className="gold-line bg-ivory p-4 flex items-center justify-between gap-3 flex-wrap">
+                  <div>
+                    <div className="text-sm">
+                      {c.preferred_date ? new Date(c.preferred_date).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" }) : new Date(c.slot_iso).toLocaleDateString()}
+                      {c.time_of_day && <span className="capitalize text-ink-muted"> · {c.time_of_day}</span>}
+                    </div>
+                    <div className="text-xs text-ink-muted mt-1">
+                      {c.astrologer_name ? `With ${c.astrologer_name}` : "Astrologer to be assigned — we'll confirm on WhatsApp"}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-[10px] uppercase tracking-widest text-maroon-deep">{c.status}</div>
+                    {c.meeting_link && (
+                      <a href={c.meeting_link} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-maroon underline">Join meeting</a>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
