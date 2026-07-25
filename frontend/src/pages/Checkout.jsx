@@ -7,6 +7,7 @@ import { getAffiliateRef } from "@/components/gemora/AffiliateTracker";
 import { toast } from "sonner";
 import { CheckCircle } from "@phosphor-icons/react";
 import OrderTruckButton from "@/components/gemora/OrderTruckButton";
+import PaymentFailedModal from "@/components/gemora/PaymentFailedModal";
 
 export default function Checkout() {
   const { cart, refresh, subtotal } = useCart();
@@ -15,6 +16,7 @@ export default function Checkout() {
   // idle → loading (collecting payment) → delivering (truck plays, then we navigate)
   const [phase, setPhase] = useState("idle");
   const [credit, setCredit] = useState(null); // { available, amount, expires_at }
+  const [failed, setFailed] = useState({ open: false, reason: null });
 
   useEffect(() => {
     if (user) api.get("/me/consultation-credit").then((r) => setCredit(r.data)).catch(() => {});
@@ -45,8 +47,7 @@ export default function Checkout() {
     nav(`/order-confirmed/${orderId}`);
   };
 
-  const place = async (e) => {
-    e.preventDefault();
+  const placeOrder = async () => {
     if (phase !== "idle") return;
     setPhase("loading"); // "Processing…" while we collect payment — no truck yet
     try {
@@ -81,7 +82,7 @@ export default function Checkout() {
               razorpay_signature: rp.razorpay_signature,
             });
           } catch (err) {
-            toast.error("Payment verification failed");
+            setFailed({ open: true, reason: "We couldn't confirm this payment. If any amount was deducted, it will be refunded within 5-7 business days." });
             setPhase("idle");
             return;
           }
@@ -92,7 +93,17 @@ export default function Checkout() {
         modal: { ondismiss: () => setPhase("idle") },
       };
 
-      const openRzp = () => new window.Razorpay(options).open();
+      const openRzp = () => {
+        const rzp = new window.Razorpay(options);
+        rzp.on("payment.failed", (resp) => {
+          setPhase("idle");
+          setFailed({
+            open: true,
+            reason: resp.error?.description ? `Your bank declined this payment: ${resp.error.description}` : null,
+          });
+        });
+        rzp.open();
+      };
       if (!window.Razorpay) {
         const s = document.createElement("script");
         s.src = "https://checkout.razorpay.com/v1/checkout.js";
@@ -107,6 +118,8 @@ export default function Checkout() {
       setPhase("idle");
     }
   };
+
+  const place = (e) => { e.preventDefault(); placeOrder(); };
 
   if (authLoading || !user) return null; // redirecting to /login
   if (!cart.items?.length) return <div className="p-16 text-center">Your cart is empty.</div>;
@@ -180,6 +193,13 @@ export default function Checkout() {
           </div>
         </aside>
       </form>
+
+      <PaymentFailedModal
+        open={failed.open}
+        reason={failed.reason}
+        onClose={() => setFailed({ open: false, reason: null })}
+        onRetry={() => { setFailed({ open: false, reason: null }); placeOrder(); }}
+      />
     </div>
   );
 }

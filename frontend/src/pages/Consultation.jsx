@@ -7,6 +7,7 @@ import {
   Calendar, User, Phone, EnvelopeSimple, CheckCircle, WhatsappLogo, ShieldCheck,
   ArrowsClockwise, SunHorizon, Sun, MoonStars, Sparkle, PaperPlaneTilt,
 } from "@phosphor-icons/react";
+import PaymentFailedModal from "@/components/gemora/PaymentFailedModal";
 
 // Next 5 calendar days STARTING TOMORROW (never today/past) — exact time is a
 // preference (morning/afternoon/evening), the real slot is agreed over WhatsApp
@@ -42,15 +43,20 @@ const STEPS = [
 
 const DATES = nextDates(5);
 
-function openRazorpay(options) {
+function openRazorpay(options, onFailed) {
+  const launch = () => {
+    const rzp = new window.Razorpay(options);
+    if (onFailed) rzp.on("payment.failed", (resp) => onFailed(resp.error?.description));
+    rzp.open();
+  };
   if (!window.Razorpay) {
     const s = document.createElement("script");
     s.src = "https://checkout.razorpay.com/v1/checkout.js";
-    s.onload = () => new window.Razorpay(options).open();
+    s.onload = launch;
     s.onerror = () => toast.error("Could not load the payment gateway");
     document.body.appendChild(s);
   } else {
-    new window.Razorpay(options).open();
+    launch();
   }
 }
 
@@ -68,6 +74,7 @@ export default function Consultation() {
   const [form, setForm] = useState({ name: "", phone: "", email: "", concern: "" });
   const [paying, setPaying] = useState(false);
   const [booked, setBooked] = useState(null); // holds the booked consultation once paid
+  const [failed, setFailed] = useState({ open: false, reason: null });
 
   useEffect(() => {
     api.get("/consultation/fee").then((r) => setFee(r.data.fee)).catch(() => {});
@@ -87,14 +94,13 @@ export default function Consultation() {
       toast.success("Payment verified");
       setBooked(data);
     } catch (err) {
-      toast.error("Payment verification failed");
+      setFailed({ open: true, reason: "We couldn't confirm this payment. If any amount was deducted, it will be refunded within 5-7 business days." });
     } finally {
       setPaying(false);
     }
   };
 
-  const submit = async (e) => {
-    e.preventDefault();
+  const bookAndPay = async () => {
     if (!form.name || !form.phone || !form.email) { toast.error("Please fill your name, phone and email"); return; }
     setPaying(true);
     try {
@@ -129,12 +135,17 @@ export default function Consultation() {
         }),
         modal: { ondismiss: () => setPaying(false) },
       };
-      openRazorpay(options);
+      openRazorpay(options, (reason) => {
+        setPaying(false);
+        setFailed({ open: true, reason: reason ? `Your bank declined this payment: ${reason}` : null });
+      });
     } catch (err) {
       toast.error(err.response?.data?.detail || "Could not start booking");
       setPaying(false);
     }
   };
+
+  const submit = (e) => { e.preventDefault(); bookAndPay(); };
 
   if (booked) {
     return (
@@ -293,6 +304,13 @@ export default function Consultation() {
           ))}
         </div>
       </div>
+
+      <PaymentFailedModal
+        open={failed.open}
+        reason={failed.reason}
+        onClose={() => setFailed({ open: false, reason: null })}
+        onRetry={() => { setFailed({ open: false, reason: null }); bookAndPay(); }}
+      />
     </div>
   );
 }

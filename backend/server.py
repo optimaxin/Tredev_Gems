@@ -667,6 +667,8 @@ class ConsultationBookIn(BaseModel):
 
 
 _TIME_OF_DAY_HOUR = {"morning": 10, "afternoon": 14, "evening": 18}
+IST = timezone(timedelta(hours=5, minutes=30))
+CONSULTATION_DURATION_MINUTES = 30
 
 
 class ConsultationRequestIn(BaseModel):
@@ -5326,7 +5328,7 @@ async def admin_list_consultations(_: str = Depends(require_perm("consultations"
 async def admin_update_consultation(booking_id: str, body: dict, request: Request,
                                     actor: str = Depends(require_perm("consultations"))):
     updates = {k: v for k, v in body.items()
-              if k in {"status", "meeting_link", "notes", "astrologer_id"}}
+              if k in {"status", "meeting_link", "notes", "astrologer_id", "confirmed_time"}}
     if not updates:
         raise HTTPException(400, "Nothing to update")
 
@@ -5349,6 +5351,23 @@ async def admin_update_consultation(booking_id: str, body: dict, request: Reques
         updates["astrologer_name_snapshot"] = astro["name"]
         updates.setdefault("status", "confirmed")
 
+        # Pay-first bookings (preferred_date set) only captured a date + a rough
+        # morning/afternoon/evening preference — assigning an astrologer requires
+        # staff to pin the exact 30-min slot so both parties get a real time on
+        # WhatsApp/dashboards. Older bookings already carry an exact slot_at picked
+        # by the buyer, so this step doesn't apply to them.
+        if before.get("preferred_date"):
+            confirmed_time = updates.get("confirmed_time")
+            if not confirmed_time:
+                raise HTTPException(400, "Enter the confirmed time (HH:MM) before assigning an astrologer")
+            try:
+                hh, mm = (int(x) for x in confirmed_time.split(":"))
+                slot_local = datetime.combine(date.fromisoformat(before["preferred_date"]),
+                                              dtime(hour=hh, minute=mm), tzinfo=IST)
+            except (ValueError, TypeError):
+                raise HTTPException(400, "confirmed_time must be HH:MM")
+            updates["slot_at"] = slot_local.astimezone(timezone.utc)
+
         backend_base = _backend_base_url(request)
         pnm_room_id = None
         if plugnmeet.configured():
@@ -5370,7 +5389,7 @@ async def admin_update_consultation(booking_id: str, body: dict, request: Reques
 
     sets, args = [], []
     for k in ("status", "meeting_link", "notes", "astrologer_id", "astrologer_name_snapshot",
-             "pnm_room_id", "jitsi_room"):
+             "pnm_room_id", "jitsi_room", "slot_at"):
         if k in updates:
             args.append(updates[k])
             cast = "::consultation_status" if k == "status" else "::uuid" if k == "astrologer_id" else ""
@@ -5384,20 +5403,22 @@ async def admin_update_consultation(booking_id: str, body: dict, request: Reques
         raise HTTPException(404, "Booking not found")
     await audit_log(actor, "consultation.update", booking_id,
                     {k: v for k, v in updates.items()
-                     if k in ("status", "meeting_link", "notes", "astrologer_id")})
+                     if k in ("status", "meeting_link", "notes", "astrologer_id", "confirmed_time")})
 
     consult = await _load_consultation(booking_id)
     if assigning:
-        when = f"{consult.get('preferred_date') or ''} ({consult.get('time_of_day') or 'time TBC'})"
+        when = datetime.fromisoformat(consult["slot_iso"]).astimezone(IST).strftime("%a, %d %b · %I:%M %p IST")
         if consult.get("phone"):
             _wa_fire_event("consultation.assigned", phone=consult["phone"], name=consult["name"],
                           user_id=consult.get("user_id"),
                           variables={"astrologer_name": astro["name"], "date": when,
+                                     "duration": f"{CONSULTATION_DURATION_MINUTES} minutes",
                                      "meeting_link": consult["meeting_link"]})
         if astro.get("phone"):
             _wa_fire_event("consultation.astrologer_assigned", phone=astro["phone"], name=astro["name"],
                           variables={"customer_name": consult["name"], "concern": consult.get("concern") or "",
-                                     "date": when, "meeting_link": consult["meeting_link"]})
+                                     "date": when, "duration": f"{CONSULTATION_DURATION_MINUTES} minutes",
+                                     "meeting_link": consult["meeting_link"]})
     return consult
 
 

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, formatINR, describeOptions } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
-import { ShieldCheck, Package, Heart, Certificate as CertIcon, ArrowRight, Phone, WhatsappLogo, Gear, PencilSimple, LockKey, ChatCircleDots, CaretDown, CaretUp, MapPin, Truck, Calendar } from "@phosphor-icons/react";
+import { ShieldCheck, Package, Heart, Certificate as CertIcon, ArrowRight, Phone, WhatsappLogo, Gear, PencilSimple, LockKey, ChatCircleDots, CaretDown, CaretUp, MapPin, Truck, Calendar, VideoCamera } from "@phosphor-icons/react";
 import PhoneVerify from "@/components/gemora/PhoneVerify";
 import AccountSupport from "@/components/gemora/AccountSupport";
 import { toast } from "sonner";
@@ -358,17 +358,22 @@ export default function Account() {
                 <div key={c.booking_id} className="gold-line bg-ivory p-4 flex items-center justify-between gap-3 flex-wrap">
                   <div>
                     <div className="text-sm">
-                      {c.preferred_date ? new Date(c.preferred_date).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" }) : new Date(c.slot_iso).toLocaleDateString()}
-                      {c.time_of_day && <span className="capitalize text-ink-muted"> · {c.time_of_day}</span>}
+                      {c.astrologer_id
+                        ? new Date(c.slot_iso).toLocaleString("en-IN", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
+                        : (c.preferred_date ? new Date(c.preferred_date).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" }) : new Date(c.slot_iso).toLocaleDateString())}
+                      {!c.astrologer_id && c.time_of_day && <span className="capitalize text-ink-muted"> · {c.time_of_day}</span>}
                     </div>
                     <div className="text-xs text-ink-muted mt-1">
-                      {c.astrologer_name ? `With ${c.astrologer_name}` : "Astrologer to be assigned — we'll confirm on WhatsApp"}
+                      {c.astrologer_name ? `With ${c.astrologer_name} · 30 min` : "Astrologer to be assigned — we'll confirm on WhatsApp"}
                     </div>
                   </div>
                   <div className="text-right">
                     <div className="text-[10px] uppercase tracking-widest text-maroon-deep">{c.status}</div>
                     {c.meeting_link && (
-                      <a href={c.meeting_link} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-maroon underline">Join meeting</a>
+                      <a href={c.meeting_link} target="_blank" rel="noreferrer"
+                         className="mt-2 brand-gradient text-ivory px-4 py-2 text-[11px] uppercase tracking-widest inline-flex items-center gap-2">
+                        <VideoCamera size={12} weight="duotone" /> Join Consultation
+                      </a>
                     )}
                   </div>
                 </div>

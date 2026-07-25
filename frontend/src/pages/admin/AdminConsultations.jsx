@@ -13,6 +13,7 @@ export default function AdminConsultations() {
   const [query, setQuery] = useState("");
   const [feeRupees, setFeeRupees] = useState("");
   const [assignPick, setAssignPick] = useState({}); // booking_id -> astrologer_id being chosen
+  const [assignTime, setAssignTime] = useState({}); // booking_id -> "HH:MM" confirmed time being chosen
   const refresh = () => api.get("/admin/consultations", { params: filter ? { status: filter } : {} }).then((r) => setBookings(r.data));
   useEffect(() => { refresh(); }, [filter]);
   useEffect(() => {
@@ -27,11 +28,13 @@ export default function AdminConsultations() {
     toast.success("Consultation fee updated");
   };
 
-  const assign = async (id) => {
+  const assign = async (id, needsTime) => {
     const astrologer_id = assignPick[id];
     if (!astrologer_id) { toast.error("Pick an astrologer first"); return; }
+    const confirmed_time = assignTime[id];
+    if (needsTime && !confirmed_time) { toast.error("Enter the confirmed time first"); return; }
     try {
-      await api.patch(`/admin/consultations/${id}`, { astrologer_id });
+      await api.patch(`/admin/consultations/${id}`, { astrologer_id, ...(needsTime ? { confirmed_time } : {}) });
       toast.success("Astrologer assigned — both parties notified on WhatsApp");
       refresh();
     } catch (e) { toast.error(e.response?.data?.detail || "Could not assign"); }
@@ -103,8 +106,11 @@ export default function AdminConsultations() {
               <div>
                 <div className="font-serifd text-lg">{b.astrologer_name || "Unassigned"}</div>
                 <div className="text-xs font-mono text-ink-muted">
-                  {b.preferred_date ? new Date(b.preferred_date).toLocaleDateString() : new Date(b.slot_iso).toLocaleString()}
-                  {b.time_of_day && ` · ${b.time_of_day}`}
+                  {b.astrologer_id
+                    ? new Date(b.slot_iso).toLocaleString("en-IN", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
+                    : b.preferred_date
+                      ? `${new Date(b.preferred_date).toLocaleDateString()} · ${b.time_of_day || "time TBC"} (unconfirmed)`
+                      : new Date(b.slot_iso).toLocaleString()}
                 </div>
                 <div className="text-sm mt-1">{b.name} · <span className="font-mono">{b.phone}</span> · <span className="text-ink-muted">{b.email}</span></div>
                 {b.concern && <div className="mt-1 text-xs text-ink-soft italic">"{b.concern}"</div>}
@@ -120,13 +126,18 @@ export default function AdminConsultations() {
               </div>
             </div>
             {!b.astrologer_id && (
-              <div className="mt-3 pt-3 border-t border-gold/20 flex items-center gap-2">
+              <div className="mt-3 pt-3 border-t border-gold/20 flex items-center gap-2 flex-wrap">
                 <select value={assignPick[b.booking_id] || ""} onChange={(e) => setAssignPick((p) => ({ ...p, [b.booking_id]: e.target.value }))}
                         className="gold-line text-xs bg-ivory px-2 py-1.5 flex-1 max-w-xs">
                   <option value="">Assign an astrologer…</option>
                   {astros.map((a) => <option key={a.astrologer_id} value={a.astrologer_id}>{a.name}</option>)}
                 </select>
-                <button onClick={() => assign(b.booking_id)} className="brand-gradient text-ivory text-xs px-3 py-1.5 uppercase tracking-widest">Assign</button>
+                {b.preferred_date && (
+                  <input type="time" value={assignTime[b.booking_id] || ""}
+                         onChange={(e) => setAssignTime((t) => ({ ...t, [b.booking_id]: e.target.value }))}
+                         className="gold-line text-xs bg-ivory px-2 py-1.5" title="Confirmed time (30 min session)" />
+                )}
+                <button onClick={() => assign(b.booking_id, !!b.preferred_date)} className="brand-gradient text-ivory text-xs px-3 py-1.5 uppercase tracking-widest">Assign</button>
               </div>
             )}
             <div className="mt-3 pt-3 border-t border-gold/20 flex items-center gap-4 text-xs flex-wrap">
