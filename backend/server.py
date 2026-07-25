@@ -3856,7 +3856,7 @@ async def consultation_request(body: ConsultationRequestIn,
         body.name, body.email, body.phone, body.concern, db.to_amount(fee), rp_order_id)
 
     consult = await _load_consultation(str(booking_id))
-    return {"consultation": consult, "razorpay_key_id": rp_key or None}
+    return {"consultation": consult, "razorpay_key_id": rp_key or None, "razorpay_order_id": rp_order_id}
 
 
 @api.post("/consultation/{booking_id}/verify")

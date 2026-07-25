@@ -117,7 +117,7 @@ export default function Consultation() {
         currency: "INR",
         name: "Tredev",
         description: "Astrology consultation",
-        order_id: bookingId, // informational only — verify uses the path param, not this
+        order_id: data.razorpay_order_id, // the actual Razorpay order — required for checkout to open correctly
         prefill: { name: form.name, email: form.email, contact: form.phone },
         theme: { color: "#722F37" },
         handler: (rp) => verify(bookingId, {
