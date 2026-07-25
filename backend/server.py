@@ -3794,6 +3794,17 @@ async def book(body: ConsultationBookIn, request: Request,
     return await _load_consultation(str(booking_id))
 
 
+async def _ensure_pnm_room(room_id: str, astrologer_name: str, request: Request) -> None:
+    """plugNmeet rooms go inactive if nobody joins soon after creation — bookings
+    are made well ahead of the actual slot, so the one-time create at booking time
+    is long stale by join time. create_room is idempotent (returns the existing
+    room if already active), so re-issuing it right before minting a token is the
+    cheap fix rather than tracking room staleness ourselves."""
+    await plugnmeet.create_room(
+        room_id, f"Consultation with {astrologer_name}",
+        webhook_url=f"{_backend_base_url(request)}/api/plugnmeet/webhook")
+
+
 @api.get("/consultation/{booking_id}/join")
 async def consultation_join(booking_id: str, request: Request):
     """Public redirect a customer's WhatsApp/calendar link points to. Mints a fresh
@@ -3802,6 +3813,7 @@ async def consultation_join(booking_id: str, request: Request):
     c = await _load_consultation(booking_id)
     if not c or not c.get("pnm_room_id"):
         raise HTTPException(404, "No video room for this booking")
+    await _ensure_pnm_room(c["pnm_room_id"], c["astrologer_name"], request)
     token = await plugnmeet.get_join_token(c["pnm_room_id"], c["name"], booking_id, is_admin=False)
     return RedirectResponse(plugnmeet.join_url(token), status_code=307)
 
@@ -5390,7 +5402,8 @@ async def admin_update_consultation(booking_id: str, body: dict, request: Reques
 
 
 @api.post("/admin/consultations/{booking_id}/join-link")
-async def admin_consultation_join_link(booking_id: str, actor: str = Depends(require_perm("consultations"))):
+async def admin_consultation_join_link(booking_id: str, request: Request,
+                                        actor: str = Depends(require_perm("consultations"))):
     """Mints a fresh moderator join token — the admin/staff "check the meet link"
     button. Never persisted: plugNmeet join tokens are short-lived and one-time-use,
     so a stored link would just go stale."""
@@ -5400,6 +5413,7 @@ async def admin_consultation_join_link(booking_id: str, actor: str = Depends(req
     if not c.get("pnm_room_id"):
         raise HTTPException(400, "No plugNmeet room on this booking (booked before video "
                                   "was enabled, or plugNmeet isn't configured)")
+    await _ensure_pnm_room(c["pnm_room_id"], c["astrologer_name"], request)
     token = await plugnmeet.get_join_token(c["pnm_room_id"], "Tredev Staff", actor, is_admin=True)
     return {"url": plugnmeet.join_url(token)}
 
