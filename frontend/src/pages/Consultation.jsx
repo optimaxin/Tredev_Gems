@@ -8,12 +8,13 @@ import {
   ArrowsClockwise, SunHorizon, Sun, MoonStars, Sparkle, PaperPlaneTilt,
 } from "@phosphor-icons/react";
 
-// Next 5 calendar days, date-only — exact time is a preference (morning/afternoon/
-// evening), the real slot is agreed over WhatsApp once we assign an astrologer.
+// Next 5 calendar days STARTING TOMORROW (never today/past) — exact time is a
+// preference (morning/afternoon/evening), the real slot is agreed over WhatsApp
+// once we assign an astrologer.
 function nextDates(n = 5) {
   const out = [];
   const now = new Date();
-  for (let i = 0; i < n; i++) {
+  for (let i = 1; i <= n; i++) {
     const d = new Date(now);
     d.setDate(d.getDate() + i);
     out.push(d.toISOString().slice(0, 10)); // YYYY-MM-DD, no time component
