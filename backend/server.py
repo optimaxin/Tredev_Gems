@@ -3025,7 +3025,7 @@ async def checkout_pay(order_id: str, request: Request,
         raise HTTPException(403, "Not your order")
     if order.get("status") == "paid":
         return {"order": order, "already_paid": True}
-    if order.get("status") != "pending_payment":
+    if order.get("status") not in ("pending_payment", "payment_failed"):
         raise HTTPException(409, f"Order is {order.get('status')} — not payable")
 
     # Nothing is held for a pending order — units are assigned at capture (_mark_paid).

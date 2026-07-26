@@ -245,7 +245,7 @@ export default function Account() {
                   <div className="flex items-center gap-3">
                     <div className="text-right">
                       <div className="font-display text-2xl text-maroon-deep">{formatINR(o.total)}</div>
-                      <div className={`text-xs uppercase tracking-widest ${o.status === "shipped" ? "text-verified" : o.status === "paid" ? "text-gold-soft" : "text-ink-muted"}`}>{fmtStatus(o.status)}</div>
+                      <div className={`text-xs uppercase tracking-widest ${o.status === "shipped" ? "text-verified" : o.status === "paid" ? "text-gold-soft" : o.status === "payment_failed" ? "text-revoked" : "text-ink-muted"}`}>{fmtStatus(o.status)}</div>
                     </div>
                     {isOpen ? <CaretUp size={18} className="text-ink-muted shrink-0" /> : <CaretDown size={18} className="text-ink-muted shrink-0" />}
                   </div>
@@ -315,9 +315,11 @@ export default function Account() {
                   </div>
                 )}
 
-                {o.status === "pending_payment" && (
+                {(o.status === "pending_payment" || o.status === "payment_failed") && (
                   <div className="mt-5 pt-4 border-t border-gold/30 flex flex-wrap items-center justify-between gap-3">
-                    <div className="text-xs text-ink-muted">Payment for this order is incomplete.</div>
+                    <div className="text-xs text-ink-muted">
+                      {o.status === "payment_failed" ? "Payment failed — no amount was deducted." : "Payment for this order is incomplete."}
+                    </div>
                     <button
                       onClick={() => payNow(o)}
                       disabled={payingId === o.order_id}
