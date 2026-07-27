@@ -14,6 +14,7 @@ export default function AdminConsultations() {
   const [feeRupees, setFeeRupees] = useState("");
   const [assignPick, setAssignPick] = useState({}); // booking_id -> astrologer_id being chosen
   const [assignTime, setAssignTime] = useState({}); // booking_id -> "HH:MM" confirmed time being chosen
+  const [assignLink, setAssignLink] = useState({}); // booking_id -> meeting link being entered
   const refresh = () => api.get("/admin/consultations", { params: filter ? { status: filter } : {} }).then((r) => setBookings(r.data));
   useEffect(() => { refresh(); }, [filter]);
   useEffect(() => {
@@ -33,8 +34,10 @@ export default function AdminConsultations() {
     if (!astrologer_id) { toast.error("Pick an astrologer first"); return; }
     const confirmed_time = assignTime[id];
     if (needsTime && !confirmed_time) { toast.error("Enter the confirmed time first"); return; }
+    const meeting_link = (assignLink[id] || "").trim();
+    if (!meeting_link) { toast.error("Enter the meeting link first"); return; }
     try {
-      await api.patch(`/admin/consultations/${id}`, { astrologer_id, ...(needsTime ? { confirmed_time } : {}) });
+      await api.patch(`/admin/consultations/${id}`, { astrologer_id, meeting_link, ...(needsTime ? { confirmed_time } : {}) });
       toast.success("Astrologer assigned — both parties notified on WhatsApp");
       refresh();
     } catch (e) { toast.error(e.response?.data?.detail || "Could not assign"); }
@@ -47,25 +50,6 @@ export default function AdminConsultations() {
   const setStatus = async (id, status) => {
     await api.patch(`/admin/consultations/${id}`, { status });
     toast.success(`Marked ${status}`); refresh();
-  };
-
-  const joinMeeting = async (id) => {
-    try {
-      const { data } = await api.post(`/admin/consultations/${id}/join-link`);
-      window.open(data.url, "_blank", "noopener");
-    } catch (e) { toast.error(e.response?.data?.detail || "Could not get a meeting link"); }
-  };
-
-  const openRecording = async (id) => {
-    try {
-      const { data } = await api.get(`/admin/consultations/${id}/recording`);
-      window.open(data.url, "_blank", "noopener");
-    } catch (e) { toast.error(e.response?.data?.detail || "Could not open recording"); }
-  };
-
-  const RECORDING_LABEL = {
-    none: null, pending: "Recording pending", processing: "Processing recording…",
-    ready: null, failed: "Recording failed",
   };
 
   return (
@@ -137,21 +121,18 @@ export default function AdminConsultations() {
                          onChange={(e) => setAssignTime((t) => ({ ...t, [b.booking_id]: e.target.value }))}
                          className="gold-line text-xs bg-ivory px-2 py-1.5" title="Confirmed time (30 min session)" />
                 )}
+                <input type="text" value={assignLink[b.booking_id] || ""}
+                       onChange={(e) => setAssignLink((l) => ({ ...l, [b.booking_id]: e.target.value }))}
+                       placeholder="Meeting link" className="gold-line text-xs bg-ivory px-2 py-1.5 flex-1 max-w-xs" />
                 <button onClick={() => assign(b.booking_id, !!b.preferred_date)} className="brand-gradient text-ivory text-xs px-3 py-1.5 uppercase tracking-widest">Assign</button>
               </div>
             )}
             <div className="mt-3 pt-3 border-t border-gold/20 flex items-center gap-4 text-xs flex-wrap">
-              {b.pnm_room_id && (
-                <button onClick={() => joinMeeting(b.booking_id)} data-testid={`consult-join-${b.booking_id}`} className="text-maroon inline-flex items-center gap-1">
+              {b.meeting_link && (
+                <a href={b.meeting_link} target="_blank" rel="noreferrer"
+                   data-testid={`consult-join-${b.booking_id}`} className="text-maroon inline-flex items-center gap-1">
                   Join meeting
-                </button>
-              )}
-              {b.recording_ready ? (
-                <button onClick={() => openRecording(b.booking_id)} data-testid={`consult-recording-${b.booking_id}`} className="text-verified inline-flex items-center gap-1">
-                  Download recording
-                </button>
-              ) : RECORDING_LABEL[b.recording_status] && (
-                <span className="text-ink-muted">{RECORDING_LABEL[b.recording_status]}</span>
+                </a>
               )}
             </div>
           </div>

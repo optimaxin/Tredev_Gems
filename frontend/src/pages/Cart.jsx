@@ -13,11 +13,19 @@ export default function Cart() {
   const items = cart.items || [];
 
   const changeQty = async (li, next) => {
-    if (next < 1) return remove(li.line_id);
+    if (next < 1) return removeLine(li.line_id);
     try {
       await setQty(li.line_id, next);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Could not update quantity");
+    }
+  };
+
+  const removeLine = async (line_id) => {
+    try {
+      await remove(line_id);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Could not remove item");
     }
   };
 
@@ -28,7 +36,6 @@ export default function Cart() {
           <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">Your reservation</div>
           <h1 className="font-display text-4xl md:text-5xl text-ink mt-3">Cart · टोकरी</h1>
         </div>
-        <div className="text-sm text-ink-muted">Reserved for 15 minutes</div>
       </div>
 
       {items.length === 0 ? (
@@ -73,7 +80,7 @@ export default function Cart() {
                   </div>
                 </div>
                 <div className="font-display text-xl text-maroon-deep">{formatINR(li.price * li.qty)}</div>
-                <button onClick={() => remove(li.line_id)} data-testid={`cart-remove-${li.line_id}`} className="text-ink-muted hover:text-revoked">
+                <button onClick={() => removeLine(li.line_id)} data-testid={`cart-remove-${li.line_id}`} className="text-ink-muted hover:text-revoked">
                   <TrashSimple size={20} />
                 </button>
               </div>

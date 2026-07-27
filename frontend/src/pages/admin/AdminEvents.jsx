@@ -74,11 +74,15 @@ export default function AdminEvents() {
 
   const remove = async (ev) => {
     if (!window.confirm(`Delete event "${ev.title}"?`)) return;
+    const prevEvents = events;
+    setEvents((cur) => cur.filter((x) => x.event_id !== ev.event_id));
     try {
       await api.delete(`/admin/events/${ev.event_id}`);
       toast.success("Deleted");
-      load();
-    } catch (e) { toast.error(e?.response?.data?.detail || "Delete failed"); }
+    } catch (e) {
+      setEvents(prevEvents);
+      toast.error(e?.response?.data?.detail || "Delete failed");
+    }
   };
 
   const onPickImage = (m) => {

@@ -20,9 +20,18 @@ from typing import Optional, Tuple
 
 import httpx
 
+from circuit import get_circuit
+
 log = logging.getLogger("gemora")
 
 BUCKET = os.environ.get("SUPABASE_STORAGE_BUCKET", "media")
+
+# The media-file proxy (GET) is the hottest path here — every product image view
+# round-trips through it — and it shares this one Supabase project with uploads,
+# deletes and signing. If Supabase Storage degrades, all four must fail fast
+# together rather than each request queuing up to its own multi-second timeout.
+_circuit = get_circuit("supabase_storage", failure_threshold=5, reset_timeout=15.0,
+                       call_timeout=120.0, max_concurrency=15)
 
 
 def _base_url() -> str:
@@ -52,10 +61,9 @@ def configured() -> bool:
     return bool(os.environ.get("SUPABASE_URL") and os.environ.get("SUPABASE_SERVICE_ROLE_KEY"))
 
 
-async def put(path: str, data: bytes, content_type: str, bucket: str = BUCKET) -> dict:
-    """Upload bytes. `path` is the object key within the bucket."""
+async def _do_put(path: str, data: bytes, content_type: str, bucket: str) -> httpx.Response:
     async with httpx.AsyncClient(timeout=120) as c:
-        r = await c.post(
+        return await c.post(
             f"{_base_url()}/object/{bucket}/{path}",
             content=data,
             headers=_headers({
@@ -64,15 +72,24 @@ async def put(path: str, data: bytes, content_type: str, bucket: str = BUCKET) -
                 "x-upsert": "true",
             }),
         )
+
+
+async def put(path: str, data: bytes, content_type: str, bucket: str = BUCKET) -> dict:
+    """Upload bytes. `path` is the object key within the bucket."""
+    r = await _circuit.call(_do_put, path, data, content_type, bucket)
     if r.status_code >= 400:
         raise RuntimeError(f"Supabase storage put failed [{r.status_code}]: {r.text[:200]}")
     return {"path": path, "size": len(data)}
 
 
+async def _do_get(path: str, bucket: str) -> httpx.Response:
+    async with httpx.AsyncClient(timeout=120) as c:
+        return await c.get(f"{_base_url()}/object/{bucket}/{path}", headers=_headers())
+
+
 async def get(path: str, bucket: str = BUCKET) -> Tuple[bytes, str]:
     """Download bytes + content-type. Raises FileNotFoundError when absent."""
-    async with httpx.AsyncClient(timeout=120) as c:
-        r = await c.get(f"{_base_url()}/object/{bucket}/{path}", headers=_headers())
+    r = await _circuit.call(_do_get, path, bucket)
     if r.status_code == 404:
         raise FileNotFoundError(path)
     if r.status_code >= 400:
@@ -80,12 +97,25 @@ async def get(path: str, bucket: str = BUCKET) -> Tuple[bytes, str]:
     return r.content, r.headers.get("Content-Type", "application/octet-stream")
 
 
-async def delete(path: str) -> None:
+async def _do_delete(path: str) -> httpx.Response:
     async with httpx.AsyncClient(timeout=30) as c:
-        r = await c.request("DELETE", f"{_base_url()}/object/{BUCKET}/{path}",
-                            headers=_headers())
+        return await c.request("DELETE", f"{_base_url()}/object/{BUCKET}/{path}",
+                               headers=_headers())
+
+
+async def delete(path: str) -> None:
+    r = await _circuit.call(_do_delete, path)
     if r.status_code >= 400 and r.status_code != 404:
         log.warning(f"Supabase storage delete failed [{r.status_code}]: {r.text[:200]}")
+
+
+async def _do_sign(path: str, expires_in: int, bucket: str) -> httpx.Response:
+    async with httpx.AsyncClient(timeout=15) as c:
+        return await c.post(
+            f"{_base_url()}/object/sign/{bucket}/{path}",
+            json={"expiresIn": expires_in},
+            headers=_headers({"Content-Type": "application/json"}),
+        )
 
 
 async def sign(path: str, expires_in: int = 604800, bucket: str = BUCKET) -> str:
@@ -96,12 +126,7 @@ async def sign(path: str, expires_in: int = 604800, bucket: str = BUCKET) -> str
     stays private — the URL carries a signed token that expires after `expires_in`
     seconds (default 7 days).
     """
-    async with httpx.AsyncClient(timeout=15) as c:
-        r = await c.post(
-            f"{_base_url()}/object/sign/{bucket}/{path}",
-            json={"expiresIn": expires_in},
-            headers=_headers({"Content-Type": "application/json"}),
-        )
+    r = await _circuit.call(_do_sign, path, expires_in, bucket)
     if r.status_code >= 400:
         raise RuntimeError(f"Supabase storage sign failed [{r.status_code}]: {r.text[:200]}")
     body = r.json()

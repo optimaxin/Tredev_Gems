@@ -78,10 +78,15 @@ export default function AdminDesigns() {
 
   const del = async (d) => {
     if (!confirm(`Delete ${d.code} (${d.metal})? Past orders keep the design they recorded.`)) return;
+    const prevDesigns = designs;
+    setDesigns((cur) => cur.filter((x) => x.design_id !== d.design_id));
     try {
       await api.delete(`/admin/designs/${d.design_id}`);
-      toast.success("Design deleted"); refresh();
-    } catch (e) { toast.error(e.response?.data?.detail); }
+      toast.success("Design deleted");
+    } catch (e) {
+      setDesigns(prevDesigns);
+      toast.error(e.response?.data?.detail || "Could not delete design");
+    }
   };
 
   const shown = designs

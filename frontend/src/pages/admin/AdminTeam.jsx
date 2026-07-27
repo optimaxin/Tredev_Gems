@@ -32,20 +32,41 @@ export default function AdminTeam() {
   };
 
   const updatePerms = async (uid, newPerms) => {
-    await api.patch(`/admin/users/${uid}`, { permissions: newPerms });
-    toast.success("Permissions updated"); refresh();
+    const prevUsers = users;
+    setUsers((cur) => cur.map((u) => (u.user_id === uid ? { ...u, permissions: newPerms } : u)));
+    try {
+      await api.patch(`/admin/users/${uid}`, { permissions: newPerms });
+      toast.success("Permissions updated");
+    } catch (e) {
+      setUsers(prevUsers);
+      toast.error(e.response?.data?.detail || "Could not update permissions");
+    }
   };
 
   const promoteOwner = async (uid) => {
     if (!confirm("Promote to OWNER? Owner has full access including managing other users.")) return;
-    await api.patch(`/admin/users/${uid}`, { role: "owner" });
-    toast.success("Promoted to owner"); refresh();
+    const prevUsers = users;
+    setUsers((cur) => cur.map((u) => (u.user_id === uid ? { ...u, role: "owner" } : u)));
+    try {
+      await api.patch(`/admin/users/${uid}`, { role: "owner" });
+      toast.success("Promoted to owner");
+    } catch (e) {
+      setUsers(prevUsers);
+      toast.error(e.response?.data?.detail || "Could not promote");
+    }
   };
 
   const remove = async (uid) => {
     if (!confirm("Revoke staff access?")) return;
-    await api.delete(`/admin/staff/${uid}`);
-    toast.success("Access revoked"); refresh();
+    const prevUsers = users;
+    setUsers((cur) => cur.filter((u) => u.user_id !== uid));
+    try {
+      await api.delete(`/admin/staff/${uid}`);
+      toast.success("Access revoked");
+    } catch (e) {
+      setUsers(prevUsers);
+      toast.error(e.response?.data?.detail || "Could not revoke access");
+    }
   };
 
   const staffOnly = users

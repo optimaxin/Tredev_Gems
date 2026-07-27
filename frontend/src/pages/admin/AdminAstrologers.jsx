@@ -69,8 +69,15 @@ export default function AdminAstrologers() {
 
   const remove = async (a) => {
     if (!window.confirm(`Deactivate ${a.name}?`)) return;
-    await api.delete(`/admin/astrologers/${a.astrologer_id}`);
-    toast.success("Deactivated"); refresh();
+    const prevAstros = astros;
+    setAstros((cur) => cur.map((x) => (x.astrologer_id === a.astrologer_id ? { ...x, is_active: false } : x)));
+    try {
+      await api.delete(`/admin/astrologers/${a.astrologer_id}`);
+      toast.success("Deactivated");
+    } catch (e) {
+      setAstros(prevAstros);
+      toast.error(e.response?.data?.detail || "Could not deactivate");
+    }
   };
 
   const regenWelcome = async (a) => {
@@ -233,7 +240,6 @@ export default function AdminAstrologers() {
 
 function AstrologerDetailModal({ astrologerId, onClose }) {
   const [data, setData] = useState(null);
-  const [busyId, setBusyId] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -247,15 +253,24 @@ function AstrologerDetailModal({ astrologerId, onClose }) {
   }, [astrologerId]);
   useEffect(() => { load(); }, [load]);
 
+  // The row's status/button flips instantly; the Total/Pending summary tiles above
+  // are server-computed aggregates, so a background reload resyncs those without
+  // making the click itself wait on it.
   const toggleStatus = async (c) => {
     const next = c.status === "paid" ? "pending" : "paid";
-    setBusyId(c.commission_id);
+    const prevData = data;
+    setData((d) => ({
+      ...d,
+      commissions: d.commissions.map((x) => (x.commission_id === c.commission_id ? { ...x, status: next } : x)),
+    }));
     try {
       await api.patch(`/admin/affiliate-commissions/${c.commission_id}`, { status: next });
       toast.success(next === "paid" ? "Marked as paid" : "Marked as pending");
-      await load();
-    } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
-    finally { setBusyId(null); }
+      load();
+    } catch (e) {
+      setData(prevData);
+      toast.error(e.response?.data?.detail || "Failed");
+    }
   };
 
   return (
@@ -317,11 +332,10 @@ function AstrologerDetailModal({ astrologerId, onClose }) {
                         </span>
                         <button
                           onClick={() => toggleStatus(c)}
-                          disabled={busyId === c.commission_id}
                           data-testid={`commission-toggle-${c.commission_id}`}
-                          className="border border-maroon text-maroon hover:bg-maroon hover:text-ivory px-2 py-1 text-[10px] uppercase tracking-widest disabled:opacity-50"
+                          className="border border-maroon text-maroon hover:bg-maroon hover:text-ivory px-2 py-1 text-[10px] uppercase tracking-widest"
                         >
-                          {busyId === c.commission_id ? "…" : c.status === "paid" ? "Mark pending" : "Mark paid"}
+                          {c.status === "paid" ? "Mark pending" : "Mark paid"}
                         </button>
                       </div>
                     </div>

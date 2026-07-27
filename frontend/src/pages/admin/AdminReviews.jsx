@@ -19,11 +19,13 @@ export default function AdminReviews() {
 
   const remove = async (r) => {
     if (!window.confirm(`Delete this ${r.rating}★ review by ${r.author}? This can't be undone.`)) return;
+    const prevReviews = reviews;
+    setReviews((cur) => cur.filter((x) => x.review_id !== r.review_id));
     try {
       await api.delete(`/admin/reviews/${r.review_id}`);
-      setReviews((cur) => cur.filter((x) => x.review_id !== r.review_id));
       toast.success("Review deleted");
     } catch (_) {
+      setReviews(prevReviews);
       toast.error("Couldn't delete the review");
     }
   };

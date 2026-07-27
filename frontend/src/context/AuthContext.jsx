@@ -63,8 +63,17 @@ export function AuthProvider({ children }) {
     setUser(null);
   };
 
+  // Merge a partial update into `user` immediately, for callers doing optimistic
+  // UI (flip a toggle before the request resolves). Returns the previous user so
+  // the caller can restore it verbatim if the request fails.
+  const patchUser = (patch) => {
+    const prev = user;
+    if (prev) setUser({ ...prev, ...patch });
+    return prev;
+  };
+
   return (
-    <AuthCtx.Provider value={{ user, loading, loginJwt, signupJwt, googleLogin, logout, refresh }}>
+    <AuthCtx.Provider value={{ user, loading, loginJwt, signupJwt, googleLogin, logout, refresh, setUser, patchUser }}>
       {children}
     </AuthCtx.Provider>
   );

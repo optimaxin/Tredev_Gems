@@ -223,8 +223,7 @@ class TestConsultationBooking:
         }, timeout=30)
         assert r.status_code == 200, r.text
         d = r.json()
-        assert d["jitsi_room"].startswith("gemora-")
-        assert d["meeting_link"].startswith("https://meet.jit.si/gemora-")
+        assert d["meeting_link"] is None
         created_astrologer["_booking_id"] = d["booking_id"]
 
         # visible in astro consultations

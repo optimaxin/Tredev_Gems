@@ -15,10 +15,15 @@ export default function AdminUsers() {
 
   const del = async (u) => {
     if (!confirm(`Delete user ${u.email}? This cannot be undone.`)) return;
+    const prevUsers = users;
+    setUsers((cur) => cur.filter((x) => x.user_id !== u.user_id));
     try {
       await api.delete(`/admin/users/${u.user_id}`);
-      toast.success("User deleted"); load();
-    } catch (e) { toast.error(e.response?.data?.detail); }
+      toast.success("User deleted");
+    } catch (e) {
+      setUsers(prevUsers);
+      toast.error(e.response?.data?.detail || "Could not delete user");
+    }
   };
 
   return (

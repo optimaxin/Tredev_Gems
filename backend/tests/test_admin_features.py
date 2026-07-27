@@ -67,8 +67,8 @@ class TestAdminOwnerOps:
         assert r.status_code == 200, r.text
         d = r.json()
         assert d.get("temp_password") and len(d["temp_password"]) >= 8
-        assert d.get("invite_channel") in ("whatsapp", "mock")
-        # invite_sent may be True/False depending on env vars — but with mock META, wa_send_utility returns cleanly → True
+        assert d.get("invite_channel") in ("openwa", "mock")
+        # invite_sent may be True/False depending on env vars — but with mock/no OpenWA config, wa_send_utility returns cleanly → True
         assert isinstance(d.get("invite_sent"), bool)
         pytest.staff_email = email  # type: ignore[attr-defined]
         pytest.staff_pw = d["temp_password"]  # type: ignore[attr-defined]

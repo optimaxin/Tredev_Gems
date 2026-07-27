@@ -18,6 +18,7 @@ export default function ProductDetail() {
   const [active, setActive] = useState(0); // selected gallery image
   // {group_key: choice_label} — which option the buyer picked in each selector.
   const [picked, setPicked] = useState({});
+  const [saved, setSaved] = useState(false); // optimistic "already in wishlist" flag
   const cart = useCart();
   const nav = useNavigate();
 
@@ -30,6 +31,7 @@ export default function ProductDetail() {
     setQty(1);
     setActive(0); // reset gallery to the first photo for the new product
     setPicked({});
+    setSaved(false);
 
     api.get(`/products/${slug}`).then(({ data }) => {
       if (cancelled) return;
@@ -91,14 +93,21 @@ export default function ProductDetail() {
     await cart.add({ product_id: p.product_id, qty, options });
   };
 
-  const addToCart = async () => {
-    try {
-      await put();
-      toast.success(`${qty} × ${p.name} added to your cart`);
-      nav("/cart");
-    } catch (e) {
+  // Optimistic: the cart page renders the new line immediately (CartContext seeds a
+  // placeholder from optimisticItem) instead of waiting on the round trip. If the
+  // request fails, CartContext rolls the cart back and this toast surfaces the error
+  // wherever the user has landed by then.
+  const addToCart = () => {
+    const options = {};
+    for (const g of visible) if (resolved[g.key] != null) options[g.key] = resolved[g.key];
+    cart.add({
+      product_id: p.product_id, qty, options,
+      optimisticItem: { name: p.name, price: unitPrice, image: (p.images || [])[0] || null },
+    }).catch((e) => {
       toast.error(e.response?.data?.detail || "Could not add to cart");
-    }
+    });
+    toast.success(`${qty} × ${p.name} added to your cart`);
+    nav("/cart");
   };
 
   const buyNow = async () => {
@@ -108,6 +117,18 @@ export default function ProductDetail() {
     } catch (e) {
       toast.error(e.response?.data?.detail || "Could not add to cart");
     }
+  };
+
+  // Optimistic: flips to "Saved" immediately; reverts (and the button re-enables)
+  // if the request fails — most commonly because the buyer isn't logged in.
+  const saveWishlist = () => {
+    setSaved(true);
+    api.post(`/me/wishlist/${p.product_id}`)
+      .then(() => toast.success("Saved to wishlist"))
+      .catch(() => {
+        setSaved(false);
+        toast.error("Please login to save");
+      });
   };
 
   const rating = reviews.length
@@ -393,11 +414,13 @@ export default function ProductDetail() {
             >
               <Lightning size={16} weight="fill" /> Buy it now
             </button>
-            <button className="border border-maroon text-maroon px-6 py-4 text-sm uppercase tracking-widest inline-flex items-center gap-2 hover:bg-maroon hover:text-ivory transition-colors"
-              onClick={() => api.post(`/me/wishlist/${p.product_id}`).then(() => toast.success("Saved to wishlist")).catch(() => toast.error("Please login to save"))}
+            <button
+              onClick={saveWishlist}
+              disabled={saved}
+              className="border border-maroon text-maroon px-6 py-4 text-sm uppercase tracking-widest inline-flex items-center gap-2 hover:bg-maroon hover:text-ivory transition-colors disabled:opacity-60 disabled:hover:bg-transparent disabled:hover:text-maroon"
               data-testid="wishlist-btn"
             >
-              <Heart size={16} weight="duotone" /> Save
+              <Heart size={16} weight={saved ? "fill" : "duotone"} /> {saved ? "Saved" : "Save"}
             </button>
           </div>
 

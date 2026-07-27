@@ -95,11 +95,15 @@ export default function AdminMedia() {
 
   const remove = async (media_id) => {
     if (!window.confirm("Delete this image? Any slot using it will be cleared.")) return;
+    const prevItems = items;
+    setItems((cur) => cur.filter((x) => x.media_id !== media_id));
     try {
       await api.delete(`/admin/media/${media_id}`);
       toast.success("Deleted");
-      load();
-    } catch (e) { toast.error(e?.response?.data?.detail || "Delete failed"); }
+    } catch (e) {
+      setItems(prevItems);
+      toast.error(e?.response?.data?.detail || "Delete failed");
+    }
   };
 
   const copyUrl = (url) => {

@@ -8,7 +8,7 @@ import AccountSupport from "@/components/gemora/AccountSupport";
 import { toast } from "sonner";
 
 export default function Account() {
-  const { user, loading, refresh } = useAuth();
+  const { user, loading, refresh, patchUser } = useAuth();
   const nav = useNavigate();
   const [tab, setTab] = useState("vault");
   const [orders, setOrders] = useState([]);
@@ -122,11 +122,12 @@ export default function Account() {
   };
 
   const toggleWaOptin = async (nextVal) => {
+    const prevUser = patchUser({ wa_optin: nextVal });
     try {
       await api.post("/me/wa-optin", { wa_optin: nextVal });
       toast.success(nextVal ? "You're subscribed to WhatsApp updates" : "You've unsubscribed from WhatsApp updates");
-      await refresh();
     } catch (e) {
+      if (prevUser) patchUser({ wa_optin: prevUser.wa_optin });
       toast.error(e.response?.data?.detail || "Could not update preference");
     }
   };

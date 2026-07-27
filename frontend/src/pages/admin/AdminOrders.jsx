@@ -51,27 +51,42 @@ export default function AdminOrders() {
   useEffect(() => { refresh(); }, []);
 
   const setStatus = async (order_id, status) => {
+    const prevOrders = orders;
+    setOrders((cur) => cur.map((o) => (o.order_id === order_id ? { ...o, status } : o)));
     try {
       await api.patch(`/admin/orders/${order_id}/status`, { status });
-      toast.success(`Order ${status}`); refresh();
-    } catch (e) { toast.error(e.response?.data?.detail); }
+      toast.success(`Order ${status}`);
+    } catch (e) {
+      setOrders(prevOrders);
+      toast.error(e.response?.data?.detail || "Could not update order status");
+    }
   };
 
   const removeOrder = async (order_id) => {
     if (!confirm(`Delete order ${order_id}? This will release its reserved units.`)) return;
+    const prevOrders = orders;
+    setOrders((cur) => cur.filter((o) => o.order_id !== order_id));
     try {
       await api.delete(`/admin/orders/${order_id}`);
-      toast.success("Order deleted"); refresh();
-    } catch (e) { toast.error(e.response?.data?.detail); }
+      toast.success("Order deleted");
+    } catch (e) {
+      setOrders(prevOrders);
+      toast.error(e.response?.data?.detail || "Could not delete order");
+    }
   };
 
   const purgeAll = async () => {
     if (!confirm("Delete ALL orders? This cannot be undone. Reservations will be released and units returned to available stock.")) return;
     if (!confirm("Are you absolutely sure? Type-confirmation is disabled — this will nuke every order in the database.")) return;
+    const prevOrders = orders;
+    setOrders([]);
     try {
       const { data } = await api.post("/admin/orders/purge");
-      toast.success(`Purged ${data.deleted} orders`); refresh();
-    } catch (e) { toast.error(e.response?.data?.detail); }
+      toast.success(`Purged ${data.deleted} orders`);
+    } catch (e) {
+      setOrders(prevOrders);
+      toast.error(e.response?.data?.detail || "Could not purge orders");
+    }
   };
 
   const openDetail = (order) => {

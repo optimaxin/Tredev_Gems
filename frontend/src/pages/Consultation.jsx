@@ -170,7 +170,7 @@ export default function Consultation() {
               <span className="shimmer-text">Consultation booked</span>
             </h1>
             <p className="mt-4 text-ink-soft leading-relaxed">
-              We'll send you a confirmation message on WhatsApp shortly with your astrologer and meeting link.
+              We'll send you your astrologer and joining time on WhatsApp shortly, and the meeting link over email.
             </p>
           </motion.div>
 

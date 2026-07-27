@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import {
   ChartBar, Package, Stack, Certificate as CertIcon, Truck, SquaresFour, Sparkle, Calendar,
   ChatCircleDots, UsersFour, ShieldStar, ArrowLeft, WhatsappLogo, Image as ImageIcon, MegaphoneSimple, PaintBrush,
-  ArrowsClockwise, Diamond, Browser, Star, Notebook, ClockCounterClockwise,
+  ArrowsClockwise, Diamond, Browser, Star, Notebook, ClockCounterClockwise, Fire,
 } from "@phosphor-icons/react";
 
 import AdminDashboard from "@/pages/admin/AdminDashboard";
@@ -29,6 +29,7 @@ import AdminSiteAssets from "@/pages/admin/AdminSiteAssets";
 import AdminWebsite from "@/pages/admin/AdminWebsite";
 import AdminEvents from "@/pages/admin/AdminEvents";
 import AdminLogs from "@/pages/admin/AdminLogs";
+import AdminLeads from "@/pages/admin/AdminLeads";
 
 const NAV_ITEMS = [
   { to: "dashboard", label: "Dashboard", Icon: ChartBar, ownerOnly: true },
@@ -37,6 +38,7 @@ const NAV_ITEMS = [
   { to: "inventory", label: "Inventory", Icon: Stack, perm: "inventory" },
   { to: "certificates", label: "Certificates", Icon: CertIcon, perm: "certificates" },
   { to: "orders", label: "Orders", Icon: Truck, perm: "orders" },
+  { to: "leads", label: "Leads", Icon: Fire, perm: "orders" },
   { to: "categories", label: "Categories", Icon: SquaresFour, perm: "categories" },
   { to: "media", label: "Media", Icon: ImageIcon, adminAny: true },
   { to: "site-assets", label: "Site Images", Icon: PaintBrush, adminAny: true },
@@ -140,6 +142,7 @@ export default function Admin() {
           <Route path="inventory" element={<AdminInventory />} />
           <Route path="certificates" element={<AdminCerts />} />
           <Route path="orders" element={<AdminOrders />} />
+          <Route path="leads" element={<AdminLeads />} />
           <Route path="categories" element={<AdminCategories />} />
           <Route path="media" element={<AdminMedia />} />
           <Route path="site-assets" element={<AdminSiteAssets />} />

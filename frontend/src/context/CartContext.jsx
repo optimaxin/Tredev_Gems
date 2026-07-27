@@ -21,21 +21,59 @@ export function CartProvider({ children }) {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  const add = async ({ product_id, unit_id, qty = 1, options }) => {
-    const { data } = await api.post("/cart/add", { product_id, unit_id, qty, options });
-    setCart(data);
-    return data;
+  // Optimistic: apply the change to `cart` immediately, then reconcile with the
+  // server's authoritative response. On failure, restore the pre-mutation cart so
+  // the screen never shows a state the server didn't actually accept.
+  //
+  // `optimisticItem` (add only) is an *approximation* — a synthesized line the
+  // caller renders while the real request is in flight (price/name/image known
+  // client-side, but not the server-assigned line_id or merge-with-existing-line
+  // behavior). It's replaced wholesale the moment the real response lands.
+  const add = async ({ product_id, unit_id, qty = 1, options, optimisticItem }) => {
+    const prevCart = cart;
+    if (optimisticItem) {
+      const tempId = `optimistic-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      setCart((c) => ({
+        ...c,
+        items: [...(c.items || []), { ...optimisticItem, line_id: tempId, product_id, unit_id, qty, _pending: true }],
+      }));
+    }
+    try {
+      const { data } = await api.post("/cart/add", { product_id, unit_id, qty, options });
+      setCart(data);
+      return data;
+    } catch (e) {
+      setCart(prevCart);
+      throw e;
+    }
   };
 
   const remove = async (line_id) => {
-    const { data } = await api.post(`/cart/remove/${line_id}`);
-    setCart(data);
+    const prevCart = cart;
+    setCart((c) => ({ ...c, items: (c.items || []).filter((li) => li.line_id !== line_id) }));
+    try {
+      const { data } = await api.post(`/cart/remove/${line_id}`);
+      setCart(data);
+    } catch (e) {
+      setCart(prevCart);
+      throw e;
+    }
   };
 
   const setQty = async (line_id, qty) => {
-    const { data } = await api.post("/cart/set-qty", { line_id, qty });
-    setCart(data);
-    return data;
+    const prevCart = cart;
+    setCart((c) => ({
+      ...c,
+      items: (c.items || []).map((li) => (li.line_id === line_id ? { ...li, qty } : li)),
+    }));
+    try {
+      const { data } = await api.post("/cart/set-qty", { line_id, qty });
+      setCart(data);
+      return data;
+    } catch (e) {
+      setCart(prevCart);
+      throw e;
+    }
   };
 
   const count = (cart.items || []).reduce((s, li) => s + (li.qty || 1), 0);

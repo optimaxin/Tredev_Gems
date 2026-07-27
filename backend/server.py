@@ -14,8 +14,6 @@ import logging
 import os
 import re
 import secrets
-import subprocess
-import tempfile
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -25,7 +23,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import bcrypt
-import imageio_ffmpeg
 import jwt as pyjwt
 import qrcode
 from qrcode.image.pil import PilImage
@@ -37,7 +34,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 from cryptography.hazmat.primitives import serialization
 from dotenv import load_dotenv
-from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi import APIRouter, Cookie, Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from fastapi.responses import Response as FastAPIResponse
 
@@ -46,9 +43,11 @@ from decimal import Decimal
 
 import db  # Postgres/Supabase access layer — see backend/MIGRATION.md
 import storage_sb  # Supabase Storage — replaces the Emergent object store
-import plugnmeet  # Video consultations — room create/join, recording fetch
+from circuit import CircuitOpenError, get_circuit
+import respcache
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from collections import defaultdict, deque
 
 ROOT_DIR = Path(__file__).parent
@@ -125,29 +124,46 @@ except Exception as _fe:
 _TWILIO_SID = os.environ.get("TWILIO_ACCOUNT_SID", "").strip()
 _TWILIO_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "").strip()
 _TWILIO_VERIFY_SID = os.environ.get("TWILIO_VERIFY_SERVICE_SID", "").strip()
-_MSG91_KEY = os.environ.get("MSG91_AUTH_KEY", "").strip()
-_MSG91_TMPL = os.environ.get("MSG91_TEMPLATE_ID", "").strip()
-_MSG91_SENDER = os.environ.get("MSG91_SENDER_ID", "").strip()
-_META_WA_PHONE = os.environ.get("META_WA_PHONE_ID", "").strip()
-_META_WA_TOKEN = os.environ.get("META_WA_ACCESS_TOKEN", "").strip()
-_META_WA_APP_SECRET = os.environ.get("META_WA_APP_SECRET", "").strip()
-_META_WA_VERIFY_TOKEN = os.environ.get("META_WA_VERIFY_TOKEN", "").strip()
-_META_WA_API_VERSION = os.environ.get("META_WA_API_VERSION", "v20.0").strip()
-_META_WA_OTP_TMPL = os.environ.get("META_WA_OTP_TEMPLATE", "gemora_otp").strip()
-_META_WA_DISPATCH_TMPL = os.environ.get("META_WA_DISPATCH_TEMPLATE", "gemora_dispatched").strip()
-_META_WA_PROMO_TMPL = os.environ.get("META_WA_PROMO_TEMPLATE", "gemora_promo").strip()
-_META_WA_TMPL_LANG = os.environ.get("META_WA_TEMPLATE_LANG", "en_US").strip()
 _OTP_DEV_CODE = os.environ.get("OTP_DEV_MODE_CODE", "123456").strip()
+
+# Each of these is a separate outside service with its own failure mode. A slow or
+# down provider must not let OTP/notification requests pile up waiting on it — cap
+# concurrency and fail fast (falling back to mock/another provider) once it trips.
+_twilio_circuit = get_circuit("twilio", failure_threshold=3, reset_timeout=30.0,
+                              call_timeout=10.0, max_concurrency=5)
+_razorpay_circuit = get_circuit("razorpay", failure_threshold=3, reset_timeout=20.0,
+                                call_timeout=8.0, max_concurrency=10)
+# firebase_admin's verify_id_token is synchronous and, on a cold cert cache, fetches
+# Google's public keys over the network — on the login hot path, so it gets the
+# same worker-thread + timeout + concurrency-cap treatment as the others.
+_firebase_circuit = get_circuit("firebase_auth", failure_threshold=5, reset_timeout=15.0,
+                                call_timeout=8.0, max_concurrency=15)
+
+
+async def _razorpay_create_order(rp_key: str, rp_secret: str, amount: int, receipt: str) -> str:
+    """Create a Razorpay order and return its id.
+
+    razorpay's SDK is synchronous (blocking network I/O via `requests`), and this
+    runs on the checkout hot path — every checkout blocks the event loop for the
+    call's duration otherwise. Routing it through the circuit both moves the call
+    to a worker thread and caps how many can be in flight/how long they can hang.
+    Raises on any failure; every caller already falls back to a mock order id.
+    """
+    import razorpay
+
+    def _create():
+        rp = razorpay.Client(auth=(rp_key, rp_secret))
+        return rp.order.create({"amount": amount, "currency": "INR",
+                                "receipt": receipt[:40], "payment_capture": 1})
+
+    rp_order = await _razorpay_circuit.call(_create)
+    return rp_order["id"]
 
 
 def _otp_provider() -> str:
-    # Priority: WhatsApp (cheapest + promo-friendly) → Twilio Verify → MSG91 → mock.
-    if _META_WA_PHONE and _META_WA_TOKEN:
-        return "whatsapp"
+    # Priority: Twilio Verify → mock.
     if _TWILIO_SID and _TWILIO_TOKEN and _TWILIO_VERIFY_SID:
         return "twilio"
-    if _MSG91_KEY and _MSG91_TMPL:
-        return "msg91"
     return "mock"
 
 
@@ -163,40 +179,6 @@ def normalize_phone(phone: str) -> str:
     if len(p) == 12 and p.startswith("91"):
         return f"+{p}"
     return f"+{p}"
-
-
-async def _wa_send_template(phone: str, template: str, body_params: List[str], category_is_auth: bool = False) -> dict:
-    """POST to Meta WhatsApp Cloud API. Raises HTTPException on failure."""
-    url = f"https://graph.facebook.com/{_META_WA_API_VERSION}/{_META_WA_PHONE}/messages"
-    components = []
-    if body_params:
-        components.append({"type": "body", "parameters": [{"type": "text", "text": p} for p in body_params]})
-        if category_is_auth:
-            # OTP button param (copy-code auth template) — same code in button payload
-            components.append({"type": "button", "sub_type": "url", "index": "0", "parameters": [{"type": "text", "text": body_params[0]}]})
-    payload = {
-        "messaging_product": "whatsapp",
-        "recipient_type": "individual",
-        "to": phone.lstrip("+"),
-        "type": "template",
-        "template": {
-            "name": template,
-            "language": {"code": _META_WA_TMPL_LANG},
-            **({"components": components} if components else {}),
-        },
-    }
-    async with httpx.AsyncClient(timeout=20) as c:
-        r = await c.post(url, json=payload, headers={"Authorization": f"Bearer {_META_WA_TOKEN}"})
-    if r.status_code >= 400:
-        try:
-            err = r.json().get("error", {}).get("message", r.text[:200])
-        except Exception:
-            err = r.text[:200]
-        # If auth-category send fails, try again without the button component (copy-code fallback)
-        if category_is_auth and "button" in err.lower():
-            return await _wa_send_template(phone, template, body_params, category_is_auth=False)
-        raise HTTPException(502, f"WhatsApp send failed: {err}")
-    return r.json()
 
 
 async def _store_local_otp(phone: str, code: str) -> None:
@@ -216,33 +198,19 @@ async def otp_send(phone: str) -> dict:
     prov = _otp_provider()
     if prov == "twilio":
         from twilio.rest import Client as _TwClient
-        client = _TwClient(_TWILIO_SID, _TWILIO_TOKEN)
-        v = client.verify.v2.services(_TWILIO_VERIFY_SID).verifications.create(to=phone, channel="sms")
-        return {"status": v.status, "provider": "twilio"}
-    if prov == "msg91":
-        async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.post(
-                "https://control.msg91.com/api/v5/otp",
-                params={
-                    "template_id": _MSG91_TMPL,
-                    "mobile": phone.lstrip("+"),
-                    "otp_length": 6,
-                    **({"sender": _MSG91_SENDER} if _MSG91_SENDER else {}),
-                },
-                headers={"authkey": _MSG91_KEY, "accept": "application/json"},
-            )
-        if r.status_code >= 400:
-            raise HTTPException(502, f"MSG91 error: {r.text[:200]}")
-        return {"status": "pending", "provider": "msg91"}
-    if prov == "whatsapp":
-        code = _gen_code()
-        await _store_local_otp(phone, code)
+
+        def _create():
+            # twilio's SDK is synchronous (blocking network I/O); the circuit runs
+            # it in a worker thread so a hang there can't freeze the event loop.
+            client = _TwClient(_TWILIO_SID, _TWILIO_TOKEN)
+            return client.verify.v2.services(_TWILIO_VERIFY_SID).verifications.create(
+                to=phone, channel="sms")
+
         try:
-            await _wa_send_template(phone, _META_WA_OTP_TMPL, [code], category_is_auth=True)
-        except HTTPException as e:
-            log.warning(f"WA OTP send failed: {e.detail}")
-            raise
-        return {"status": "pending", "provider": "whatsapp"}
+            v = await _twilio_circuit.call(_create)
+        except CircuitOpenError as e:
+            raise HTTPException(503, f"SMS verification temporarily unavailable: {e}")
+        return {"status": v.status, "provider": "twilio"}
     # Mock provider
     code = _OTP_DEV_CODE
     await _store_local_otp(phone, code)
@@ -255,23 +223,19 @@ async def otp_check(phone: str, code: str) -> bool:
     code = (code or "").strip()
     if prov == "twilio":
         from twilio.rest import Client as _TwClient
-        client = _TwClient(_TWILIO_SID, _TWILIO_TOKEN)
-        v = client.verify.v2.services(_TWILIO_VERIFY_SID).verification_checks.create(to=phone, code=code)
-        return v.status == "approved"
-    if prov == "msg91":
-        async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.get(
-                "https://control.msg91.com/api/v5/otp/verify",
-                params={"mobile": phone.lstrip("+"), "otp": code},
-                headers={"authkey": _MSG91_KEY, "accept": "application/json"},
-            )
+
+        def _check():
+            client = _TwClient(_TWILIO_SID, _TWILIO_TOKEN)
+            return client.verify.v2.services(_TWILIO_VERIFY_SID).verification_checks.create(
+                to=phone, code=code)
+
         try:
-            return r.status_code == 200 and (r.json() or {}).get("type") == "success"
-        except Exception:
+            v = await _twilio_circuit.call(_check)
+        except CircuitOpenError:
             return False
-    # whatsapp + mock — local storage. Expiry is compared in SQL and the row is
-    # consumed in the same statement, so a code can't be redeemed twice by
-    # concurrent requests.
+        return v.status == "approved"
+    # mock — local storage. Expiry is compared in SQL and the row is consumed in
+    # the same statement, so a code can't be redeemed twice by concurrent requests.
     deleted = await db.fetch_val(
         """DELETE FROM otp_codes
             WHERE phone = $1 AND code = $2 AND expires_at >= now()
@@ -279,12 +243,14 @@ async def otp_check(phone: str, code: str) -> bool:
     return deleted is not None
 
 
-async def wa_send_utility(phone: str, template: str, body_params: List[str]) -> dict:
-    """Public helper for utility templates (order dispatched, etc). Mock in dev."""
-    if _otp_provider() != "whatsapp":
-        log.info(f"[WA MOCK utility] to={phone} template={template} params={body_params}")
+async def wa_send_utility(phone: str, text: str) -> dict:
+    """Send a plain-text WhatsApp message via the OpenWA gateway (staff invites,
+    promo broadcasts). Logs and no-ops when the gateway isn't configured, so this
+    never blocks a flow that merely wants to notify someone."""
+    if not wa_openwa.configured():
+        log.info(f"[WA MOCK utility] to={phone} text={text!r}")
         return {"mock": True}
-    return await _wa_send_template(phone, template, body_params, category_is_auth=False)
+    return await wa_openwa.send_text(wa_openwa.to_chat_id(phone), text)
 
 
 def mint_phone_verify_token(phone: str) -> str:
@@ -510,8 +476,7 @@ class WaOptInIn(BaseModel):
 
 
 class PromoBroadcastIn(BaseModel):
-    template: Optional[str] = None  # defaults to META_WA_PROMO_TEMPLATE
-    body_params: List[str] = []
+    message: str
     user_ids: Optional[List[str]] = None  # None = all opted-in users
 
 
@@ -906,7 +871,9 @@ async def auth_firebase_verify(body: FirebaseVerifyIn, _rl: None = Depends(rate_
         raise HTTPException(503, "Firebase Auth not configured on the server")
     try:
         from firebase_admin import auth as _fb_auth
-        decoded = _fb_auth.verify_id_token(body.id_token)
+        decoded = await _firebase_circuit.call(_fb_auth.verify_id_token, body.id_token)
+    except CircuitOpenError:
+        raise HTTPException(503, "Sign-in temporarily unavailable. Please try again shortly.")
     except Exception as e:
         log.warning(f"Firebase ID token verification failed: {e}")
         raise HTTPException(401, "Invalid or expired Firebase ID token")
@@ -936,8 +903,8 @@ async def auth_firebase_verify(body: FirebaseVerifyIn, _rl: None = Depends(rate_
 # verification goes through Firebase only (/auth/firebase-verify); the legacy OTP
 # routes were removed and must stay 404 — see
 # tests/test_media_events.py::TestLegacyOTPRemoved.
-# otp_send()/otp_check() and the otp_codes table remain for the WhatsApp/Twilio/MSG91
-# providers used elsewhere (order notifications), not for auth.
+# otp_send()/otp_check() and the otp_codes table remain, provider-abstract
+# (Twilio/mock), for future reactivation — not currently wired to any route.
 
 
 @api.post("/auth/signup")
@@ -1037,7 +1004,9 @@ async def auth_google(body: GoogleSignInIn, request: Request, _rl: None = Depend
         raise HTTPException(503, "Firebase Auth not configured on the server")
     try:
         from firebase_admin import auth as _fb_auth
-        decoded = _fb_auth.verify_id_token(body.id_token)
+        decoded = await _firebase_circuit.call(_fb_auth.verify_id_token, body.id_token)
+    except CircuitOpenError:
+        raise HTTPException(503, "Sign-in temporarily unavailable. Please try again shortly.")
     except Exception as e:
         log.warning(f"Google ID token verification failed: {e}")
         raise HTTPException(401, "Invalid or expired Google ID token")
@@ -1501,8 +1470,7 @@ async def _site_content(key: str):
     return row if row else _CONTENT_DEFAULTS.get(key)
 
 
-@api.get("/categories")
-async def categories():
+async def _categories_body() -> dict:
     db_cats = await _list_categories()
     return {
         "categories": db_cats,
@@ -1512,12 +1480,25 @@ async def categories():
     }
 
 
-@api.get("/site-content")
-async def site_content_public():
-    """All buyer-facing editable content in one call — the frontend fetches this once."""
+@api.get("/categories")
+async def categories():
+    # Same for every visitor, changes only via admin category/taxonomy edits —
+    # cached with a 5-minute TTL and invalidated immediately on those writes.
+    return await respcache.get_or_set("categories", ttl=300, tag="categories",
+                                      compute=_categories_body)
+
+
+async def _site_content_body() -> dict:
     rows = await db.fetch_all("SELECT key, value FROM site_content")
     stored = {r["key"]: r["value"] for r in rows}
     return {k: (stored.get(k) or default) for k, default in _CONTENT_DEFAULTS.items()}
+
+
+@api.get("/site-content")
+async def site_content_public():
+    """All buyer-facing editable content in one call — the frontend fetches this once."""
+    return await respcache.get_or_set("site_content", ttl=300, tag="site_content",
+                                      compute=_site_content_body)
 
 
 class SiteContentIn(BaseModel):
@@ -1529,6 +1510,11 @@ async def _upsert_content(key: str, value) -> None:
         """INSERT INTO site_content (key, value, updated_at) VALUES ($1,$2::jsonb, now())
            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()""",
         key, value)
+    # Shared choke point for both /admin/site-content/{key} and /admin/taxonomy/{name}
+    # (taxonomy keys live in the same table) — invalidate both cached bodies that read
+    # from site_content, whichever key this was.
+    respcache.invalidate("site_content")
+    respcache.invalidate("categories")
 
 
 @api.get("/admin/site-content")
@@ -1592,38 +1578,57 @@ def _serial_prefix(slug: str, category_key: str) -> str:
     return base[:8] or "ITEM"
 
 
+_BULK_INSERT_CHUNK = 500  # keeps each bulk INSERT's array params small
+
+
 async def _generate_units(conn, product_id: str, slug: str, category_key: str,
                           variant_id, unit_price, qty: int):
     """Auto-create `qty` product_units with sequential, collision-safe serial numbers.
 
     Numbering continues after any units the product already has, so re-stocking a
-    product doesn't reuse serials. serial_no is globally unique, so we probe for a
-    free number and fall back to a random suffix if a manual serial ever collides.
+    product doesn't reuse serials. serial_no is globally unique: existing serials
+    sharing this prefix are fetched once so collisions are resolved in Python instead
+    of one probe query per unit, then all rows are bulk-inserted via unnest().
     """
     prefix = _serial_prefix(slug, category_key)
     seq = await conn.fetchval(
         "SELECT count(*) FROM product_units WHERE product_id = $1::uuid", product_id)
+    existing = {r["serial_no"] for r in await conn.fetch(
+        "SELECT serial_no FROM product_units WHERE serial_no LIKE $1", f"{prefix}-%")}
+    # clock_timestamp(), not now(): units created in one txn must get distinct
+    # created_at so ORDER BY created_at stays deterministic (see admin_create_unit).
+    # Fetched once and offset in Python rather than re-evaluated per row, so ordering
+    # doesn't depend on how the executor evaluates volatile functions in a bulk insert.
+    base_ts = await conn.fetchval("SELECT clock_timestamp()")
+
     created = []
-    for _ in range(max(0, qty)):
+    ids, serials, created_ats = [], [], []
+    for i in range(max(0, qty)):
         serial = None
         for _attempt in range(50):
             seq += 1
             candidate = f"{prefix}-{seq:04d}"
-            if not await conn.fetchval(
-                    "SELECT 1 FROM product_units WHERE serial_no = $1", candidate):
+            if candidate not in existing:
                 serial = candidate
                 break
         if serial is None:
             serial = f"{prefix}-{seq:04d}-{secrets.token_hex(2).upper()}"
+        existing.add(serial)
         unit_id = uuid.uuid4()
-        # clock_timestamp(), not now(): units created in one txn must get distinct
-        # created_at so ORDER BY created_at stays deterministic (see admin_create_unit).
+        ids.append(unit_id)
+        serials.append(serial)
+        created_ats.append(base_ts + timedelta(microseconds=i))
+        created.append({"unit_id": str(unit_id), "serial": serial})
+
+    for start in range(0, len(ids), _BULK_INSERT_CHUNK):
+        end = start + _BULK_INSERT_CHUNK
         await conn.execute(
             """INSERT INTO product_units (id, product_id, variant_id, serial_no, status,
                     verification_state, unit_price, created_at)
-               VALUES ($1,$2::uuid,$3,$4,'in_stock','unverified',$5, clock_timestamp())""",
-            unit_id, product_id, variant_id, serial, unit_price)
-        created.append({"unit_id": str(unit_id), "serial": serial})
+               SELECT u.id, $4::uuid, $5, u.serial_no, 'in_stock', 'unverified', $6, u.created_at
+                 FROM unnest($1::uuid[], $2::text[], $3::timestamptz[]) AS u(id, serial_no, created_at)""",
+            ids[start:end], serials[start:end], created_ats[start:end],
+            product_id, variant_id, unit_price)
     return created
 
 
@@ -2809,11 +2814,7 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
     rp_order_id = f"mock_{order_id}"
     if rp_key and rp_secret:
         try:
-            import razorpay
-            rp = razorpay.Client(auth=(rp_key, rp_secret))
-            rp_order = rp.order.create({"amount": total, "currency": "INR",
-                                        "receipt": str(order_id)[:40], "payment_capture": 1})
-            rp_order_id = rp_order["id"]
+            rp_order_id = await _razorpay_create_order(rp_key, rp_secret, total, str(order_id))
         except Exception as e:
             log.warning(f"razorpay create failed: {e} — falling back to mock")
 
@@ -2840,19 +2841,32 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
             addr_id, aff_ref if aff_astro_id else None, aff_astro_id,
             credit["id"] if credit else None)
 
-        for li in items:
+        item_ids = [uuid.uuid4() for _ in items]
+        product_ids = [li["product_id"] for li in items]
+        unit_ids = [li["unit_id"] for li in items]
+        names = [li["name"] for li in items]
+        qtys = [li["qty"] for li in items]
+        unit_prices = [db.to_amount(li["price"]) for li in items]
+        line_totals = [db.to_amount(li["price"] * li["qty"]) for li in items]
+        options = [db.json_dumps(li.get("options") or {}) for li in items]
+        for start in range(0, len(item_ids), _BULK_INSERT_CHUNK):
+            end = start + _BULK_INSERT_CHUNK
             await conn.execute(
                 """INSERT INTO order_items (id, order_id, product_id, variant_id,
                         product_unit_id, title_snapshot, qty, unit_price, line_total,
                         fulfillment_status, selected_options)
-                   VALUES ($1,$2,$3::uuid,
-                           (SELECT id FROM product_variants WHERE product_id=$3::uuid
-                             ORDER BY created_at LIMIT 1),
-                           $4::uuid,$5,$6,$7,$8,'pending',$9::jsonb)""",
-                uuid.uuid4(), order_id, li["product_id"], li["unit_id"], li["name"],
-                li["qty"], db.to_amount(li["price"]),
-                db.to_amount(li["price"] * li["qty"]),
-                li.get("options") or {})
+                   SELECT li.id, $9::uuid, li.product_id,
+                          (SELECT id FROM product_variants WHERE product_id = li.product_id
+                            ORDER BY created_at LIMIT 1),
+                          li.unit_id, li.title_snapshot, li.qty, li.unit_price,
+                          li.line_total, 'pending', li.selected_options::jsonb
+                     FROM unnest($1::uuid[], $2::uuid[], $3::uuid[], $4::text[], $5::int[],
+                                 $6::numeric[], $7::numeric[], $8::text[])
+                          AS li(id, product_id, unit_id, title_snapshot, qty, unit_price,
+                                line_total, selected_options)""",
+                item_ids[start:end], product_ids[start:end], unit_ids[start:end],
+                names[start:end], qtys[start:end], unit_prices[start:end],
+                line_totals[start:end], options[start:end], order_id)
 
         await conn.execute(
             """INSERT INTO payments (id, order_id, gateway, gateway_ref, amount, currency,
@@ -3050,17 +3064,14 @@ async def checkout_pay(order_id: str, request: Request,
     rp_secret = os.environ.get("RAZORPAY_KEY_SECRET", "")
     if rp_key and rp_secret:
         try:
-            import razorpay
-            rp = razorpay.Client(auth=(rp_key, rp_secret))
-            rp_order = rp.order.create({"amount": int(order["total"]), "currency": "INR",
-                                        "receipt": order_id[:40], "payment_capture": 1})
+            rp_order_id = await _razorpay_create_order(rp_key, rp_secret, int(order["total"]), order_id)
             await db.execute(
                 """UPDATE payments SET gateway_ref = $2, status = 'initiated'
                     WHERE id = (SELECT id FROM payments WHERE order_id = $1::uuid
                                 ORDER BY created_at DESC LIMIT 1)""",
-                order_id, rp_order["id"])
+                order_id, rp_order_id)
             return {"order": order, "razorpay_key_id": rp_key,
-                    "razorpay_order_id": rp_order["id"], "mock_payment": False}
+                    "razorpay_order_id": rp_order_id, "mock_payment": False}
         except Exception as e:
             log.warning(f"pay-now razorpay create failed: {e} — falling back to mock")
     return {"order": order, "razorpay_key_id": None, "mock_payment": True}
@@ -3318,6 +3329,80 @@ async def admin_revoke(cert_id: str, user_id: str = Depends(require_admin)):
 async def admin_list_orders(user_id: str = Depends(require_admin)):
     rows = await db.fetch_all(_ORDER_SELECT + " ORDER BY o.created_at DESC LIMIT 500")
     return await _shape_orders(rows)
+
+
+_LEADS_SELECT = """
+    WITH wl AS (
+        SELECT w.user_id, count(*) AS cnt, max(w.created_at) AS last_at,
+               array_agg(p.title ORDER BY w.created_at DESC) AS items
+          FROM wishlist w JOIN products p ON p.id = w.product_id
+         GROUP BY w.user_id
+    ),
+    cart AS (
+        SELECT c.user_id, count(ci.id) AS cnt,
+               sum(ci.qty * ci.unit_price_snapshot) AS value_n,
+               max(ci.updated_at) AS last_at,
+               array_agg(p.title ORDER BY ci.updated_at DESC) AS items
+          FROM carts c
+          JOIN cart_items ci ON ci.cart_id = c.id
+          JOIN product_variants pv ON pv.id = ci.variant_id
+          JOIN products p ON p.id = pv.product_id
+         WHERE c.user_id IS NOT NULL
+         GROUP BY c.user_id
+    ),
+    unpaid AS (
+        SELECT o.user_id, count(*) AS cnt, sum(o.grand_total) AS value_n,
+               max(o.created_at) AS last_at,
+               (array_agg(o.status::text ORDER BY o.created_at DESC))[1] AS latest_status,
+               (array_agg(o.id::text ORDER BY o.created_at DESC))[1] AS latest_order_id
+          FROM orders o
+         WHERE o.status IN ('pending', 'payment_failed') AND o.user_id IS NOT NULL
+         GROUP BY o.user_id
+    )
+    SELECT u.id::text AS user_id, u.full_name AS name, u.email::text AS email, u.phone AS phone,
+           wl.cnt AS wishlist_count, wl.items[1:3] AS wishlist_items, wl.last_at AS wishlist_at,
+           cart.cnt AS cart_count, cart.value_n AS cart_value_n, cart.items[1:3] AS cart_items,
+           cart.last_at AS cart_at,
+           unpaid.cnt AS unpaid_count, unpaid.value_n AS unpaid_value_n,
+           unpaid.latest_status AS unpaid_status, unpaid.latest_order_id AS unpaid_order_id,
+           unpaid.last_at AS unpaid_at, uoi.items AS unpaid_items,
+           GREATEST(wl.last_at, cart.last_at, unpaid.last_at) AS last_activity
+      FROM users u
+      LEFT JOIN wl ON wl.user_id = u.id
+      LEFT JOIN cart ON cart.user_id = u.id
+      LEFT JOIN unpaid ON unpaid.user_id = u.id
+      LEFT JOIN LATERAL (
+            SELECT (array_agg(oi.title_snapshot ORDER BY oi.created_at))[1:3] AS items
+              FROM order_items oi WHERE oi.order_id = unpaid.latest_order_id::uuid
+      ) uoi ON unpaid.user_id IS NOT NULL
+     WHERE wl.user_id IS NOT NULL OR cart.user_id IS NOT NULL OR unpaid.user_id IS NOT NULL
+"""
+
+
+@api.get("/admin/leads")
+async def admin_list_leads(_: str = Depends(require_perm("orders"))):
+    """Customers who showed buying intent but didn't complete it — wishlisted,
+    left items in cart, or started checkout without a successful payment — so
+    staff can follow up by call/WhatsApp. Stage is whichever signal is furthest
+    along (checkout > cart > wishlist); a customer can carry more than one.
+    Anonymous carts are excluded — nothing to call without a phone number."""
+    rows = await db.fetch_all(_LEADS_SELECT + " ORDER BY last_activity DESC LIMIT 300")
+    leads = []
+    for r in rows:
+        stage = "checkout_started" if r["unpaid_count"] else "cart" if r["cart_count"] else "wishlist"
+        leads.append({
+            "user_id": r["user_id"], "name": r["name"], "email": r["email"], "phone": r["phone"],
+            "stage": stage, "last_activity": r["last_activity"],
+            "wishlist": {"count": r["wishlist_count"], "items": r["wishlist_items"],
+                         "at": r["wishlist_at"]} if r["wishlist_count"] else None,
+            "cart": {"count": r["cart_count"], "value": db.to_paise(r["cart_value_n"]),
+                     "items": r["cart_items"], "at": r["cart_at"]} if r["cart_count"] else None,
+            "checkout": {"count": r["unpaid_count"], "value": db.to_paise(r["unpaid_value_n"]),
+                         "status": db.ORDER_STATUS_FROM_DB.get(r["unpaid_status"], r["unpaid_status"]),
+                         "order_id": r["unpaid_order_id"],
+                         "items": r["unpaid_items"], "at": r["unpaid_at"]} if r["unpaid_count"] else None,
+        })
+    return leads
 
 
 @api.get("/admin/customers/{user_id}")
@@ -3696,17 +3781,11 @@ _CONSULT_SELECT = """
            c.payment_status                AS payment_status,
            c.preferred_date                AS preferred_date,
            c.time_of_day                   AS time_of_day,
-           c.jitsi_room                   AS jitsi_room,
            c.meeting_link                 AS meeting_link,
-           c.pnm_room_id                  AS pnm_room_id,
-           c.recording_status             AS recording_status,
-           rec.bucket                     AS recording_bucket,
-           rec.object_key                 AS recording_object_key,
            c.notes                        AS notes,
            c.created_at                   AS created_at,
            c.updated_at                   AS updated_at
       FROM consultations c
-      LEFT JOIN media_assets rec ON rec.id = c.recording_media_id
 """
 
 
@@ -3714,12 +3793,8 @@ def _shape_consult(row: Optional[dict]) -> Optional[dict]:
     if not row:
         return None
     r = dict(row)
-    bucket = r.pop("recording_bucket", None)
-    object_key = r.pop("recording_object_key", None)
-    has_recording = bool(bucket and object_key)
     return {**{k: v for k, v in r.items() if k != "amount_n"},
-            "amount": db.to_paise(r["amount_n"]),
-            "recording_ready": has_recording}
+            "amount": db.to_paise(r["amount_n"])}
 
 
 async def _load_consultation(booking_id: str) -> Optional[dict]:
@@ -3727,12 +3802,17 @@ async def _load_consultation(booking_id: str) -> Optional[dict]:
         _CONSULT_SELECT + " WHERE c.id = $1::uuid", booking_id))
 
 
-@api.get("/consultation/astrologers")
-async def list_astrologers():
+async def _astrologers_body() -> list:
     rows = await db.fetch_all(
         _ASTRO_SELECT + " WHERE a.is_active ORDER BY a.created_at LIMIT 50")
     db_a = [_shape_astro(r) for r in rows]
     return db_a if db_a else ASTROLOGERS
+
+
+@api.get("/consultation/astrologers")
+async def list_astrologers():
+    return await respcache.get_or_set("astrologers", ttl=120, tag="astrologers",
+                                      compute=_astrologers_body)
 
 
 @api.post("/consultation/book")
@@ -3752,72 +3832,24 @@ async def book(body: ConsultationBookIn, request: Request,
         slot_at = slot_at.replace(tzinfo=timezone.utc)
 
     booking_id = uuid.uuid4()
-    backend_base = _backend_base_url(request)
-    # Video room: plugNmeet when configured (auto-recorded — see /plugnmeet/webhook),
-    # else fall back to a public Jitsi room so local dev without those env vars
-    # still works. meeting_link always points at OUR redirect endpoint rather than
-    # a raw provider URL: plugNmeet join tokens are short-lived/one-time, so the
-    # actual token is minted fresh whenever this link is opened, however long after
-    # booking that is.
-    pnm_room_id = None
-    if plugnmeet.configured():
-        pnm_room_id = f"consult-{booking_id}"
-        try:
-            await plugnmeet.create_room(
-                pnm_room_id, f"Consultation with {astro['name']}",
-                webhook_url=f"{backend_base}/api/plugnmeet/webhook")
-        except Exception as e:
-            log.warning(f"plugNmeet room create failed, falling back to Jitsi: {e}")
-            pnm_room_id = None
-    jitsi_room = None if pnm_room_id else f"gemora-{booking_id}"
-    meeting_link = (f"{backend_base}/api/consultation/{booking_id}/join" if pnm_room_id
-                    else f"https://meet.jit.si/{jitsi_room}")
 
     await db.execute(
         """INSERT INTO consultations (id, astrologer_id, astrologer_name_snapshot, slot_at,
                 user_id, contact_name, contact_email, contact_phone, concern, amount,
-                status, jitsi_room, meeting_link, pnm_room_id)
+                status)
            VALUES ($1,$2::uuid,$3,$4,$5::uuid,$6,$7::citext,$8,$9,$10,
-                   'requested',$11,$12,$13)""",
+                   'requested')""",
         booking_id, astro["astrologer_id"], astro["name"], slot_at, user_id,
-        body.name, body.email, body.phone, body.concern, db.to_amount(astro["price"]),
-        jitsi_room, meeting_link, pnm_room_id)
+        body.name, body.email, body.phone, body.concern, db.to_amount(astro["price"]))
 
-    # WhatsApp confirmation with a tappable "add to calendar" link.
+    # WhatsApp confirmation — astrologer/exact time follow separately once staff
+    # set up the meeting link (see admin_update_consultation).
     if body.phone:
         slot_human = slot_at.astimezone(timezone.utc).strftime("%d %b %Y, %H:%M UTC")
-        cal = wa_openwa.google_calendar_link(
-            f"Tredev consultation with {astro['name']}", slot_at,
-            duration_minutes=30,
-            details=f"Join: {meeting_link}", location=meeting_link)
         _wa_fire_event("consultation.booked", phone=body.phone, name=body.name, user_id=user_id,
                  variables={"astrologer_name": astro["name"], "slot": slot_human,
-                            "meeting_link": meeting_link, "calendar_link": cal})
+                            "amount": f"₹{astro['price'] / 100:,.0f}"})
     return await _load_consultation(str(booking_id))
-
-
-async def _ensure_pnm_room(room_id: str, astrologer_name: str, request: Request) -> None:
-    """plugNmeet rooms go inactive if nobody joins soon after creation — bookings
-    are made well ahead of the actual slot, so the one-time create at booking time
-    is long stale by join time. create_room is idempotent (returns the existing
-    room if already active), so re-issuing it right before minting a token is the
-    cheap fix rather than tracking room staleness ourselves."""
-    await plugnmeet.create_room(
-        room_id, f"Consultation with {astrologer_name}",
-        webhook_url=f"{_backend_base_url(request)}/api/plugnmeet/webhook")
-
-
-@api.get("/consultation/{booking_id}/join")
-async def consultation_join(booking_id: str, request: Request):
-    """Public redirect a customer's WhatsApp/calendar link points to. Mints a fresh
-    plugNmeet participant token on every hit — never stored, since tokens are
-    short-lived and one-time-use."""
-    c = await _load_consultation(booking_id)
-    if not c or not c.get("pnm_room_id"):
-        raise HTTPException(404, "No video room for this booking")
-    await _ensure_pnm_room(c["pnm_room_id"], c["astrologer_name"], request)
-    token = await plugnmeet.get_join_token(c["pnm_room_id"], c["name"], booking_id, is_admin=False)
-    return RedirectResponse(plugnmeet.join_url(token), status_code=307)
 
 
 # ── Consultation v2: pay-first, astrologer assigned by admin afterward ────────
@@ -3825,10 +3857,17 @@ async def consultation_join(booking_id: str, request: Request):
 # date + time-of-day preference, and we assign whoever's free from the admin
 # panel (see admin_update_consultation below), which is when the video room is
 # created and both parties are WhatsApp-notified with the meet link.
-@api.get("/consultation/fee")
-async def consultation_fee():
+async def _consultation_fee_body() -> dict:
     content = await _site_content("consultation")
     return {"fee": (content or _DEFAULT_CONSULTATION)["fee_paise"]}
+
+
+@api.get("/consultation/fee")
+async def consultation_fee():
+    # Reads the "consultation" site_content key, so it shares that tag — a fee
+    # edit via /admin/site-content/consultation invalidates this too.
+    return await respcache.get_or_set("consultation_fee", ttl=300, tag="site_content",
+                                      compute=_consultation_fee_body)
 
 
 @api.post("/consultation/request")
@@ -3852,11 +3891,7 @@ async def consultation_request(body: ConsultationRequestIn,
     rp_order_id = f"mock_{booking_id}"
     if rp_key and rp_secret:
         try:
-            import razorpay
-            rp = razorpay.Client(auth=(rp_key, rp_secret))
-            rp_order = rp.order.create({"amount": fee, "currency": "INR",
-                                        "receipt": str(booking_id)[:40], "payment_capture": 1})
-            rp_order_id = rp_order["id"]
+            rp_order_id = await _razorpay_create_order(rp_key, rp_secret, fee, str(booking_id))
         except Exception as e:
             log.warning(f"razorpay create failed (consultation): {e} — falling back to mock")
 
@@ -3915,6 +3950,12 @@ async def _mark_consultation_paid(booking_id: str, payment_id: str) -> dict:
                VALUES ($1,$2::uuid,$3::uuid,$4,$5::citext,$6, now() + interval '90 days')""",
             uuid.uuid4(), booking_id, consult["user_id"], consult["phone"], consult["email"],
             db.to_amount(consult["amount"]))
+    # Instant confirmation — astrologer + exact time + meet link follow separately
+    # once staff assign them (see admin_update_consultation).
+    if consult.get("phone"):
+        _wa_fire_event("consultation.booked", phone=consult["phone"], name=consult["name"],
+                      user_id=consult.get("user_id"),
+                      variables={"amount": f"₹{consult['amount'] / 100:,.0f}"})
     return await _load_consultation(booking_id)
 
 
@@ -4163,19 +4204,25 @@ async def admin_create_staff(body: StaffCreateIn, actor: str = Depends(require_o
                VALUES ($1, $2) ON CONFLICT (user_id) DO NOTHING""",
             new_id, {"optin": False})
     doc = await _load_user(user_id=str(new_id))
-    # Best-effort invite via WhatsApp (utility template) or logged in mock mode
+    # Best-effort invite via WhatsApp (OpenWA) or logged in mock mode
     login_url = os.environ.get("PUBLIC_APP_URL", "").rstrip("/") + "/login"
     invite_sent = False
+    invite_channel = "mock"
     if phone:
         try:
-            await wa_send_utility(phone, os.environ.get("META_WA_INVITE_TEMPLATE", "gemora_staff_invite"),
-                                  [body.name, body.email.lower(), temp_pw, login_url or "https://gemora.in/login"])
+            invite_text = (
+                f"You've been added as staff on Tredev Gems.\n"
+                f"Name: {body.name}\nEmail: {body.email.lower()}\n"
+                f"Temporary password: {temp_pw}\n"
+                f"Login: {login_url or 'https://gemora.in/login'}")
+            result = await wa_send_utility(phone, invite_text)
             invite_sent = True
+            invite_channel = "mock" if result.get("mock") else "openwa"
         except Exception as e:
             log.warning(f"staff invite WA failed: {e}")
     await audit_log(actor, "staff.create", doc["user_id"], {"email": body.email.lower(), "permissions": perms, "invite_sent": invite_sent})
     doc.pop("password_hash", None)
-    return {**doc, "temp_password": temp_pw, "invite_sent": invite_sent, "invite_channel": "whatsapp" if invite_sent else "mock"}
+    return {**doc, "temp_password": temp_pw, "invite_sent": invite_sent, "invite_channel": invite_channel}
 
 
 async def _set_user_role(conn, user_id: str, role: str) -> None:
@@ -4842,6 +4889,7 @@ async def admin_create_category(body: CategoryIn, actor: str = Depends(require_p
         _normalize_category_banner(body.banner))
     await audit_log(actor, "category.create", str(cid),
                     {"label": body.label, "slug": slug, "parent_id": body.parent_id})
+    respcache.invalidate("categories")
     return next((c for c in await _list_categories() if c["category_id"] == str(cid)), None)
 
 
@@ -4872,6 +4920,7 @@ async def admin_update_category(category_id: str, body: CategoryUpdateIn, actor:
     if not got:
         raise HTTPException(404, "Category not found")
     await audit_log(actor, "category.update", category_id, updates)
+    respcache.invalidate("categories")
     return next((c for c in await _list_categories() if c["category_id"] == category_id), None)
 
 
@@ -4884,6 +4933,7 @@ async def admin_delete_category(category_id: str, actor: str = Depends(require_p
         "UPDATE categories SET is_active=false, updated_at=now() WHERE id=$1::uuid",
         category_id)
     await audit_log(actor, "category.deactivate", category_id, {"name": name})
+    respcache.invalidate("categories")
     return {"ok": True}
 
 
@@ -4981,6 +5031,7 @@ async def admin_create_astrologer(body: AstrologerIn, actor: str = Depends(requi
                      variables={"welcome_url": welcome_url})
     doc = _shape_astro(await db.fetch_one(_ASTRO_SELECT + " WHERE a.id = $1::uuid", str(astro_id)))
     await audit_log(actor, "astrologer.create", target=str(astro_id), meta={"email": payload.get("email")})
+    respcache.invalidate("astrologers")
     return {**doc, "welcome_url": welcome_url}
 
 
@@ -5042,6 +5093,7 @@ async def admin_update_astrologer(astrologer_id: str, body: AstrologerUpdateIn, 
     elif not await db.fetch_val("SELECT id::text FROM astrologers WHERE id=$1::uuid", astrologer_id):
         raise HTTPException(404, "Astrologer not found")
     await audit_log(actor, "astrologer.update", target=astrologer_id, meta=updates)
+    respcache.invalidate("astrologers")
     return _shape_astro(await db.fetch_one(_ASTRO_SELECT + " WHERE a.id = $1::uuid", astrologer_id))
 
 
@@ -5051,6 +5103,7 @@ async def admin_delete_astrologer(astrologer_id: str, actor: str = Depends(requi
         "UPDATE astrologers SET is_active=false, updated_at=now() WHERE id=$1::uuid",
         astrologer_id)
     await audit_log(actor, "astrologer.deactivate", target=astrologer_id)
+    respcache.invalidate("astrologers")
     return {"ok": True}
 
 
@@ -5336,9 +5389,9 @@ async def admin_update_consultation(booking_id: str, body: dict, request: Reques
     if not before:
         raise HTTPException(404, "Booking not found")
 
-    # First-time assignment (no astrologer yet): mint the video room now that we know
-    # who's hosting it, and bump status out of "requested" — the WhatsApp notify to
-    # both parties fires after the row is saved, below.
+    # First-time assignment (no astrologer yet): staff supply the meet link by hand
+    # (set up manually elsewhere) — the WhatsApp notify to both parties fires after
+    # the row is saved, below.
     astro = None
     assigning = bool(updates.get("astrologer_id")) and not before.get("astrologer_id")
     if assigning:
@@ -5368,28 +5421,12 @@ async def admin_update_consultation(booking_id: str, body: dict, request: Reques
                 raise HTTPException(400, "confirmed_time must be HH:MM")
             updates["slot_at"] = slot_local.astimezone(timezone.utc)
 
-        backend_base = _backend_base_url(request)
-        pnm_room_id = None
-        if plugnmeet.configured():
-            pnm_room_id = f"consult-{booking_id}"
-            try:
-                await plugnmeet.create_room(
-                    pnm_room_id, f"Consultation with {astro['name']}",
-                    webhook_url=f"{backend_base}/api/plugnmeet/webhook")
-            except Exception as e:
-                log.warning(f"plugNmeet room create failed, falling back to Jitsi: {e}")
-                pnm_room_id = None
-        jitsi_room = None if pnm_room_id else f"gemora-{booking_id}"
-        updates.setdefault(
-            "meeting_link",
-            f"{backend_base}/api/consultation/{booking_id}/join" if pnm_room_id
-            else f"https://meet.jit.si/{jitsi_room}")
-        updates["pnm_room_id"] = pnm_room_id
-        updates["jitsi_room"] = jitsi_room
+        if not updates.get("meeting_link"):
+            raise HTTPException(400, "Enter the meeting link before assigning an astrologer")
 
     sets, args = [], []
     for k in ("status", "meeting_link", "notes", "astrologer_id", "astrologer_name_snapshot",
-             "pnm_room_id", "jitsi_room", "slot_at"):
+             "slot_at"):
         if k in updates:
             args.append(updates[k])
             cast = "::consultation_status" if k == "status" else "::uuid" if k == "astrologer_id" else ""
@@ -5420,117 +5457,6 @@ async def admin_update_consultation(booking_id: str, body: dict, request: Reques
                                      "date": when, "duration": f"{CONSULTATION_DURATION_MINUTES} minutes",
                                      "meeting_link": consult["meeting_link"]})
     return consult
-
-
-@api.post("/admin/consultations/{booking_id}/join-link")
-async def admin_consultation_join_link(booking_id: str, request: Request,
-                                        actor: str = Depends(require_perm("consultations"))):
-    """Mints a fresh moderator join token — the admin/staff "check the meet link"
-    button. Never persisted: plugNmeet join tokens are short-lived and one-time-use,
-    so a stored link would just go stale."""
-    c = await _load_consultation(booking_id)
-    if not c:
-        raise HTTPException(404, "Booking not found")
-    if not c.get("pnm_room_id"):
-        raise HTTPException(400, "No plugNmeet room on this booking (booked before video "
-                                  "was enabled, or plugNmeet isn't configured)")
-    await _ensure_pnm_room(c["pnm_room_id"], c["astrologer_name"], request)
-    token = await plugnmeet.get_join_token(c["pnm_room_id"], "Tredev Staff", actor, is_admin=True)
-    return {"url": plugnmeet.join_url(token)}
-
-
-@api.get("/admin/consultations/{booking_id}/recording")
-async def admin_consultation_recording(booking_id: str, _: str = Depends(require_perm("consultations"))):
-    """Signed, time-limited URL to the compressed recording. Returned as JSON
-    (not a redirect) — this route needs the admin's Bearer token, which a plain
-    `<a href>` navigation can't send, so the frontend fetches this then opens
-    the resulting Supabase URL itself. Recordings are private, so access stays
-    gated behind the `consultations` permission rather than the public
-    /media/file/{path} route."""
-    row = await db.fetch_one(
-        """SELECT m.bucket, m.object_key FROM consultations c
-             JOIN media_assets m ON m.id = c.recording_media_id
-            WHERE c.id = $1::uuid""", booking_id)
-    if not row:
-        raise HTTPException(404, "No recording available for this booking")
-    signed = await storage_sb.sign(row["object_key"], 3600, bucket=row["bucket"])
-    return {"url": signed}
-
-
-@api.post("/plugnmeet/webhook")
-async def plugnmeet_webhook(request: Request, background: BackgroundTasks,
-                             authorization: Optional[str] = Header(None)):
-    body = await request.body()
-    try:
-        payload = plugnmeet.verify_webhook(body, authorization)
-    except ValueError as e:
-        raise HTTPException(401, str(e))
-    event = payload.get("event")
-    room = payload.get("room") or {}
-    room_id = room.get("room_id") or room.get("name")
-    # room_finished is a fallback in case a short/test session never emits its own
-    # end_recording event — _process_recording no-ops safely if nothing's there yet.
-    if event in ("end_recording", "room_finished") and room_id:
-        booking_id = await db.fetch_val(
-            "SELECT id::text FROM consultations WHERE pnm_room_id = $1", room_id)
-        if booking_id:
-            await db.execute(
-                "UPDATE consultations SET recording_status = 'pending' WHERE id = $1::uuid"
-                " AND recording_status = 'none'", booking_id)
-            background.add_task(_process_recording, booking_id, room_id)
-    return {"ok": True}
-
-
-async def _process_recording(booking_id: str, room_id: str) -> None:
-    """Fetch the plugNmeet cloud recording, compress it, and file it under
-    media_assets (bucket 'recordings') — the compressed copy this feature exists
-    to produce. Runs as a background task so the webhook responds immediately.
-
-    ponytail: single-instance, in-process ffmpeg, whole file held in memory —
-    fine at low consultation volume; move to a queue/worker if volume grows
-    enough for that to matter.
-    """
-    await db.execute(
-        "UPDATE consultations SET recording_status = 'processing' WHERE id = $1::uuid", booking_id)
-    try:
-        recordings = await plugnmeet.fetch_recordings(room_id)
-        if not recordings:
-            raise RuntimeError("no recordings found for room")
-        rec = recordings[0]  # order_by DESC — most recent first
-        token = await plugnmeet.get_download_token(rec["record_id"])
-        async with httpx.AsyncClient(timeout=300) as client:
-            resp = await client.get(plugnmeet.download_url(token))
-            resp.raise_for_status()
-            raw = resp.content
-
-        with tempfile.TemporaryDirectory() as tmp:
-            src, dst = os.path.join(tmp, "src.mp4"), os.path.join(tmp, "out.mp4")
-            with open(src, "wb") as f:
-                f.write(raw)
-            subprocess.run(
-                [imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-i", src,
-                 "-vcodec", "libx264", "-crf", "28", "-preset", "veryfast",
-                 "-vf", "scale='min(1280,iw)':-2", "-acodec", "aac", "-b:a", "96k", dst],
-                check=True, capture_output=True, timeout=1800)
-            with open(dst, "rb") as f:
-                compressed = f.read()
-
-        object_key = f"{booking_id}.mp4"
-        await storage_sb.put(object_key, compressed, "video/mp4", bucket="recordings")
-        media_id = uuid.uuid4()
-        await db.execute(
-            """INSERT INTO media_assets (id, owner_type, storage_provider, bucket, object_key,
-                    mime_type, file_size_bytes, original_filename, is_public)
-               VALUES ($1,'recording','supabase','recordings',$2,'video/mp4',$3,$4,false)""",
-            media_id, object_key, len(compressed), f"consultation-{booking_id}.mp4")
-        await db.execute(
-            """UPDATE consultations SET recording_media_id = $2::uuid,
-                    recording_status = 'ready' WHERE id = $1::uuid""",
-            booking_id, media_id)
-    except Exception as e:
-        log.error(f"recording processing failed for booking {booking_id}: {e}")
-        await db.execute(
-            "UPDATE consultations SET recording_status = 'failed' WHERE id = $1::uuid", booking_id)
 
 
 # --- Order status (perm: orders) ---------------------------------------------
@@ -5699,63 +5625,9 @@ async def admin_update_query(query_id: str, body: QueryReplyIn, actor: str = Dep
     return await db.fetch_one(_QUERY_SELECT + " WHERE q.id = $1::uuid", query_id)
 
 
-# ── WhatsApp webhook (Meta) ──────────────────────────────────────────────────
-@api.get("/wa/webhook")
-async def wa_webhook_verify(request: Request):
-    mode = request.query_params.get("hub.mode")
-    token = request.query_params.get("hub.verify_token")
-    challenge = request.query_params.get("hub.challenge", "")
-    if mode == "subscribe" and token and token == _META_WA_VERIFY_TOKEN:
-        return FastAPIResponse(content=challenge, media_type="text/plain")
-    raise HTTPException(403, "verify token mismatch")
-
-
-@api.post("/wa/webhook")
-async def wa_webhook_receive(request: Request):
-    raw = await request.body()
-    if _META_WA_APP_SECRET:
-        sig = request.headers.get("X-Hub-Signature-256", "")
-        expected = "sha256=" + hmac.new(_META_WA_APP_SECRET.encode(), raw, hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(sig, expected):
-            raise HTTPException(403, "bad signature")
-    try:
-        payload = json.loads(raw)
-    except Exception:
-        return {"ok": True}
-    for entry in payload.get("entry", []) or []:
-        for change in entry.get("changes", []) or []:
-            value = change.get("value", {}) or {}
-            for msg in value.get("messages", []) or []:
-                await db.execute(
-                    """INSERT INTO wa_events (event_id, kind, raw) VALUES ($1,'message',$2)
-                       ON CONFLICT (event_id) DO NOTHING""", msg.get("id"), msg)
-                # Honor STOP replies as opt-out
-                text = (msg.get("text") or {}).get("body", "").strip().upper()
-                if text in {"STOP", "UNSUBSCRIBE", "STOPALL"}:
-                    from_no = "+" + str(msg.get("from", ""))
-                    # wa_optin lives in notification_preferences, not on users.
-                    await db.execute(
-                        """UPDATE notification_preferences
-                              SET whatsapp = COALESCE(whatsapp,'{}'::jsonb)
-                                             || '{"optin": false}'::jsonb,
-                                  updated_at = now()
-                            WHERE user_id IN (SELECT id FROM users WHERE phone = $1)""",
-                        from_no)
-            for st in value.get("statuses", []) or []:
-                await db.execute(
-                    """INSERT INTO wa_events (event_id, kind, status, raw)
-                       VALUES ($1,'status',$2,$3)
-                       ON CONFLICT (event_id) DO UPDATE
-                          SET kind='status', status=EXCLUDED.status, raw=EXCLUDED.raw,
-                              updated_at=now()""",
-                    st.get("id"), st.get("status"), st)
-    return {"ok": True}
-
-
-# ── Admin: promotional broadcast (WhatsApp marketing template) ───────────────
+# ── Admin: promotional broadcast (WhatsApp, via OpenWA) ───────────────────────
 @api.post("/admin/promo/broadcast")
 async def admin_promo_broadcast(body: PromoBroadcastIn, user_id: str = Depends(require_admin)):
-    template = body.template or _META_WA_PROMO_TMPL
     # Eligibility: verified phone + WhatsApp opt-in (which lives in
     # notification_preferences). Opting in is the default when no row exists.
     sql = """
@@ -5775,19 +5647,22 @@ async def admin_promo_broadcast(body: PromoBroadcastIn, user_id: str = Depends(r
     sent, failed = 0, 0
     for u in users:
         try:
-            await wa_send_utility(u["phone"], template, body.body_params)
+            await wa_send_utility(u["phone"], body.message)
             sent += 1
         except Exception as e:
             failed += 1
             log.warning(f"promo send failed for {u.get('user_id')}: {e}")
+    # wa_broadcasts.template is NOT NULL; body_params has no more meaning under
+    # OpenWA's plain-text sends, so it's recorded empty.
     await db.execute(
         """INSERT INTO wa_broadcasts (id, template, body_params, sent_count, failed_count,
                                       created_by)
            VALUES ($1,$2,$3,$4,$5,$6::uuid)""",
-        uuid.uuid4(), template, body.body_params, sent, failed, user_id)
-    await audit_log(user_id, "whatsapp.broadcast", template,
+        uuid.uuid4(), body.message, [], sent, failed, user_id)
+    await audit_log(user_id, "whatsapp.broadcast", body.message,
                     {"sent": sent, "failed": failed, "eligible_users": len(users)})
-    return {"ok": True, "sent": sent, "failed": failed, "eligible_users": len(users), "provider": _otp_provider()}
+    return {"ok": True, "sent": sent, "failed": failed, "eligible_users": len(users),
+            "provider": "openwa" if wa_openwa.configured() else "mock"}
 
 
 # ── Storage (Supabase) ───────────────────────────────────────────────────────
@@ -5803,6 +5678,8 @@ async def _storage_put(path: str, data: bytes, content_type: str) -> dict:
             503, "Supabase storage not configured (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)")
     try:
         return await storage_sb.put(path, data, content_type)
+    except CircuitOpenError:
+        raise HTTPException(503, "Storage is temporarily unavailable. Please try again shortly.")
     except Exception as e:
         log.error(f"Storage put failed for {path}: {e}")
         raise HTTPException(502, "Storage upload failed. Please try again.")
@@ -5815,6 +5692,8 @@ async def _storage_get(path: str) -> tuple[bytes, str]:
         return await storage_sb.get(path)
     except FileNotFoundError:
         raise HTTPException(404, "File not found in storage")
+    except CircuitOpenError:
+        raise HTTPException(503, "Storage is temporarily unavailable. Please try again shortly.")
     except Exception as e:
         log.error(f"Storage get failed for {path}: {e}")
         raise HTTPException(502, "Storage read failed. Please try again.")
@@ -5925,13 +5804,18 @@ async def media_serve(path: str):
 
 
 # ── Site assets (slot → media) ───────────────────────────────────────────────
-@api.get("/site-assets")
-async def site_assets_public():
-    """Public — returns {slot_key: url} map of currently assigned images."""
+async def _site_assets_body() -> dict:
     rows = await db.fetch_all(
         """SELECT slot::text AS slot, url FROM site_assets
             WHERE media_id IS NOT NULL AND url IS NOT NULL LIMIT 500""")
     return {r["slot"]: r["url"] for r in rows}
+
+
+@api.get("/site-assets")
+async def site_assets_public():
+    """Public — returns {slot_key: url} map of currently assigned images."""
+    return await respcache.get_or_set("site_assets", ttl=300, tag="site_assets",
+                                      compute=_site_assets_body)
 
 
 @api.get("/admin/site-assets")
@@ -5964,6 +5848,7 @@ async def site_assets_put(slot: str, body: SiteAssetPutIn, user_id: str = Depend
         slot, media_id, url, user_id)
     await audit_log(user_id, "site_asset.set" if media_id else "site_asset.clear",
                     slot, {"media_id": media_id})
+    respcache.invalidate("site_assets")
     return {"ok": True, "slot": slot, "media_id": media_id, "url": url}
 
 
@@ -6005,14 +5890,21 @@ def _event_args(body: "EventIn") -> list:
             body.priority, body.active, body.show_in_strip, body.show_in_section]
 
 
-@api.get("/events/active")
-async def events_active():
-    # The active window is now evaluated in SQL rather than filtered in Python.
+async def _events_active_body() -> list:
+    # The active window is evaluated in SQL rather than filtered in Python.
     return await db.fetch_all(
         _EVENT_SELECT + """ WHERE e.is_active
                               AND (e.starts_at IS NULL OR e.starts_at <= now())
                               AND (e.ends_at   IS NULL OR e.ends_at   >= now())
                             ORDER BY e.priority DESC LIMIT 50""")
+
+
+@api.get("/events/active")
+async def events_active():
+    # Short TTL (not just a tag): an event's active window can start or end with no
+    # admin write at all, so this has to re-check on a schedule regardless.
+    return await respcache.get_or_set("events_active", ttl=60, tag="events",
+                                      compute=_events_active_body)
 
 
 @api.get("/admin/events")
@@ -6031,6 +5923,7 @@ async def admin_events_create(body: EventIn, user_id: str = Depends(require_admi
         eid, *_event_args(body), user_id)
     await audit_log(user_id, "event.create", str(eid),
                     {"title": body.title, "active": body.active})
+    respcache.invalidate("events")
     return await db.fetch_one(_EVENT_SELECT + " WHERE e.id = $1::uuid", str(eid))
 
 
@@ -6049,6 +5942,7 @@ async def admin_events_update(event_id: str, body: EventIn, user_id: str = Depen
         raise HTTPException(404, "Event not found")
     await audit_log(user_id, "event.update", event_id,
                     {"title": body.title, "active": body.active})
+    respcache.invalidate("events")
     return await db.fetch_one(_EVENT_SELECT + " WHERE e.id = $1::uuid", event_id)
 
 
@@ -6060,6 +5954,7 @@ async def admin_events_delete(event_id: str, actor: str = Depends(require_admin)
     if not got:
         raise HTTPException(404, "Event not found")
     await audit_log(actor, "event.delete", event_id, {"title": title})
+    respcache.invalidate("events")
     return {"ok": True}
 
 
@@ -6343,8 +6238,8 @@ WA_TRIGGER_EVENTS = {
     "order.cancelled": {"label": "Order cancelled",
                         "when": "Order status set to Cancelled", "to": "The buyer"},
     "consultation.booked": {"label": "Consultation booked",
-                            "when": "A customer books a consultation",
-                            "to": "The customer (with calendar link)"},
+                            "when": "A customer completes payment for a consultation",
+                            "to": "The customer (payment confirmation)"},
     "consultation.assigned": {"label": "Consultation assigned",
                               "when": "Admin assigns an astrologer to a paid consultation",
                               "to": "The customer (with astrologer name + meet link)"},
@@ -6700,6 +6595,8 @@ async def wa_admin_campaign_refresh(campaign_id: str,
 
 # ── Router wiring ─────────────────────────────────────────────────────────────
 app.include_router(api)
+
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 app.add_middleware(
     CORSMiddleware,

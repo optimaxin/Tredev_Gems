@@ -25,6 +25,7 @@ CONFIG (backend/.env)
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import logging
@@ -36,6 +37,8 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from circuit import CircuitOpenError, get_circuit
+
 log = logging.getLogger("gemora.wa")
 
 BASE_URL = os.environ.get("OPENWA_BASE_URL", "http://127.0.0.1:2785").rstrip("/")
@@ -44,6 +47,12 @@ SESSION_ID = os.environ.get("OPENWA_SESSION_ID", "").strip()
 WEBHOOK_SECRET = os.environ.get("OPENWA_WEBHOOK_SECRET", "").strip()
 
 _TIMEOUT = 30.0
+
+# A single self-hosted gateway process backs every chat/campaign call here, so a
+# stuck or overloaded gateway must not let requests pile up waiting on it — cap
+# concurrency and fail fast once it's clearly down.
+_circuit = get_circuit("openwa", failure_threshold=4, reset_timeout=20.0,
+                       call_timeout=_TIMEOUT, max_concurrency=5)
 
 
 def configured() -> bool:
@@ -61,15 +70,21 @@ class OpenWAError(RuntimeError):
         self.status = status
 
 
+async def _do_req(method: str, url: str, json: Any, params: Any) -> httpx.Response:
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
+        return await c.request(method, url, json=json, params=params,
+                               headers={"X-API-Key": API_KEY})
+
+
 async def _req(method: str, path: str, *, json: Any = None, params: Any = None) -> Any:
     if not API_KEY:
         raise OpenWAError("OpenWA is not configured (OPENWA_API_KEY unset)")
     url = f"{BASE_URL}{path}"
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
-            r = await c.request(method, url, json=json, params=params,
-                                headers={"X-API-Key": API_KEY})
-    except httpx.RequestError as e:
+        r = await _circuit.call(_do_req, method, url, json, params)
+    except CircuitOpenError as e:
+        raise OpenWAError(f"OpenWA temporarily unavailable: {e}") from e
+    except (httpx.RequestError, asyncio.TimeoutError) as e:
         # Connection-level failure: the gateway is down or unreachable.
         raise OpenWAError(f"OpenWA unreachable: {e.__class__.__name__}") from e
     if r.status_code >= 400:

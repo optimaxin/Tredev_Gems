@@ -246,21 +246,42 @@ function Templates() {
   const startEdit = (t) => { setEditing(t.key); setBody(t.body); };
 
   const save = async (t) => {
+    const prevTemplates = templates;
+    const editedBody = body;
+    setTemplates((cur) => cur.map((x) => (x.key === t.key ? { ...x, body: editedBody } : x)));
+    setEditing(null);
     try {
-      await api.put(`/admin/whatsapp/templates/${t.key}`, { body });
-      toast.success("Template saved"); setEditing(null); load();
-    } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
+      await api.put(`/admin/whatsapp/templates/${t.key}`, { body: editedBody });
+      toast.success("Template saved");
+    } catch (e) {
+      setTemplates(prevTemplates);
+      setEditing(t.key); // reopen with the attempted edit still in the textarea
+      toast.error(e.response?.data?.detail || "Save failed");
+    }
   };
 
   const toggle = async (t) => {
-    try { await api.put(`/admin/whatsapp/templates/${t.key}`, { enabled: !t.enabled }); load(); }
-    catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+    const prevTemplates = templates;
+    setTemplates((cur) => cur.map((x) => (x.key === t.key ? { ...x, enabled: !x.enabled } : x)));
+    try {
+      await api.put(`/admin/whatsapp/templates/${t.key}`, { enabled: !t.enabled });
+    } catch (e) {
+      setTemplates(prevTemplates);
+      toast.error(e.response?.data?.detail || "Failed");
+    }
   };
 
   const remove = async (t) => {
     if (!window.confirm(`Delete "${t.name}"? This cannot be undone.`)) return;
-    try { await api.delete(`/admin/whatsapp/templates/${t.key}`); toast.success("Deleted"); load(); }
-    catch (e) { toast.error(e.response?.data?.detail || "Delete failed"); }
+    const prevTemplates = templates;
+    setTemplates((cur) => cur.filter((x) => x.key !== t.key));
+    try {
+      await api.delete(`/admin/whatsapp/templates/${t.key}`);
+      toast.success("Deleted");
+    } catch (e) {
+      setTemplates(prevTemplates);
+      toast.error(e.response?.data?.detail || "Delete failed");
+    }
   };
 
   const testSend = async (t) => {
@@ -348,13 +369,32 @@ function Automations() {
   useEffect(() => { load(); }, []);
 
   const toggle = async (tpl) => {
-    try { await api.put(`/admin/whatsapp/templates/${tpl.key}`, { enabled: !tpl.enabled }); load(); }
-    catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+    const prevRows = rows;
+    setRows((cur) => cur.map((ev) => ({
+      ...ev,
+      templates: ev.templates.map((t) => (t.key === tpl.key ? { ...t, enabled: !t.enabled } : t)),
+    })));
+    try {
+      await api.put(`/admin/whatsapp/templates/${tpl.key}`, { enabled: !tpl.enabled });
+    } catch (e) {
+      setRows(prevRows);
+      toast.error(e.response?.data?.detail || "Failed");
+    }
   };
   const remove = async (tpl) => {
     if (!window.confirm(`Remove "${tpl.name}" from this automation?`)) return;
-    try { await api.delete(`/admin/whatsapp/templates/${tpl.key}`); toast.success("Removed"); load(); }
-    catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+    const prevRows = rows;
+    setRows((cur) => cur.map((ev) => ({
+      ...ev,
+      templates: ev.templates.filter((t) => t.key !== tpl.key),
+    })));
+    try {
+      await api.delete(`/admin/whatsapp/templates/${tpl.key}`);
+      toast.success("Removed");
+    } catch (e) {
+      setRows(prevRows);
+      toast.error(e.response?.data?.detail || "Failed");
+    }
   };
 
   return (

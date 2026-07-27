@@ -5,11 +5,21 @@ import { useCart } from "@/context/CartContext";
 import { useAuth } from "@/context/AuthContext";
 import { formatINR, describeOptions } from "@/lib/api";
 import { ShieldCheck, TrashSimple, ShoppingBag, LockKey } from "@phosphor-icons/react";
+import { toast } from "sonner";
 
 export default function CartDrawer({ open, onClose }) {
   const { cart, remove, subtotal } = useCart();
   const { user } = useAuth();
   const items = cart.items || [];
+
+  const removeLine = async (line_id) => {
+    try {
+      await remove(line_id);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Could not remove item");
+    }
+  };
+
   return (
     <>
       <div
@@ -50,7 +60,7 @@ export default function CartDrawer({ open, onClose }) {
                 )}
                 <div className="text-xs text-maroon-deep mt-1">{formatINR(li.price * li.qty)}</div>
               </div>
-              <button onClick={() => remove(li.line_id)} className="text-ink-muted hover:text-revoked">
+              <button onClick={() => removeLine(li.line_id)} className="text-ink-muted hover:text-revoked">
                 <TrashSimple size={16} />
               </button>
             </div>

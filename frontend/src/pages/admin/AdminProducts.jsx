@@ -54,11 +54,16 @@ export default function AdminProducts() {
   // attrs is fully replaced on PATCH, so the current value has to be spread through.
   const toggleOutOfStock = async (p) => {
     const next = !p.attrs?.out_of_stock;
+    const prevProducts = products;
+    setProducts((cur) => cur.map((x) =>
+      x.product_id === p.product_id ? { ...x, attrs: { ...x.attrs, out_of_stock: next } } : x));
     try {
       await api.patch(`/admin/products/${p.product_id}`, { attrs: { ...p.attrs, out_of_stock: next } });
       toast.success(next ? `${p.name} marked out of stock` : `${p.name} marked back in stock`);
-      refresh();
-    } catch (e) { toast.error(e.response?.data?.detail || "Could not update stock status"); }
+    } catch (e) {
+      setProducts(prevProducts);
+      toast.error(e.response?.data?.detail || "Could not update stock status");
+    }
   };
 
   // Client-side product search over name, slug and category.
@@ -169,12 +174,16 @@ export default function AdminProducts() {
 
   const del = async (p) => {
     if (!confirm(`Delete "${p.name}"? Its unsold inventory will be removed too. If it was never ordered it's deleted entirely; if it has past orders it's archived (and hidden), with its order history kept.`)) return;
+    const prevProducts = products;
+    setProducts((cur) => cur.filter((x) => x.product_id !== p.product_id));
     try {
       const { data } = await api.delete(`/admin/products/${p.product_id}`);
       const stock = data.units_removed ? ` · ${data.units_removed} unit${data.units_removed === 1 ? "" : "s"} removed` : "";
       toast.success((data.mode === "deleted" ? "Product deleted" : "Product archived") + stock);
-      refresh();
-    } catch (e) { toast.error(e.response?.data?.detail || "Could not delete"); }
+    } catch (e) {
+      setProducts(prevProducts);
+      toast.error(e.response?.data?.detail || "Could not delete");
+    }
   };
 
   // Option-group editor. Groups come from the category template; the admin prices the

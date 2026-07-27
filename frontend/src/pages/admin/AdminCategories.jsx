@@ -57,8 +57,18 @@ export default function AdminCategories() {
 
   const remove = async (c) => {
     if (!confirm(`Delete category ${c.label}?`)) return;
-    await api.delete(`/admin/categories/${c.category_id}`);
-    toast.success("Deleted"); refresh();
+    const prevCats = cats;
+    setCats((cur) => cur.filter((x) => x.category_id !== c.category_id));
+    try {
+      await api.delete(`/admin/categories/${c.category_id}`);
+      toast.success("Deleted");
+      // Deleting a parent may cascade to its subcategories server-side — a silent
+      // background resync catches that without making the click itself wait.
+      refresh();
+    } catch (e) {
+      setCats(prevCats);
+      toast.error(e.response?.data?.detail || "Could not delete category");
+    }
   };
 
   // Banner-field helpers.
