@@ -26,6 +26,8 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
   const [loading, setLoading] = useState(false);
+  const [emailErr, setEmailErr] = useState("");
+  const checkEmail = (v) => setEmailErr(v && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) ? "Enter a valid email address" : "");
 
   const passwordLogin = async (e) => {
     e.preventDefault();
@@ -123,8 +125,11 @@ export default function Login() {
               >
                 <motion.label variants={fieldVariants} className="block">
                   <div className="text-xs text-ink-muted mb-1">Email</div>
-                  <input data-testid="login-email" required value={email} onChange={(e) => setEmail(e.target.value)} type="email"
-                    className="w-full gold-line px-4 py-3 outline-none transition-shadow focus:border-maroon focus:ring-2 focus:ring-gold/30" />
+                  <input data-testid="login-email" required value={email}
+                    onChange={(e) => { setEmail(e.target.value); if (emailErr) checkEmail(e.target.value); }}
+                    onBlur={(e) => checkEmail(e.target.value)} type="email"
+                    className={`w-full px-4 py-3 outline-none transition-shadow focus:ring-2 ${emailErr ? "border border-revoked focus:ring-revoked/20" : "gold-line focus:border-maroon focus:ring-gold/30"}`} />
+                  {emailErr && <div role="alert" className="mt-1 text-xs text-revoked">{emailErr}</div>}
                 </motion.label>
                 <motion.label variants={fieldVariants} className="block">
                   <div className="text-xs text-ink-muted mb-1">Password</div>

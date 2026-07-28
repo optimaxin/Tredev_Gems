@@ -22,8 +22,10 @@ export default function Signup() {
   const [otpToken, setOtpToken] = useState("");
   const [form, setForm] = useState({ name: "", email: "", password: "", wa_optin: true });
   const [loading, setLoading] = useState(false);
+  const [emailErr, setEmailErr] = useState("");
 
   const set = (k) => (e) => setForm((x) => ({ ...x, [k]: e.target.value }));
+  const checkEmail = (v) => setEmailErr(v && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) ? "Enter a valid email address" : "");
 
   const onVerified = (p, token) => {
     setPhone(p); setOtpToken(token); setStep(2);
@@ -134,13 +136,23 @@ export default function Signup() {
                   </motion.label>
                   <motion.label variants={fieldVariants} className="block">
                     <div className="text-xs text-ink-muted mb-1">Email</div>
-                    <input data-testid="signup-email" required value={form.email} onChange={set("email")} type="email"
-                      className="w-full gold-line px-4 py-3 outline-none transition-shadow focus:border-maroon focus:ring-2 focus:ring-gold/30" />
+                    <input data-testid="signup-email" required value={form.email}
+                      onChange={(e) => { set("email")(e); if (emailErr) checkEmail(e.target.value); }}
+                      onBlur={(e) => checkEmail(e.target.value)} type="email"
+                      className={`w-full px-4 py-3 outline-none transition-shadow focus:ring-2 ${emailErr ? "border border-revoked focus:ring-revoked/20" : "gold-line focus:border-maroon focus:ring-gold/30"}`} />
+                    {emailErr && <div role="alert" className="mt-1 text-xs text-revoked">{emailErr}</div>}
                   </motion.label>
                   <motion.label variants={fieldVariants} className="block">
                     <div className="text-xs text-ink-muted mb-1">Password</div>
                     <input data-testid="signup-password" required value={form.password} onChange={set("password")} type="password" minLength={6}
                       className="w-full gold-line px-4 py-3 outline-none transition-shadow focus:border-maroon focus:ring-2 focus:ring-gold/30" />
+                    {form.password.length > 0 && (
+                      <div className={`mt-1 flex items-center gap-1 text-xs ${form.password.length >= 6 ? "text-verified" : "text-ink-muted"}`}>
+                        {form.password.length >= 6
+                          ? <><CheckCircle size={12} weight="fill" /> Looks good</>
+                          : `${6 - form.password.length} more character${6 - form.password.length === 1 ? "" : "s"} needed`}
+                      </div>
+                    )}
                   </motion.label>
                   <motion.label variants={fieldVariants} className="flex items-start gap-3 mt-2 cursor-pointer group">
                     <input

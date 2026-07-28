@@ -38,7 +38,7 @@ export default function AuthVisualPanel({ eyebrow, title, tagline, points = [] }
   );
 
   return (
-    <div className="relative hidden lg:flex flex-col justify-between overflow-hidden bg-maroon-deep text-ivory p-10" data-testid="auth-visual-panel">
+    <div className="relative hidden lg:flex flex-col justify-between overflow-hidden bg-maroon-deep text-ivory p-10 h-full" data-testid="auth-visual-panel">
       <div className="absolute inset-0" style={{ background: "radial-gradient(120% 90% at 30% 20%, #4E1F26 0%, #2A1216 55%, #0B0605 100%)" }} />
       <div className="absolute inset-0 geom-bg opacity-70" />
 
