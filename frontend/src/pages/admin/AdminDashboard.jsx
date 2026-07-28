@@ -1,14 +1,44 @@
 import React, { useEffect, useState } from "react";
 import { api, formatINR } from "@/lib/api";
-import { CurrencyInr, ShoppingCart, UsersFour, ChatCircleDots } from "@phosphor-icons/react";
+import {
+  CurrencyInr, ShoppingCart, UsersFour, ChatCircleDots, XCircle,
+  ArrowUUpLeft, Fire, CalendarCheck, Heart,
+} from "@phosphor-icons/react";
+
+// "3h ago" — recency is what matters on a live feed; exact time is in the title.
+const relTime = (iso) => {
+  if (!iso) return "—";
+  const secs = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
+  if (secs < 60) return "just now";
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  return `${days}d ago`;
+};
+
+const ACTIVITY = {
+  order: { Icon: ShoppingCart, tone: "text-verified", label: "New order" },
+  cancellation: { Icon: XCircle, tone: "text-revoked", label: "Order cancelled" },
+  refund: { Icon: ArrowUUpLeft, tone: "text-revoked", label: "Order refunded" },
+  consultation: { Icon: CalendarCheck, tone: "text-maroon", label: "Consultation request" },
+  lead: { Icon: Heart, tone: "text-gold-soft", label: "New lead" },
+};
 
 export default function AdminDashboard() {
   const [data, setData] = useState(null);
   const [low, setLow] = useState([]);
   const [days, setDays] = useState(30);
   useEffect(() => {
-    api.get(`/admin/sales?days=${days}`).then((r) => setData(r.data)).catch(() => setData({ error: true }));
-    api.get("/admin/inventory/low-stock?threshold=0").then((r) => setLow(r.data)).catch(() => {});
+    const load = () => {
+      api.get(`/admin/sales?days=${days}`).then((r) => setData(r.data)).catch(() => setData({ error: true }));
+      api.get("/admin/inventory/low-stock?threshold=0").then((r) => setLow(r.data)).catch(() => {});
+    };
+    load();
+    // ponytail: plain polling, add push/websocket if 30s staleness ever matters.
+    const id = setInterval(load, 30000);
+    return () => clearInterval(id);
   }, [days]);
 
   if (!data) return <div className="text-ink-muted">Loading sales…</div>;
@@ -19,6 +49,10 @@ export default function AdminDashboard() {
     { Icon: ShoppingCart, label: "Orders", value: data.orders_total, sub: `${data.orders_paid} paid` },
     { Icon: UsersFour, label: "Customers", value: data.customers_total, sub: `${data.new_customers} new` },
     { Icon: ChatCircleDots, label: "Open Queries", value: data.open_queries, sub: `${days}-day window` },
+    { Icon: Fire, label: "New Leads", value: data.new_leads, sub: "wishlist adds" },
+    { Icon: CalendarCheck, label: "Consultations", value: data.new_consultations, sub: "requested" },
+    { Icon: XCircle, label: "Cancelled", value: data.cancelled, sub: `${days}-day window` },
+    { Icon: ArrowUUpLeft, label: "Refunded", value: data.refunded, sub: `${days}-day window` },
   ];
 
   const maxRev = Math.max(...data.by_day.map((d) => d.revenue), 1);
@@ -76,6 +110,36 @@ export default function AdminDashboard() {
             ))}
           </div>
         </div>
+      </div>
+
+      <div className="mt-6 gold-line bg-ivory p-6" data-testid="activity-feed-card">
+        <div className="flex items-baseline justify-between">
+          <div className="font-serifd text-xl text-maroon-deep">Live activity</div>
+          <div className="text-xs text-ink-muted">Orders, leads, consultations, cancellations &amp; refunds · refreshes every 30s</div>
+        </div>
+        {(!data.activity || data.activity.length === 0) ? (
+          <div className="mt-4 text-sm text-ink-muted">Nothing in the last {days} days.</div>
+        ) : (
+          <div className="mt-4 max-h-96 overflow-y-auto divide-y divide-gold/15">
+            {data.activity.map((a, i) => {
+              const meta = ACTIVITY[a.type] || ACTIVITY.order;
+              return (
+                <div key={i} className="flex items-center gap-3 py-2.5">
+                  <meta.Icon size={18} weight="duotone" className={`shrink-0 ${meta.tone}`} />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm truncate">
+                      <span className={meta.tone}>{meta.label}</span>
+                      {a.name && <span className="text-ink-muted"> · {a.name}</span>}
+                    </div>
+                    {a.extra && <div className="text-xs text-ink-muted truncate">{a.extra}</div>}
+                  </div>
+                  {a.amount_paise != null && <div className="text-sm font-mono shrink-0">{formatINR(a.amount_paise)}</div>}
+                  <div className="text-[11px] text-ink-muted shrink-0 w-14 text-right" title={a.at}>{relTime(a.at)}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div className="mt-6 gold-line bg-ivory p-6" data-testid="low-stock-card">

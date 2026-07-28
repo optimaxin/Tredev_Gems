@@ -22,6 +22,7 @@ import Login from "@/pages/Login";
 import Signup from "@/pages/Signup";
 import Account from "@/pages/Account";
 import OrderConfirmed from "@/pages/OrderConfirmed";
+import OrderCancelled from "@/pages/OrderCancelled";
 import Admin from "@/pages/Admin";
 import CaratRatti from "@/pages/CaratRatti";
 import ShopByPlanet from "@/pages/ShopByPlanet";
@@ -74,6 +75,7 @@ function AuthRouter() {
         <Route path="/signup" element={<Signup />} />
         <Route path="/account" element={<Account />} />
         <Route path="/order-confirmed/:orderId" element={<OrderConfirmed />} />
+        <Route path="/order-cancelled/:orderId" element={<OrderCancelled />} />
         <Route path="/admin/*" element={<Admin />} />
         <Route path="/tools/carat-ratti" element={<CaratRatti />} />
         <Route path="/consultation" element={<Consultation />} />

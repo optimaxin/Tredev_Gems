@@ -160,6 +160,20 @@ async def _razorpay_create_order(rp_key: str, rp_secret: str, amount: int, recei
     return rp_order["id"]
 
 
+async def _razorpay_create_refund(rp_key: str, rp_secret: str, payment_id: str, amount_paise: int) -> dict:
+    """Refund a captured Razorpay payment. Returns Razorpay's refund object
+    ({id, status, ...}) — status is 'processed' or 'pending' depending on the
+    payment method. Raises on any failure; callers must not mark an order
+    cancelled+refunded unless this succeeds."""
+    import razorpay
+
+    def _refund():
+        rp = razorpay.Client(auth=(rp_key, rp_secret))
+        return rp.payment.refund(payment_id, {"amount": amount_paise, "speed": "normal"})
+
+    return await _razorpay_circuit.call(_refund)
+
+
 def _otp_provider() -> str:
     # Priority: Twilio Verify → mock.
     if _TWILIO_SID and _TWILIO_TOKEN and _TWILIO_VERIFY_SID:
@@ -3201,6 +3215,97 @@ async def get_order(order_id: str, user_id: str = Depends(require_user)):
     return await _shape_order(row)
 
 
+# Statuses a customer may still self-cancel from — anything before the order has
+# actually left the vault. Once shipped/delivered/cancelled/refunded, self-cancel
+# is no longer offered (a shipped order needs a return, not a cancellation).
+_CANCELLABLE_DB_STATUSES = {"pending", "payment_failed", "paid", "processing", "packed"}
+_CANCEL_WINDOW = timedelta(hours=24)
+
+
+class OrderCancelIn(BaseModel):
+    reason: Optional[str] = None
+
+
+@api.post("/orders/{order_id}/cancel")
+async def cancel_order(order_id: str, body: OrderCancelIn, user_id: str = Depends(require_user)):
+    order = await db.fetch_one(
+        _ORDER_SELECT + " WHERE o.id = $1::uuid AND o.user_id = $2::uuid",
+        order_id, user_id)
+    if not order:
+        raise HTTPException(404, "Order not found")
+
+    status_db = order["status_db"]
+    if status_db not in _CANCELLABLE_DB_STATUSES:
+        raise HTTPException(409, "This order can no longer be cancelled.")
+    if now() - order["created_at"] > _CANCEL_WINDOW:
+        raise HTTPException(409, "The 24-hour cancellation window for this order has passed.")
+
+    payment = await db.fetch_one(
+        """SELECT id::text AS payment_id, gateway_payment_id, gateway_ref, status, amount
+             FROM payments WHERE order_id = $1::uuid ORDER BY created_at DESC LIMIT 1""",
+        order_id)
+    # A mock/dev payment never actually took money, so it never needs a real refund —
+    # only a genuinely captured, real-gateway payment does.
+    needs_refund = bool(
+        payment and payment["status"] == "captured"
+        and payment.get("gateway_payment_id")
+        and not str(payment["gateway_payment_id"]).startswith("mock_")
+        and not str(payment.get("gateway_ref") or "").startswith("mock_"))
+
+    refund_result = None
+    if needs_refund:
+        rp_key = os.environ.get("RAZORPAY_KEY_ID", "")
+        rp_secret = os.environ.get("RAZORPAY_KEY_SECRET", "")
+        if not (rp_key and rp_secret):
+            raise HTTPException(503, "Refunds are temporarily unavailable. Please contact support.")
+        try:
+            refund_result = await _razorpay_create_refund(
+                rp_key, rp_secret, payment["gateway_payment_id"],
+                db.to_paise(payment["amount"]))
+        except CircuitOpenError:
+            raise HTTPException(503, "Refund service temporarily unavailable. Please try again shortly.")
+        except Exception as e:
+            log.warning(f"razorpay refund failed for order {order_id}: {e}")
+            raise HTTPException(502, "Could not process the refund. Please contact support.")
+
+    async with db.transaction() as conn:
+        # Units are only ever bound to order_items at payment capture (_mark_paid) —
+        # release them back to sale so cancelling doesn't strand stock as phantom-sold.
+        await conn.execute(
+            """UPDATE product_units SET status = 'in_stock', sold_order_item_id = NULL
+                WHERE sold_order_item_id IN (
+                    SELECT id FROM order_items WHERE order_id = $1::uuid)""",
+            order_id)
+        await conn.execute(
+            "UPDATE orders SET status = 'cancelled', updated_at = now() WHERE id = $1::uuid",
+            order_id)
+        await conn.execute(
+            """INSERT INTO order_events (id, order_id, from_status, to_status, reason)
+               VALUES ($1,$2::uuid,$3::order_status,'cancelled',$4)""",
+            uuid.uuid4(), order_id, status_db,
+            (f"customer cancellation: {body.reason}" if body.reason else "customer cancellation")[:200])
+        if order.get("consultation_credit_id"):
+            await conn.execute(
+                """UPDATE consultation_credits SET status = 'available', redeemed_order_id = NULL
+                    WHERE id = $1::uuid AND redeemed_order_id = $2::uuid""",
+                order["consultation_credit_id"], order_id)
+        if needs_refund and refund_result:
+            refunded_now = refund_result.get("status") == "processed"
+            await conn.execute(
+                """INSERT INTO refunds (id, payment_id, amount, status, gateway_ref, processed_at)
+                   VALUES ($1,$2::uuid,$3,$4::refund_status,$5,$6)""",
+                uuid.uuid4(), payment["payment_id"], payment["amount"],
+                "completed" if refunded_now else "processing",
+                refund_result.get("id"), now() if refunded_now else None)
+            await conn.execute(
+                "UPDATE payments SET status = 'refunded', updated_at = now() WHERE id = $1::uuid",
+                payment["payment_id"])
+
+    await audit_log(user_id, "order.cancel", order_id,
+                    {"reason": body.reason, "refund_initiated": needs_refund})
+    return {"ok": True, "order_id": order_id, "refund_initiated": needs_refund}
+
+
 # ── Admin: dispatch → activate QR ────────────────────────────────────────────
 @api.post("/admin/dispatch")
 async def admin_dispatch(body: DispatchIn, user_id: str = Depends(require_admin)):
@@ -3944,10 +4049,13 @@ async def _mark_consultation_paid(booking_id: str, payment_id: str) -> dict:
             """UPDATE consultations
                   SET payment_status='paid', razorpay_payment_id=$2, updated_at=now()
                 WHERE id=$1::uuid""", booking_id, payment_id)
+        # 'pending' rather than the column default 'available' — the credit isn't
+        # usable until the astrologer actually delivers the session (see
+        # _activate_consultation_credit, fired when status flips to 'completed').
         await conn.execute(
             """INSERT INTO consultation_credits (id, consultation_id, user_id, phone, email,
-                    amount, expires_at)
-               VALUES ($1,$2::uuid,$3::uuid,$4,$5::citext,$6, now() + interval '90 days')""",
+                    amount, status, expires_at)
+               VALUES ($1,$2::uuid,$3::uuid,$4,$5::citext,$6,'pending', now() + interval '90 days')""",
             uuid.uuid4(), booking_id, consult["user_id"], consult["phone"], consult["email"],
             db.to_amount(consult["amount"]))
     # Instant confirmation — astrologer + exact time + meet link follow separately
@@ -3957,6 +4065,17 @@ async def _mark_consultation_paid(booking_id: str, payment_id: str) -> dict:
                       user_id=consult.get("user_id"),
                       variables={"amount": f"₹{consult['amount'] / 100:,.0f}"})
     return await _load_consultation(booking_id)
+
+
+async def _activate_consultation_credit(booking_id: str) -> None:
+    """Flip a paid consultation's credit from 'pending' to spendable 'available' —
+    called when the consultation's status becomes 'completed', whether that's the
+    astrologer marking their own session done or staff doing it from admin. Guarded
+    by status='pending' so calling this on an already-active or non-existent credit
+    is a safe no-op."""
+    await db.execute(
+        "UPDATE consultation_credits SET status='available' WHERE consultation_id=$1::uuid"
+        " AND status='pending'", booking_id)
 
 
 @api.get("/me/consultations")
@@ -4571,7 +4690,42 @@ async def admin_sales(_: str = Depends(require_owner), days: int = 30):
                       SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
                        WHERE ur.user_id = u.id AND r.name IN ('admin','staff'))) AS new_customers,
                   (SELECT count(*) FROM queries
-                    WHERE status IN ('open','in_progress')) AS open_queries""", since)
+                    WHERE status IN ('open','in_progress')) AS open_queries,
+                  (SELECT count(*) FROM orders WHERE created_at >= $1 AND status = 'cancelled') AS cancelled,
+                  (SELECT count(*) FROM orders WHERE created_at >= $1 AND status = 'refunded') AS refunded,
+                  (SELECT count(*) FROM consultations WHERE created_at >= $1) AS new_consultations,
+                  (SELECT count(*) FROM wishlist WHERE created_at >= $1) AS new_leads""", since)
+
+    # Unified activity feed: new orders, cancellations/refunds (from the order_events
+    # audit trail), new consultation requests, and new leads (wishlist adds) — one
+    # query instead of four separate round trips.
+    activity = await db.fetch_all(
+        """SELECT 'order' AS type, o.id::text AS ref_id, o.created_at AS at,
+                  o.status::text AS status, o.grand_total AS amount_n,
+                  u.full_name AS name, NULL::text AS extra
+             FROM orders o LEFT JOIN users u ON u.id = o.user_id
+            WHERE o.created_at >= $1
+            UNION ALL
+           SELECT CASE oe.to_status::text WHEN 'cancelled' THEN 'cancellation' ELSE 'refund' END,
+                  oe.order_id::text, oe.created_at, oe.to_status::text, o.grand_total,
+                  u.full_name, oe.reason
+             FROM order_events oe
+             JOIN orders o ON o.id = oe.order_id
+             LEFT JOIN users u ON u.id = o.user_id
+            WHERE oe.created_at >= $1 AND oe.to_status::text IN ('cancelled', 'refunded')
+            UNION ALL
+           SELECT 'consultation', c.id::text, c.created_at, c.status::text, c.amount,
+                  c.contact_name, c.concern
+             FROM consultations c
+            WHERE c.created_at >= $1
+            UNION ALL
+           SELECT 'lead', w.product_id::text, w.created_at, 'wishlist', NULL,
+                  u.full_name, p.title
+             FROM wishlist w
+             JOIN users u ON u.id = w.user_id
+             JOIN products p ON p.id = w.product_id
+            WHERE w.created_at >= $1
+            ORDER BY at DESC LIMIT 40""", since)
 
     return {
         "revenue_paise": revenue,
@@ -4581,10 +4735,17 @@ async def admin_sales(_: str = Depends(require_owner), days: int = 30):
         "customers_total": stats["customers_total"],
         "new_customers": stats["new_customers"],
         "open_queries": stats["open_queries"],
+        "cancelled": stats["cancelled"],
+        "refunded": stats["refunded"],
+        "new_consultations": stats["new_consultations"],
+        "new_leads": stats["new_leads"],
         "by_day": [{"day": d["day"], "revenue": db.to_paise(d["revenue_n"]),
                     "orders": d["orders"]} for d in by_day],
         "by_category": [{"category": db.CATEGORY_FROM_DB.get(c["category"], c["category"]),
                          "revenue_paise": db.to_paise(c["revenue_n"])} for c in by_cat],
+        "activity": [{"type": a["type"], "ref_id": a["ref_id"], "at": a["at"],
+                      "status": a["status"], "amount_paise": db.to_paise(a["amount_n"]),
+                      "name": a["name"], "extra": a["extra"]} for a in activity],
         "window_days": days,
     }
 
@@ -5269,6 +5430,8 @@ async def astro_update_consultation(booking_id: str, body: AstroConsultUpdateIn,
         f"RETURNING id::text", *args)
     if not got:
         raise HTTPException(404, "Booking not found")
+    if updates.get("status") == "completed":
+        await _activate_consultation_credit(booking_id)
     return await _load_consultation(booking_id)
 
 
@@ -5441,6 +5604,8 @@ async def admin_update_consultation(booking_id: str, body: dict, request: Reques
     await audit_log(actor, "consultation.update", booking_id,
                     {k: v for k, v in updates.items()
                      if k in ("status", "meeting_link", "notes", "astrologer_id", "confirmed_time")})
+    if updates.get("status") == "completed":
+        await _activate_consultation_credit(booking_id)
 
     consult = await _load_consultation(booking_id)
     if assigning:

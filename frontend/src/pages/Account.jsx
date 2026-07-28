@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, formatINR, describeOptions } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
-import { ShieldCheck, Package, Heart, Certificate as CertIcon, ArrowRight, Phone, WhatsappLogo, Gear, PencilSimple, LockKey, ChatCircleDots, CaretDown, CaretUp, MapPin, Truck, Calendar, VideoCamera } from "@phosphor-icons/react";
+import { ShieldCheck, Package, Heart, Certificate as CertIcon, ArrowRight, Phone, WhatsappLogo, Gear, PencilSimple, LockKey, ChatCircleDots, CaretDown, CaretUp, MapPin, Truck, Calendar, VideoCamera, Wallet, XCircle } from "@phosphor-icons/react";
 import PhoneVerify from "@/components/gemora/PhoneVerify";
 import AccountSupport from "@/components/gemora/AccountSupport";
 import { toast } from "sonner";
@@ -15,9 +15,11 @@ export default function Account() {
   const [vault, setVault] = useState([]);
   const [wish, setWish] = useState([]);
   const [consultations, setConsultations] = useState([]);
+  const [credit, setCredit] = useState(null);
   const [showVerify, setShowVerify] = useState(false);
   const [changingPhone, setChangingPhone] = useState(false);
   const [payingId, setPayingId] = useState(null);
+  const [cancellingId, setCancellingId] = useState(null);
   const [expandedOrder, setExpandedOrder] = useState(null);
 
   const loadOrders = () => api.get("/orders").then((r) => setOrders(r.data)).catch(() => {});
@@ -29,10 +31,31 @@ export default function Account() {
     api.get("/me/verified-items").then((r) => setVault(r.data)).catch(() => {});
     api.get("/me/wishlist").then((r) => setWish(r.data)).catch(() => {});
     api.get("/me/consultations").then((r) => setConsultations(r.data)).catch(() => {});
+    api.get("/me/consultation-credit").then((r) => setCredit(r.data)).catch(() => {});
   }, [user, loading, nav]);
 
   // Human-readable order status — the API returns snake_case enums like "pending_payment".
   const fmtStatus = (s) => (s || "").replace(/_/g, " ");
+
+  // Self-cancel is only offered before the order ships, and only within 24h of
+  // placing it — mirrors the server's own check in POST /orders/{id}/cancel.
+  const CANCEL_WINDOW_MS = 24 * 60 * 60 * 1000;
+  const canCancel = (o) =>
+    ["pending_payment", "payment_failed", "paid"].includes(o.status) &&
+    Date.now() - new Date(o.created_at).getTime() <= CANCEL_WINDOW_MS;
+
+  const cancelOrder = async (o) => {
+    if (!window.confirm("Cancel this order? If it was paid, a refund will be initiated automatically.")) return;
+    setCancellingId(o.order_id);
+    try {
+      await api.post(`/orders/${o.order_id}/cancel`);
+      nav(`/order-cancelled/${o.order_id}`);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Could not cancel this order");
+    } finally {
+      setCancellingId(null);
+    }
+  };
 
   const openRazorpay = (options) => {
     if (!window.Razorpay) {
@@ -186,6 +209,7 @@ export default function Account() {
           ["orders", "Orders", Package, orders.length],
           ["wishlist", "Wishlist", Heart, wish.length],
           ["consultations", "Consultations", Calendar, consultations.length],
+          ["wallet", "Wallet", Wallet, credit?.available ? 1 : 0],
           ["support", "Help & Support", ChatCircleDots, null],
           ["settings", "Settings", Gear, null],
         ].map(([k, l, Icon, count]) => (
@@ -331,6 +355,22 @@ export default function Account() {
                     </button>
                   </div>
                 )}
+
+                {canCancel(o) && (
+                  <div className="mt-5 pt-4 border-t border-gold/30 flex flex-wrap items-center justify-between gap-3">
+                    <div className="text-xs text-ink-muted">
+                      Free cancellation within 24 hours of placing an order.
+                    </div>
+                    <button
+                      onClick={() => cancelOrder(o)}
+                      disabled={cancellingId === o.order_id}
+                      data-testid={`order-cancel-${o.order_id}`}
+                      className="border border-revoked text-revoked px-6 py-3 text-xs uppercase tracking-widest inline-flex items-center gap-2 hover:bg-revoked hover:text-ivory transition-colors disabled:opacity-50"
+                    >
+                      <XCircle size={14} weight="duotone" /> {cancellingId === o.order_id ? "Cancelling…" : "Cancel order"}
+                    </button>
+                  </div>
+                )}
               </div>
               );
             })}
@@ -381,6 +421,28 @@ export default function Account() {
                   </div>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {tab === "wallet" && (
+          <div className="max-w-md">
+            <div className="gold-line bg-ivory p-6">
+              <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-gold-soft">
+                <Wallet size={16} weight="duotone" /> Consultation credit
+              </div>
+              <div className="font-display text-4xl text-maroon-deep mt-3">
+                {credit?.available ? formatINR(credit.amount) : formatINR(0)}
+              </div>
+              {credit?.available ? (
+                <div className="text-xs text-ink-muted mt-2">
+                  Applied automatically at your next checkout · expires {new Date(credit.expires_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                </div>
+              ) : (
+                <div className="text-xs text-ink-muted mt-2">
+                  No credit available yet. A paid consultation credits its fee here once the astrologer marks the session complete.
+                </div>
+              )}
             </div>
           </div>
         )}
