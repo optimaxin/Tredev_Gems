@@ -183,9 +183,19 @@ body {
   animation: shimmer-sweep 4.5s linear infinite;
 }
 
+/* Same sweep, gold/ivory stops — for headlines on dark (maroon-deep) backgrounds
+   where the maroon-heavy .shimmer-text reads too low-contrast. */
+.shimmer-text-gold {
+  background-image: linear-gradient(100deg, #F6D27A 30%, #FBFBF9 50%, #F6D27A 70%);
+  background-size: 200% auto;
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: shimmer-sweep 4.5s linear infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .petal, .seal-pop, .shimmer-text { animation: none !important; }
+  .petal, .seal-pop, .shimmer-text, .shimmer-text-gold { animation: none !important; }
   .shimmer-text { color: #722F37; }
+  .shimmer-text-gold { color: #F6D27A; }
 }
 
 /* ===== Product page — trust marquee, glow sweep, sticky bar ===== */

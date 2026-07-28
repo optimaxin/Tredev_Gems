@@ -1,10 +1,15 @@
 import React, { useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
+import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { GoogleLogo, ShieldCheck, CheckCircle } from "@phosphor-icons/react";
 import PhoneVerify from "@/components/gemora/PhoneVerify";
+import AuthVisualPanel from "@/components/gemora/AuthVisualPanel";
 import { api } from "@/lib/api";
+
+const fieldVariants = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } };
+const formVariants = { hidden: {}, show: { transition: { staggerChildren: 0.07 } } };
 
 export default function Signup() {
   const { refresh, googleLogin } = useAuth();
@@ -56,88 +61,127 @@ export default function Signup() {
   };
 
   return (
-    <div className="mx-auto max-w-md px-6 py-16">
-      <div className="text-center">
-        <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">Join the vault</div>
-        <h1 className="font-display text-4xl text-ink mt-3">Create your account</h1>
-      </div>
+    <div className="relative overflow-hidden px-4 sm:px-6 py-12 md:py-16">
+      <div className="absolute inset-0 geom-bg pointer-events-none" />
+      <motion.div
+        initial={{ opacity: 0, y: 18 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.55, ease: "easeOut" }}
+        className="relative mx-auto max-w-4xl grid lg:grid-cols-[1.05fr_1fr] gold-line-strong overflow-hidden bg-ivory shadow-[0_30px_80px_-30px_rgba(78,31,38,0.35)]"
+      >
+        <div className="order-2 lg:order-1 p-8 sm:p-10 md:p-12">
+          <div>
+            <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">Join the vault</div>
+            <h1 className="font-display text-4xl text-ink mt-1">Create your account</h1>
+          </div>
 
-      {/* Stepper */}
-      <div className="mt-8 flex items-center justify-center gap-3 text-xs">
-        <div className={`flex items-center gap-2 ${step >= 1 ? "text-maroon-deep" : "text-ink-muted"}`}>
-          <span className={`w-6 h-6 flex items-center justify-center border ${step >= 1 ? "border-maroon bg-maroon text-ivory" : "border-gold/40"}`}>
-            {step > 1 ? <CheckCircle size={14} weight="fill" /> : "1"}
-          </span>
-          <span className="uppercase tracking-widest">Verify phone</span>
-        </div>
-        <div className="w-8 h-px bg-gold/40" />
-        <div className={`flex items-center gap-2 ${step >= 2 ? "text-maroon-deep" : "text-ink-muted"}`}>
-          <span className={`w-6 h-6 flex items-center justify-center border ${step >= 2 ? "border-maroon bg-maroon text-ivory" : "border-gold/40"}`}>2</span>
-          <span className="uppercase tracking-widest">Your details</span>
-        </div>
-      </div>
-
-      <div className="mt-8">
-        {step === 1 ? (
-          <>
-            <PhoneVerify onVerified={onVerified} />
-            <div className="relative py-4 text-center text-[11px] text-ink-muted">
-              <span className="bg-ivory px-3 relative z-10">or</span>
-              <div className="absolute top-1/2 left-0 right-0 h-px bg-gold/30" />
-            </div>
-            <button
-              type="button"
-              onClick={google}
-              data-testid="signup-google"
-              className="w-full border border-maroon text-maroon py-3 text-sm uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-maroon hover:text-ivory transition-colors"
-            >
-              <GoogleLogo size={16} weight="bold" /> Continue with Google
-            </button>
-            <p className="mt-3 text-[11px] text-ink-muted text-center">
-              Google users still need to verify a phone number after signing in.
-            </p>
-          </>
-        ) : (
-          <form onSubmit={submit} className="gold-line bg-ivory p-8 space-y-4">
-            <div className="flex items-center gap-2 text-verified text-xs mb-2">
-              <ShieldCheck size={14} weight="duotone" /> Phone verified · <span className="font-mono">{phone}</span>
-              <button type="button" onClick={() => setStep(1)} className="ml-auto text-ink-muted underline">change</button>
-            </div>
-            <label className="block">
-              <div className="text-xs text-ink-muted mb-1">Full name</div>
-              <input data-testid="signup-name" required value={form.name} onChange={set("name")} className="w-full gold-line px-4 py-3 outline-none focus:border-maroon" autoFocus />
-            </label>
-            <label className="block">
-              <div className="text-xs text-ink-muted mb-1">Email</div>
-              <input data-testid="signup-email" required value={form.email} onChange={set("email")} type="email" className="w-full gold-line px-4 py-3 outline-none focus:border-maroon" />
-            </label>
-            <label className="block">
-              <div className="text-xs text-ink-muted mb-1">Password</div>
-              <input data-testid="signup-password" required value={form.password} onChange={set("password")} type="password" minLength={6} className="w-full gold-line px-4 py-3 outline-none focus:border-maroon" />
-            </label>
-            <label className="flex items-start gap-3 mt-2 cursor-pointer group">
-              <input
-                type="checkbox"
-                checked={form.wa_optin}
-                onChange={(e) => setForm({ ...form, wa_optin: e.target.checked })}
-                data-testid="signup-wa-optin"
-                className="mt-1 w-4 h-4 accent-maroon"
-              />
-              <span className="text-xs text-ink-soft leading-relaxed">
-                WhatsApp me about new arrivals, temple pooja recordings, and offers.
-                <span className="block text-[10px] text-ink-muted mt-0.5">You can turn this off anytime in Account settings. Reply STOP on WhatsApp to unsubscribe.</span>
+          {/* Stepper */}
+          <div className="mt-8 flex items-center justify-center gap-3 text-xs">
+            <div className={`flex items-center gap-2 ${step >= 1 ? "text-maroon-deep" : "text-ink-muted"}`}>
+              <span className={`w-6 h-6 flex items-center justify-center border ${step >= 1 ? "border-maroon bg-maroon text-ivory" : "border-gold/40"}`}>
+                {step > 1 ? <CheckCircle size={14} weight="fill" className="seal-pop" /> : "1"}
               </span>
-            </label>
-            <button data-testid="signup-submit" disabled={loading} className="w-full brand-gradient text-ivory py-3 text-sm uppercase tracking-widest hover-lift disabled:opacity-50">
-              {loading ? "Creating…" : "Create account"}
-            </button>
-          </form>
-        )}
-      </div>
+              <span className="uppercase tracking-widest">Verify phone</span>
+            </div>
+            <div className="relative w-8 h-px bg-gold/40 overflow-hidden">
+              <motion.div className="absolute inset-y-0 left-0 brand-gradient" initial={{ width: 0 }}
+                animate={{ width: step >= 2 ? "100%" : "0%" }} transition={{ duration: 0.5, ease: "easeOut" }} />
+            </div>
+            <div className={`flex items-center gap-2 ${step >= 2 ? "text-maroon-deep" : "text-ink-muted"}`}>
+              <span className={`w-6 h-6 flex items-center justify-center border ${step >= 2 ? "border-maroon bg-maroon text-ivory" : "border-gold/40"}`}>2</span>
+              <span className="uppercase tracking-widest">Your details</span>
+            </div>
+          </div>
 
-      <div className="mt-6 text-center text-sm text-ink-muted">
-        Already have an account? <Link to="/login" state={location.state} className="text-maroon underline underline-offset-4 decoration-gold-soft">Sign in</Link>
-      </div>
+          <div className="mt-8">
+            <AnimatePresence mode="wait">
+              {step === 1 ? (
+                <motion.div key="step1" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.3 }}>
+                  <PhoneVerify onVerified={onVerified} />
+                  <div className="relative py-4 text-center text-[11px] text-ink-muted">
+                    <span className="bg-ivory px-3 relative z-10">or</span>
+                    <div className="absolute top-1/2 left-0 right-0 h-px bg-gold/30" />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={google}
+                    data-testid="signup-google"
+                    className="w-full border border-maroon text-maroon py-3 text-sm uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-maroon hover:text-ivory transition-colors"
+                  >
+                    <GoogleLogo size={16} weight="bold" /> Continue with Google
+                  </button>
+                  <p className="mt-3 text-[11px] text-ink-muted text-center">
+                    Google users still need to verify a phone number after signing in.
+                  </p>
+                </motion.div>
+              ) : (
+                <motion.form
+                  key="step2"
+                  onSubmit={submit}
+                  variants={formVariants}
+                  initial="hidden"
+                  animate="show"
+                  className="gold-line bg-ivory p-8 space-y-4"
+                >
+                  <motion.div variants={fieldVariants} className="flex items-center gap-2 text-verified text-xs mb-2">
+                    <ShieldCheck size={14} weight="duotone" /> Phone verified · <span className="font-mono">{phone}</span>
+                    <button type="button" onClick={() => setStep(1)} className="ml-auto text-ink-muted underline">change</button>
+                  </motion.div>
+                  <motion.label variants={fieldVariants} className="block">
+                    <div className="text-xs text-ink-muted mb-1">Full name</div>
+                    <input data-testid="signup-name" required value={form.name} onChange={set("name")}
+                      className="w-full gold-line px-4 py-3 outline-none transition-shadow focus:border-maroon focus:ring-2 focus:ring-gold/30" autoFocus />
+                  </motion.label>
+                  <motion.label variants={fieldVariants} className="block">
+                    <div className="text-xs text-ink-muted mb-1">Email</div>
+                    <input data-testid="signup-email" required value={form.email} onChange={set("email")} type="email"
+                      className="w-full gold-line px-4 py-3 outline-none transition-shadow focus:border-maroon focus:ring-2 focus:ring-gold/30" />
+                  </motion.label>
+                  <motion.label variants={fieldVariants} className="block">
+                    <div className="text-xs text-ink-muted mb-1">Password</div>
+                    <input data-testid="signup-password" required value={form.password} onChange={set("password")} type="password" minLength={6}
+                      className="w-full gold-line px-4 py-3 outline-none transition-shadow focus:border-maroon focus:ring-2 focus:ring-gold/30" />
+                  </motion.label>
+                  <motion.label variants={fieldVariants} className="flex items-start gap-3 mt-2 cursor-pointer group">
+                    <input
+                      type="checkbox"
+                      checked={form.wa_optin}
+                      onChange={(e) => setForm({ ...form, wa_optin: e.target.checked })}
+                      data-testid="signup-wa-optin"
+                      className="mt-1 w-4 h-4 accent-maroon"
+                    />
+                    <span className="text-xs text-ink-soft leading-relaxed">
+                      WhatsApp me about new arrivals, temple pooja recordings, and offers.
+                      <span className="block text-[10px] text-ink-muted mt-0.5">You can turn this off anytime in Account settings. Reply STOP on WhatsApp to unsubscribe.</span>
+                    </span>
+                  </motion.label>
+                  <motion.div variants={fieldVariants} className="relative">
+                    <div className="halo-breathe absolute inset-x-4 -inset-y-1 rounded-full opacity-40 pointer-events-none"
+                      style={{ background: "radial-gradient(circle, rgba(212,175,55,0.5) 0%, transparent 70%)" }} />
+                    <button data-testid="signup-submit" disabled={loading}
+                      className="relative w-full brand-gradient text-ivory py-3 text-sm uppercase tracking-widest hover-lift disabled:opacity-50">
+                      {loading ? "Creating…" : "Create account"}
+                    </button>
+                  </motion.div>
+                </motion.form>
+              )}
+            </AnimatePresence>
+          </div>
+
+          <div className="mt-6 text-center text-sm text-ink-muted">
+            Already have an account? <Link to="/login" state={location.state} className="text-maroon underline underline-offset-4 decoration-gold-soft">Sign in</Link>
+          </div>
+        </div>
+
+        <div className="order-1 lg:order-2">
+          <AuthVisualPanel
+            eyebrow="Join the vault"
+            title="Every stone, certified. Every order, blessed."
+            tagline="Create your account to unlock hallmark certificates, astrologer consultations, and early access to new arrivals."
+            points={["Free QR authenticity certificate", "WhatsApp order updates", "Priority consultation booking"]}
+          />
+        </div>
+      </motion.div>
     </div>
   );
 }

@@ -127,7 +127,6 @@ export default function PhoneVerify({ open = true, onClose, onVerified, prefillP
         <Phone size={22} weight="duotone" />
         <span className="font-serifd text-xl">Verify your phone</span>
       </div>
-      <p className="text-xs text-ink-muted mt-1">Google Firebase will send an SMS with a 6-digit code.</p>
 
       {step === 1 ? (
         <>
