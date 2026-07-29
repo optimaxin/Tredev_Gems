@@ -2730,14 +2730,37 @@ async def _order_items_by_id(order_ids: list[str]) -> dict[str, list[dict]]:
     return grouped
 
 
+_ORDER_EVENTS_SELECT = """
+    SELECT order_id::text AS order_id, to_status::text AS status, created_at AS at
+      FROM order_events"""
+
+
+async def _order_events_by_id(order_ids: list[str]) -> dict[str, list[dict]]:
+    """Fetch the status-change audit trail for many orders in one query, grouped by
+    order_id — this is the source for the customer-facing tracking timeline."""
+    if not order_ids:
+        return {}
+    rows = await db.fetch_all(
+        _ORDER_EVENTS_SELECT + " WHERE order_id = ANY($1::uuid[]) ORDER BY created_at", order_ids)
+    grouped: dict[str, list[dict]] = {}
+    for e in rows:
+        grouped.setdefault(e["order_id"], []).append(
+            {"status": db.ORDER_STATUS_FROM_DB.get(e["status"], e["status"]), "at": e["at"]})
+    return grouped
+
+
 async def _shape_orders(rows: list[dict]) -> list[dict]:
-    """Shape a list of order rows with a single batched line-item fetch (2 queries
-    total), instead of one items query per order."""
-    items_by_id = await _order_items_by_id([r["order_id"] for r in rows])
-    return [await _shape_order(r, items=items_by_id.get(r["order_id"], [])) for r in rows]
+    """Shape a list of order rows with a single batched line-item + event fetch (3
+    queries total), instead of one items/events query per order."""
+    order_ids = [r["order_id"] for r in rows]
+    items_by_id = await _order_items_by_id(order_ids)
+    events_by_id = await _order_events_by_id(order_ids)
+    return [await _shape_order(r, items=items_by_id.get(r["order_id"], []),
+                                events=events_by_id.get(r["order_id"], [])) for r in rows]
 
 
-async def _shape_order(row: Optional[dict], conn=None, items: Optional[list] = None) -> Optional[dict]:
+async def _shape_order(row: Optional[dict], conn=None, items: Optional[list] = None,
+                        events: Optional[list] = None) -> Optional[dict]:
     if not row:
         return None
     r = dict(row)
@@ -2746,6 +2769,10 @@ async def _shape_order(row: Optional[dict], conn=None, items: Optional[list] = N
         rows = db._rows(await conn.fetch(sql, r["order_id"])) if conn else await db.fetch_all(sql, r["order_id"])
         designs = await _design_groups_for_products([i["product_id"] for i in rows], conn)
         items = [_shape_order_item(i, designs.get(i["product_id"])) for i in rows]
+    if events is None:
+        sql = _ORDER_EVENTS_SELECT + " WHERE order_id = $1::uuid ORDER BY created_at"
+        rows = db._rows(await conn.fetch(sql, r["order_id"])) if conn else await db.fetch_all(sql, r["order_id"])
+        events = [{"status": db.ORDER_STATUS_FROM_DB.get(e["status"], e["status"]), "at": e["at"]} for e in rows]
     shipping = {k: r.pop(f"shipping_{k}") for k in
                 ("name", "phone", "address", "city", "state", "pincode")}
     shipping = {f"shipping_{k}": v for k, v in shipping.items()}
@@ -2753,6 +2780,7 @@ async def _shape_order(row: Optional[dict], conn=None, items: Optional[list] = N
     return {**{k: v for k, v in r.items()
                if k not in ("subtotal_n", "gst_n", "total_n", "discount_n", "status_db")},
             "items": items,
+            "events": events,
             "subtotal": db.to_paise(r["subtotal_n"]),
             "gst": db.to_paise(r["gst_n"]),
             "total": db.to_paise(r["total_n"]),

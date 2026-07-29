@@ -2,9 +2,10 @@ import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, formatINR, describeOptions } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
-import { ShieldCheck, Package, Heart, Certificate as CertIcon, ArrowRight, Phone, WhatsappLogo, Gear, PencilSimple, LockKey, ChatCircleDots, CaretDown, CaretUp, MapPin, Truck, Calendar, VideoCamera, Wallet, XCircle } from "@phosphor-icons/react";
+import { ShieldCheck, Package, Heart, Certificate as CertIcon, ArrowRight, Phone, WhatsappLogo, Gear, PencilSimple, LockKey, ChatCircleDots, CaretDown, CaretUp, MapPin, Calendar, VideoCamera, Wallet, XCircle } from "@phosphor-icons/react";
 import PhoneVerify from "@/components/gemora/PhoneVerify";
 import AccountSupport from "@/components/gemora/AccountSupport";
+import OrderTracking from "@/components/gemora/OrderTracking";
 import { toast } from "sonner";
 
 export default function Account() {
@@ -289,6 +290,8 @@ export default function Account() {
 
                 {isOpen && (
                   <div className="mt-5 pt-4 border-t border-gold/30 space-y-4" data-testid={`order-details-${o.order_id}`}>
+                    <OrderTracking order={o} />
+
                     <div>
                       <div className="text-xs uppercase tracking-widest text-ink-muted mb-2">Items</div>
                       <div className="space-y-3">
@@ -328,15 +331,6 @@ export default function Account() {
                         {[o.shipping?.shipping_city, o.shipping?.shipping_state, o.shipping?.shipping_pincode].filter(Boolean).join(", ")}
                       </div>
                     </div>
-
-                    {(o.courier || o.tracking_number || o.estimated_delivery_date) && (
-                      <div className="text-xs text-ink-muted flex items-center gap-1.5">
-                        <Truck size={14} weight="duotone" />
-                        {o.courier && <span>{o.courier}</span>}
-                        {o.tracking_number && <span className="font-mono">{o.tracking_number}</span>}
-                        {o.estimated_delivery_date && <span>Est. delivery {new Date(o.estimated_delivery_date).toLocaleDateString()}</span>}
-                      </div>
-                    )}
                   </div>
                 )}
 
