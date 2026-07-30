@@ -3,11 +3,13 @@ import { api, formatINR } from "@/lib/api";
 import { toast } from "sonner";
 import { PencilSimple, PlusCircle, Trash, Stack, Prohibit, CheckCircle } from "@phosphor-icons/react";
 import SearchBar from "@/components/gemora/SearchBar";
+import RegionalPricesEditor from "@/components/gemora/RegionalPricesEditor";
 
 const EMPTY = {
   name: "", slug: "", category: "gemstone", subcategory_id: "", description: "", price: "", mrp: "",
   images: "", devanagari_name: "", attrs: "{}", quantity: "", care_instructions: "",
   groups: [], // option groups, seeded from the category template
+  prices: [], // region_pricing: [{currency_code, amount}]
 };
 
 // Surcharges travel as paise; the form edits rupees.
@@ -30,7 +32,7 @@ export default function AdminProducts() {
   const [form, setForm] = useState(EMPTY);
 
   const refresh = () => {
-    api.get("/products?limit=500").then((r) => setProducts(r.data));
+    api.get("/products?limit=500&include_prices=true").then((r) => setProducts(r.data));
     api.get("/categories").then((r) => setCats(r.data.categories));
     api.get("/admin/products/stock").then((r) => setStock(r.data)).catch(() => {});
   };
@@ -98,6 +100,7 @@ export default function AdminProducts() {
       attrs: JSON.stringify(p.attrs || {}, null, 2),
       care_instructions: (p.care_instructions || []).join("\n"),
       groups: groupsToForm(p.variant_options?.groups),
+      prices: (p.prices || []).map((pr) => ({ currency_code: pr.currency_code, amount: pr.amount.toString() })),
     });
   };
   const startNew = () => { setEditing("new"); setForm(EMPTY); loadTemplate(EMPTY.category); };
@@ -131,11 +134,20 @@ export default function AdminProducts() {
         if (isNaN(n) || n < 0) throw new Error("Enter a valid surcharge in rupees");
         return Math.round(n * 100);
       };
-      const { groups, ...rest } = form;
+      const { groups, prices, ...rest } = form;
       const payload = {
         ...rest,
         price: rupeesToPaise(form.price) || 0,
         mrp: form.mrp ? rupeesToPaise(form.mrp) : null,
+        // Regional overrides — amount stays in the currency's major unit (dollars,
+        // not cents), unlike price/mrp above which the backend expects in paise.
+        prices: prices
+          .filter((pr) => pr.currency_code && pr.amount !== "")
+          .map((pr) => {
+            const n = Number(pr.amount);
+            if (isNaN(n) || n < 0) throw new Error(`Enter a valid ${pr.currency_code} price`);
+            return { currency_code: pr.currency_code, amount: n };
+          }),
         images: form.images.split("\n").map((s) => s.trim()).filter(Boolean),
         attrs: JSON.parse(form.attrs || "{}"),
         // Number of pieces in stock — backend auto-generates a serial per unit.
@@ -254,6 +266,11 @@ export default function AdminProducts() {
               )}
             </label>
           ))}
+
+          <div className="md:col-span-2 pt-2 border-t border-gold/20">
+            <RegionalPricesEditor rows={form.prices} onChange={(prices) => setForm((f) => ({ ...f, prices }))} />
+          </div>
+
           <label className="block">
             <div className="text-xs text-ink-muted mb-1">Category</div>
             <select value={form.category} onChange={(e) => changeCategory(e.target.value)} data-testid="product-category-select" className="w-full gold-line px-3 py-2 bg-ivory">

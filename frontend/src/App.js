@@ -5,6 +5,7 @@ import { Toaster } from "sonner";
 import { AuthProvider } from "@/context/AuthContext";
 import { CartProvider } from "@/context/CartContext";
 import { SiteAssetsProvider } from "@/context/SiteAssetsContext";
+import { CurrencyProvider } from "@/context/CurrencyContext";
 import { AstroAuthProvider } from "@/context/AstroAuthContext";
 import Header from "@/components/gemora/Header";
 import Footer from "@/components/gemora/Footer";
@@ -95,18 +96,20 @@ function App() {
   return (
     <div className="App">
       <BrowserRouter>
-        <AuthProvider>
-          <AstroAuthProvider>
-            <SiteAssetsProvider>
-              <CartProvider>
-                <ScrollToTop />
-                <AffiliateTracker />
-                <AuthRouter />
-                <Toaster position="top-center" richColors />
-              </CartProvider>
-            </SiteAssetsProvider>
-          </AstroAuthProvider>
-        </AuthProvider>
+        <CurrencyProvider>
+          <AuthProvider>
+            <AstroAuthProvider>
+              <SiteAssetsProvider>
+                <CartProvider>
+                  <ScrollToTop />
+                  <AffiliateTracker />
+                  <AuthRouter />
+                  <Toaster position="top-center" richColors />
+                </CartProvider>
+              </SiteAssetsProvider>
+            </AstroAuthProvider>
+          </AuthProvider>
+        </CurrencyProvider>
       </BrowserRouter>
     </div>
   );

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useParams, Link, useNavigate, useLocation } from "react-router-dom";
-import { api, formatINR } from "@/lib/api";
+import { api } from "@/lib/api";
+import { formatPrice } from "@/lib/currency";
 import { useCart } from "@/context/CartContext";
 import { toast } from "sonner";
 import { ShieldCheck, Certificate, ShoppingBag, Heart, Plus, Minus, CaretLeft, CaretRight, Star, Truck, ArrowsClockwise, FlowerLotus, Lightning } from "@phosphor-icons/react";
@@ -80,7 +81,13 @@ export default function ProductDetail() {
     else if (!g.optional) resolved[g.key] = choices[0].label;
   }
 
-  const unitPrice = visible.reduce((sum, g) => {
+  // Option surcharges are only ever priced in INR (no per-currency admin UI for them
+  // yet — a bigger change than region_pricing's base-price overrides). Applying them
+  // on top of a converted foreign-currency base price would mix currencies, so for a
+  // non-INR visitor the displayed price just stays the flat base price.
+  // ponytail: surcharges shown INR-only; extend option_choices with per-currency
+  // pricing if international checkout needs the real total to include them.
+  const unitPrice = p.currency !== "INR" ? p.price : visible.reduce((sum, g) => {
     const c = g.choices.find((x) => x.label === resolved[g.key]);
     return sum + (c?.surcharge || 0);
   }, p.price);
@@ -249,14 +256,14 @@ export default function ProductDetail() {
           )}
 
           <div className="mt-6 flex items-baseline gap-4 flex-wrap">
-            <div className="font-display text-4xl text-maroon-deep" data-testid="product-unit-price">{formatINR(unitPrice)}</div>
-            {p.mrp && p.mrp > unitPrice && <div className="text-ink-muted line-through">{formatINR(p.mrp)}</div>}
+            <div className="font-display text-4xl text-maroon-deep" data-testid="product-unit-price">{formatPrice(unitPrice, p.currency)}</div>
+            {p.mrp && p.mrp > unitPrice && <div className="text-ink-muted line-through">{formatPrice(p.mrp, p.currency)}</div>}
             {off > 0 && (
               <span className="bg-maroon text-ivory text-[11px] font-mono px-2 py-1 tracking-widest">{off}% OFF</span>
             )}
           </div>
           {unitPrice !== p.price && (
-            <div className="text-xs text-ink-muted mt-1">Base price {formatINR(p.price)} + your selected options</div>
+            <div className="text-xs text-ink-muted mt-1">Base price {formatPrice(p.price, p.currency)} + your selected options</div>
           )}
           <p className="mt-6 text-ink-soft leading-relaxed">{p.description}</p>
 
@@ -307,8 +314,8 @@ export default function ProductDetail() {
                             <div className="mt-1 text-[11px] leading-tight">
                               <div className="font-medium">{c.label}</div>
                               {c.note && <div className="text-ink-muted">{c.note}</div>}
-                              {c.surcharge > 0 && (
-                                <div className="text-maroon-deep">+{formatINR(c.surcharge)}</div>
+                              {c.surcharge > 0 && p.currency === "INR" && (
+                                <div className="text-maroon-deep">+{formatPrice(c.surcharge, p.currency)}</div>
                               )}
                             </div>
                           </button>
@@ -331,7 +338,7 @@ export default function ProductDetail() {
                             }`}
                           >
                             {c.label}
-                            {c.surcharge > 0 && <span className="text-xs text-ink-muted"> +{formatINR(c.surcharge)}</span>}
+                            {c.surcharge > 0 && p.currency === "INR" && <span className="text-xs text-ink-muted"> +{formatPrice(c.surcharge, p.currency)}</span>}
                           </button>
                         );
                       })}
@@ -347,7 +354,7 @@ export default function ProductDetail() {
                       {g.optional && <option value="">Select {g.label.replace(/^Select /, "")}</option>}
                       {g.choices.map((c) => (
                         <option key={c.label} value={c.label}>
-                          {c.label}{c.surcharge > 0 ? ` (+${formatINR(c.surcharge)})` : ""}
+                          {c.label}{c.surcharge > 0 && p.currency === "INR" ? ` (+${formatPrice(c.surcharge, p.currency)})` : ""}
                         </option>
                       ))}
                     </select>
@@ -474,8 +481,8 @@ export default function ProductDetail() {
       <div className="lg:hidden fixed bottom-0 inset-x-0 z-40 sticky-rise bg-ivory/95 backdrop-blur border-t border-gold/40">
         <div className="px-4 py-3 flex items-center gap-3">
           <div className="min-w-0">
-            <div className="font-display text-xl text-maroon-deep leading-none">{formatINR(unitPrice)}</div>
-            {off > 0 && <div className="text-[10px] text-ink-muted line-through">{formatINR(p.mrp)}</div>}
+            <div className="font-display text-xl text-maroon-deep leading-none">{formatPrice(unitPrice, p.currency)}</div>
+            {off > 0 && <div className="text-[10px] text-ink-muted line-through">{formatPrice(p.mrp, p.currency)}</div>}
           </div>
           <button
             onClick={addToCart}

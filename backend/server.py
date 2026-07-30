@@ -23,6 +23,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import bcrypt
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHash, VerifyMismatchError
 import jwt as pyjwt
 import qrcode
 from qrcode.image.pil import PilImage
@@ -131,7 +133,7 @@ _OTP_DEV_CODE = os.environ.get("OTP_DEV_MODE_CODE", "123456").strip()
 # concurrency and fail fast (falling back to mock/another provider) once it trips.
 _twilio_circuit = get_circuit("twilio", failure_threshold=3, reset_timeout=30.0,
                               call_timeout=10.0, max_concurrency=5)
-_razorpay_circuit = get_circuit("razorpay", failure_threshold=3, reset_timeout=20.0,
+_cashfree_circuit = get_circuit("cashfree", failure_threshold=3, reset_timeout=20.0,
                                 call_timeout=8.0, max_concurrency=10)
 # firebase_admin's verify_id_token is synchronous and, on a cold cert cache, fetches
 # Google's public keys over the network — on the login hot path, so it gets the
@@ -139,39 +141,89 @@ _razorpay_circuit = get_circuit("razorpay", failure_threshold=3, reset_timeout=2
 _firebase_circuit = get_circuit("firebase_auth", failure_threshold=5, reset_timeout=15.0,
                                 call_timeout=8.0, max_concurrency=15)
 
+_CASHFREE_API_VERSION = "2023-08-01"
 
-async def _razorpay_create_order(rp_key: str, rp_secret: str, amount: int, receipt: str) -> str:
-    """Create a Razorpay order and return its id.
 
-    razorpay's SDK is synchronous (blocking network I/O via `requests`), and this
-    runs on the checkout hot path — every checkout blocks the event loop for the
-    call's duration otherwise. Routing it through the circuit both moves the call
-    to a worker thread and caps how many can be in flight/how long they can hang.
+def _cashfree_base_url() -> str:
+    return ("https://api.cashfree.com/pg" if os.environ.get("CASHFREE_ENV") == "production"
+            else "https://sandbox.cashfree.com/pg")
+
+
+def _cashfree_headers(app_id: str, secret: str) -> dict:
+    return {"x-client-id": app_id, "x-client-secret": secret,
+            "x-api-version": _CASHFREE_API_VERSION, "Content-Type": "application/json"}
+
+
+async def _cashfree_create_order(app_id: str, secret: str, amount: int, currency: str,
+                                 receipt: str, customer: dict, return_url: str) -> dict:
+    """Create a Cashfree order. `amount` is in paise/cents (this backend's usual
+    minor-unit convention); Cashfree wants the major unit.
+
+    Cashfree's order_id is caller-chosen and must be globally unique per attempt
+    (unlike Razorpay, which mints its own) — a checkout retry (checkout_pay) can't
+    reuse the id from a first, abandoned attempt. So it's `receipt` (our internal
+    order/booking id) plus a random suffix, not `receipt` verbatim; the returned
+    order_id is what callers store as payments.gateway_ref to look the attempt back
+    up later (webhook, verify).
+
+    httpx is natively async, so — unlike the old Razorpay SDK — this needs no
+    worker-thread wrapping; the circuit still caps concurrency/timeout/trips open.
     Raises on any failure; every caller already falls back to a mock order id.
     """
-    import razorpay
+    cf_order_id = f"{receipt[:35]}-{uuid.uuid4().hex[:8]}"
 
-    def _create():
-        rp = razorpay.Client(auth=(rp_key, rp_secret))
-        return rp.order.create({"amount": amount, "currency": "INR",
-                                "receipt": receipt[:40], "payment_capture": 1})
+    async def _create():
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.post(
+                f"{_cashfree_base_url()}/orders",
+                headers=_cashfree_headers(app_id, secret),
+                json={
+                    "order_id": cf_order_id,
+                    "order_amount": float(db.to_amount(amount)),
+                    "order_currency": currency,
+                    "customer_details": customer,
+                    "order_meta": {"return_url": return_url} if return_url else {},
+                })
+            resp.raise_for_status()
+            return resp.json()
 
-    rp_order = await _razorpay_circuit.call(_create)
-    return rp_order["id"]
+    data = await _cashfree_circuit.call(_create)
+    return {"order_id": data["order_id"], "payment_session_id": data["payment_session_id"]}
 
 
-async def _razorpay_create_refund(rp_key: str, rp_secret: str, payment_id: str, amount_paise: int) -> dict:
-    """Refund a captured Razorpay payment. Returns Razorpay's refund object
-    ({id, status, ...}) — status is 'processed' or 'pending' depending on the
-    payment method. Raises on any failure; callers must not mark an order
+async def _cashfree_get_order_payments(app_id: str, secret: str, order_id: str) -> list[dict]:
+    """The payment attempts for a Cashfree order — used to confirm SUCCESS server-side.
+    Cashfree has no client-passed signature to check (unlike Razorpay's checkout.js
+    handler callback), so this IS the verify step."""
+    async def _get():
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get(
+                f"{_cashfree_base_url()}/orders/{order_id}/payments",
+                headers=_cashfree_headers(app_id, secret))
+            resp.raise_for_status()
+            return resp.json()
+
+    return await _cashfree_circuit.call(_get)
+
+
+async def _cashfree_create_refund(app_id: str, secret: str, order_id: str, refund_id: str,
+                                  amount_paise: int) -> dict:
+    """Refund a captured Cashfree payment. Returns Cashfree's refund object
+    ({refund_id, refund_status, ...}) — status is 'SUCCESS' or 'PENDING' depending
+    on the payment method. Raises on any failure; callers must not mark an order
     cancelled+refunded unless this succeeds."""
-    import razorpay
+    async def _refund():
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.post(
+                f"{_cashfree_base_url()}/orders/{order_id}/refunds",
+                headers=_cashfree_headers(app_id, secret),
+                json={"refund_id": refund_id[:40],
+                      "refund_amount": float(db.to_amount(amount_paise)),
+                      "refund_speed": "STANDARD"})
+            resp.raise_for_status()
+            return resp.json()
 
-    def _refund():
-        rp = razorpay.Client(auth=(rp_key, rp_secret))
-        return rp.payment.refund(payment_id, {"amount": amount_paise, "speed": "normal"})
-
-    return await _razorpay_circuit.call(_refund)
+    return await _cashfree_circuit.call(_refund)
 
 
 def _otp_provider() -> str:
@@ -329,15 +381,35 @@ def sign_payload(payload: dict) -> str:
     return sig.hex()
 
 
+_argon2 = PasswordHasher()  # defaults: time_cost=3, memory_cost=64 MiB, parallelism=4, type=Argon2id
+
+
 def hash_password(pw: str) -> str:
-    return bcrypt.hashpw(pw.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode()
+    return _argon2.hash(pw)
 
 
 def verify_password(pw: str, hashed: str) -> bool:
+    if not hashed:
+        return False
+    # Existing accounts still carry bcrypt hashes from before the Argon2id switch —
+    # verify those with bcrypt; needs_rehash() below tells callers to upgrade the
+    # stored hash to Argon2id right after a successful login, so accounts migrate
+    # on their own next sign-in rather than forcing a mass password reset.
+    if not hashed.startswith("$argon2"):
+        try:
+            return bcrypt.checkpw(pw.encode("utf-8"), hashed.encode("utf-8"))
+        except Exception:
+            return False
     try:
-        return bcrypt.checkpw(pw.encode("utf-8"), hashed.encode("utf-8"))
+        return _argon2.verify(hashed, pw)
+    except (VerifyMismatchError, InvalidHash):
+        return False
     except Exception:
         return False
+
+
+def needs_rehash(hashed: str) -> bool:
+    return not (hashed or "").startswith("$argon2id$")
 
 
 def make_jwt(user_id: str) -> str:
@@ -537,6 +609,13 @@ class VariantOptionsIn(BaseModel):
     groups: List[OptionGroupIn] = []
 
 
+class PriceOverrideIn(BaseModel):
+    """A region_pricing override: the price of a product/astrologer in one
+    non-INR currency, in that currency's major unit (e.g. dollars, not cents)."""
+    currency_code: str
+    amount: float
+
+
 class ProductIn(BaseModel):
     name: str
     slug: str
@@ -550,6 +629,7 @@ class ProductIn(BaseModel):
     images: List[str] = []
     attrs: dict = {}  # carat, graha, mukhi, origin, rashi, purpose, etc.
     devanagari_name: Optional[str] = None
+    prices: List[PriceOverrideIn] = []  # region_pricing: per-currency price overrides
     is_serialized: bool = True  # if False, non-unit-based
     quantity: int = 0  # serialized only: auto-generate this many units with serial numbers
     care_instructions: List[str] = []  # rendered as bullet points on the product page
@@ -1000,6 +1080,9 @@ async def login(body: LoginIn, request: Request, _rl: None = Depends(rate_limit(
     user = await _load_user(email=body.email.lower())
     if not user or not user.get("password_hash") or not verify_password(body.password, user["password_hash"]):
         raise HTTPException(401, "Invalid credentials")
+    if needs_rehash(user["password_hash"]):
+        await db.execute("UPDATE users SET password_hash = $2 WHERE id = $1::uuid",
+                          user["user_id"], hash_password(body.password))
     await _claim_anon_cart(user["user_id"], request.cookies.get("gemora_anon"))
     token = make_jwt(user["user_id"])
     return {"token": token, "user": _user_public(user)}
@@ -1091,6 +1174,63 @@ def _normalize_query(q: str) -> str:
     return ql
 
 
+# ── region pricing ──────────────────────────────────────────────────────────
+# INR is the base currency stored on products/astrologers directly; these are the
+# currencies staff can additionally set an explicit price for (region_pricing).
+SUPPORTED_CURRENCIES = {
+    "INR", "USD", "CAD", "MXN", "GBP", "EUR", "CHF", "AUD", "JPY", "SGD",
+    "KRW", "MYR", "NZD", "HKD", "AED", "BDT", "LKR", "NPR", "BTN", "MVR",
+}
+
+
+async def _resolve_prices(table: str, id_col: str, ids: list[str], currency: str,
+                          conn=None) -> dict[str, dict]:
+    """{entity_id: {"price": paise_int, "currency": code}} for ids that have an
+    explicit override in `currency`, falling back to USD. Ids not present in the
+    returned dict have no override — the caller keeps the base INR price/currency."""
+    if currency == "INR" or not ids:
+        return {}
+    sql = (f"SELECT {id_col}::text AS id, currency_code, amount FROM {table} "
+           f"WHERE {id_col} = ANY($1::uuid[]) AND currency_code = ANY($2)")
+    rows = await (conn.fetch(sql, ids, [currency, "USD"]) if conn
+                  else db.fetch_all(sql, ids, [currency, "USD"]))
+    by_id: dict[str, dict] = {}
+    for r in rows:
+        # an exact-currency row always wins over the USD fallback
+        if r["id"] not in by_id or r["currency_code"].strip() == currency:
+            by_id[r["id"]] = r
+    return {i: {"price": db.to_paise(r["amount"]), "currency": r["currency_code"].strip()}
+            for i, r in by_id.items()}
+
+
+async def _replace_price_overrides(conn, table: str, id_col: str, entity_id,
+                                   prices: list["PriceOverrideIn"]) -> None:
+    """Admin write side of region_pricing: full replace, since there are at most a
+    couple dozen currencies — no need for row-level diffing."""
+    await conn.execute(f"DELETE FROM {table} WHERE {id_col} = $1::uuid", entity_id)
+    for p in prices:
+        code = p.currency_code.strip().upper()
+        if code == "INR" or code not in SUPPORTED_CURRENCIES:
+            continue
+        await conn.execute(
+            f"INSERT INTO {table} ({id_col}, currency_code, amount) VALUES ($1::uuid,$2,$3)",
+            entity_id, code, Decimal(str(p.amount)))
+
+
+async def _fetch_price_overrides(table: str, id_col: str, ids: list[str]) -> dict[str, list[dict]]:
+    """Full {currency_code, amount} list per entity, for admin edit forms."""
+    if not ids:
+        return {}
+    rows = await db.fetch_all(
+        f"SELECT {id_col}::text AS id, currency_code, amount FROM {table} "
+        f"WHERE {id_col} = ANY($1::uuid[]) ORDER BY currency_code", ids)
+    by_id: dict[str, list[dict]] = {}
+    for r in rows:
+        by_id.setdefault(r["id"], []).append(
+            {"currency_code": r["currency_code"].strip(), "amount": float(r["amount"])})
+    return by_id
+
+
 # Rebuilds the flat product dict the frontend expects out of the normalised tables:
 # products + categories + product_media/media_assets + the per-category detail tables.
 # `attrs` is re-synthesised from the typed columns so filters and the UI keep working.
@@ -1160,8 +1300,24 @@ def _shape_product(row: Optional[dict]) -> Optional[dict]:
         "category": db.CATEGORY_FROM_DB.get(r.pop("category_key"), r.get("category_key")),
         "price": db.to_paise(r.pop("base_price")),
         "mrp": db.to_paise(r.pop("compare_at_price")),
+        "currency": "INR",
         "attrs": attrs,
     }
+
+
+async def _apply_product_currency(products: list[dict], currency: str) -> list[dict]:
+    """Overlay each product's price with its region_pricing override for `currency`
+    (falling back to a USD override). Products without any override for this
+    currency are left showing their base INR price — there's nothing else to show."""
+    if currency == "INR" or not products:
+        return products
+    overrides = await _resolve_prices(
+        "product_prices", "product_id", [p["product_id"] for p in products], currency)
+    for p in products:
+        ov = overrides.get(p["product_id"])
+        if ov:
+            p["price"], p["currency"], p["mrp"] = ov["price"], ov["currency"], None
+    return products
 
 
 @api.get("/products")
@@ -1173,6 +1329,8 @@ async def list_products(
     mukhi: Optional[str] = None,
     q: Optional[str] = None,
     limit: int = 60,
+    currency: str = "INR",
+    include_prices: bool = False,  # admin product list: populate the regional-price editor
 ):
     where = ["p.status = 'active'"]
     args: list = []
@@ -1199,15 +1357,23 @@ async def list_products(
         where.append(f"(p.title ILIKE {a} OR p.description ILIKE {a} OR p.slug::text ILIKE {a})")
 
     sql = f"{_PRODUCT_SELECT} AND {' AND '.join(where)} ORDER BY p.created_at DESC LIMIT {_arg(limit)}"
-    return [_shape_product(r) for r in await db.fetch_all(sql, *args)]
+    products = [_shape_product(r) for r in await db.fetch_all(sql, *args)]
+    await _apply_product_currency(products, currency if currency in SUPPORTED_CURRENCIES else "INR")
+    if include_prices:
+        overrides = await _fetch_price_overrides(
+            "product_prices", "product_id", [p["product_id"] for p in products])
+        for p in products:
+            p["prices"] = overrides.get(p["product_id"], [])
+    return products
 
 
 @api.get("/products/{slug}")
-async def get_product(slug: str):
+async def get_product(slug: str, currency: str = "INR"):
     row = await db.fetch_one(_PRODUCT_SELECT + " AND p.slug = $1::citext", slug)
     if not row:
         raise HTTPException(404, "Product not found")
     p = _shape_product(row)
+    await _apply_product_currency([p], currency if currency in SUPPORTED_CURRENCIES else "INR")
     # Buyers no longer pick a specific serial — they choose a quantity and units are
     # auto-assigned at payment. The page only needs the count of pieces still in stock
     # so it can cap the quantity selector. Non-serialized products aren't unit-tracked,
@@ -2064,6 +2230,7 @@ async def admin_create_product(p: ProductIn, user_id: str = Depends(require_admi
                 await conn.execute(
                     """INSERT INTO product_media (id, product_id, media_id, position, is_primary)
                        VALUES ($1,$2,$3,$4,$5)""", uuid.uuid4(), pid, mid, i, i == 0)
+            await _replace_price_overrides(conn, "product_prices", "product_id", pid, p.prices)
     except HTTPException:
         raise
     except asyncpg.exceptions.UniqueViolationError as e:
@@ -2071,8 +2238,10 @@ async def admin_create_product(p: ProductIn, user_id: str = Depends(require_admi
         raise HTTPException(400, "A product with that slug already exists")
     await audit_log(user_id, "product.create", str(pid),
                     {"name": p.name, "slug": p.slug, "category": p.category, "price": p.price})
-    return _shape_product(await db.fetch_one(
+    doc = _shape_product(await db.fetch_one(
         _PRODUCT_SELECT + " AND p.id = $1::uuid", str(pid)))
+    doc["prices"] = [pr.model_dump() for pr in p.prices if pr.currency_code.strip().upper() in SUPPORTED_CURRENCIES and pr.currency_code.strip().upper() != "INR"]
+    return doc
 
 
 @api.post("/admin/units")
@@ -2652,7 +2821,7 @@ _ORDER_SELECT = """
            --   paid_at            -> payments
            --   shipping/tracking  -> shipments
            --   commission_id      -> affiliate_commissions (reverse lookup)
-           pay.gateway_ref        AS razorpay_order_id,
+           pay.gateway_ref        AS gateway_order_id,
            pay.gateway_payment_id AS payment_id,
            pay.paid_at            AS paid_at,
            (pay.gateway_ref IS NULL OR pay.gateway_ref LIKE 'mock_%') AS mock_payment,
@@ -2850,15 +3019,23 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
 
     buyer_id = user_id
 
-    # Razorpay: create order if keys available, else mock
-    rp_key = os.environ.get("RAZORPAY_KEY_ID", "")
-    rp_secret = os.environ.get("RAZORPAY_KEY_SECRET", "")
-    rp_order_id = f"mock_{order_id}"
-    if rp_key and rp_secret:
+    # Cashfree: create order if keys available, else mock
+    cf_app_id = os.environ.get("CASHFREE_APP_ID", "")
+    cf_secret = os.environ.get("CASHFREE_SECRET_KEY", "")
+    cf_order_id = f"mock_{order_id}"
+    payment_session_id = None
+    if cf_app_id and cf_secret:
         try:
-            rp_order_id = await _razorpay_create_order(rp_key, rp_secret, total, str(order_id))
+            cf_order = await _cashfree_create_order(
+                cf_app_id, cf_secret, total, "INR", str(order_id),
+                {"customer_id": re.sub(r"[^A-Za-z0-9]", "", str(buyer_id))[:50] or "guest",
+                 "customer_name": body.shipping_name, "customer_email": body.email,
+                 "customer_phone": body.shipping_phone},
+                f"{os.environ.get('PUBLIC_APP_URL', '').rstrip('/')}/order-confirmed/{order_id}")
+            cf_order_id = cf_order["order_id"]
+            payment_session_id = cf_order["payment_session_id"]
         except Exception as e:
-            log.warning(f"razorpay create failed: {e} — falling back to mock")
+            log.warning(f"cashfree create failed: {e} — falling back to mock")
 
     # Address, order, lines and the pending payment are one transaction — Mongo wrote
     # a single document, so this has to be all-or-nothing too.
@@ -2913,8 +3090,8 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
         await conn.execute(
             """INSERT INTO payments (id, order_id, gateway, gateway_ref, amount, currency,
                                      status)
-               VALUES ($1,$2,'razorpay',$3,$4,'INR','initiated')""",
-            uuid.uuid4(), order_id, rp_order_id, db.to_amount(total))
+               VALUES ($1,$2,'cashfree',$3,$4,'INR','initiated')""",
+            uuid.uuid4(), order_id, cf_order_id, db.to_amount(total))
 
         # Cart is converted, not deleted — it's the audit trail of what was bought.
         await conn.execute(
@@ -2922,16 +3099,16 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
             cart["cart_id"])
 
     order = await _load_order(str(order_id))
-    return {"order": order, "razorpay_key_id": rp_key or None}
+    return {"order": order, "payment_session_id": payment_session_id, "cf_app_id": cf_app_id or None}
 
 
 @api.post("/checkout/mock-pay/{order_id}")
 async def mock_pay(order_id: str):
-    """Dev helper: completes an order without Razorpay live keys, atomically flipping units to sold.
+    """Dev helper: completes an order without Cashfree live keys, atomically flipping units to sold.
 
     DEV ONLY — 404s in production. Without this gate any anonymous caller could mark
     an arbitrary order paid (assigning inventory and issuing certificates) without
-    paying. Real payments must go through Razorpay + the verified webhook.
+    paying. Real payments must go through Cashfree + the verified webhook.
     """
     _require_dev_env()
     order = await _load_order(order_id)
@@ -3037,43 +3214,55 @@ async def _mark_paid(order: dict, payment_id: str) -> dict:
     return result
 
 
-class RazorpayVerifyIn(BaseModel):
+class CashfreeVerifyIn(BaseModel):
     order_id: str
-    razorpay_order_id: str
-    razorpay_payment_id: str
-    razorpay_signature: str
 
 
 @api.post("/checkout/verify")
-async def checkout_verify(body: RazorpayVerifyIn):
-    secret = os.environ.get("RAZORPAY_KEY_SECRET", "")
-    if not secret:
-        raise HTTPException(400, "Razorpay not configured — use /api/checkout/mock-pay for dev.")
-    expected = hmac.new(secret.encode(), f"{body.razorpay_order_id}|{body.razorpay_payment_id}".encode(), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(expected, body.razorpay_signature):
-        raise HTTPException(400, "Bad signature")
+async def checkout_verify(body: CashfreeVerifyIn):
+    """Cashfree, unlike Razorpay, gives the client no signature to check — the
+    checkout modal just resolves when the buyer is done. So the server is the one
+    that asks Cashfree directly whether the order's payment actually succeeded,
+    rather than trusting anything the client passed."""
+    cf_app_id = os.environ.get("CASHFREE_APP_ID", "")
+    cf_secret = os.environ.get("CASHFREE_SECRET_KEY", "")
+    if not (cf_app_id and cf_secret):
+        raise HTTPException(400, "Cashfree not configured — use /api/checkout/mock-pay for dev.")
     order = await _load_order(body.order_id)
     if not order:
         raise HTTPException(404, "Order not found")
-    # Idempotent: the payment.captured webhook may have already marked this order paid
+    # Idempotent: the PAYMENT_SUCCESS_WEBHOOK may have already marked this order paid
     # in a race with this client-side verify call. _mark_paid is not safe to run twice
     # (it consumes 'active' reservations and 409s once they're already consumed), so
     # short-circuit when the order is already paid — the payment IS complete. Mirrors
-    # the same status guard the webhook uses above.
+    # the same status guard the webhook uses below.
     if order.get("status") == "paid":
         return order
-    return await _mark_paid(order, body.razorpay_payment_id)
+    gateway_ref = await db.fetch_val(
+        """SELECT gateway_ref FROM payments WHERE order_id = $1::uuid
+            ORDER BY created_at DESC LIMIT 1""", body.order_id)
+    if not gateway_ref:
+        raise HTTPException(404, "No payment attempt found for this order")
+    try:
+        cf_payments = await _cashfree_get_order_payments(cf_app_id, cf_secret, gateway_ref)
+    except Exception as e:
+        log.warning(f"cashfree verify fetch failed: {e}")
+        raise HTTPException(502, "Could not confirm this payment with Cashfree. Please try again shortly.")
+    success = next((p for p in cf_payments if p.get("payment_status") == "SUCCESS"), None)
+    if not success:
+        raise HTTPException(400, "Payment not confirmed yet")
+    return await _mark_paid(order, str(success.get("cf_payment_id")))
 
 
 @api.post("/checkout/pay/{order_id}")
 async def checkout_pay(order_id: str, request: Request,
                        user_id: Optional[str] = Depends(get_user_id_optional)):
     """Re-initiate payment for an existing unpaid order — the "Pay now" button on the
-    account page. Creates a FRESH Razorpay order for the outstanding total and repoints
-    the payment row's gateway_ref at it (so the webhook can still match), then hands the
-    key + order id back to the client to open checkout. Falls back to the mock path when
-    Razorpay keys aren't configured. Response shape mirrors /checkout so the frontend
-    reuses the same Razorpay-open + /checkout/verify logic."""
+    account page. Creates a FRESH Cashfree order for the outstanding total and repoints
+    the payment row's gateway_ref at it (so the webhook/verify can still match), then
+    hands the payment session back to the client to open checkout. Falls back to the
+    mock path when Cashfree keys aren't configured. Response shape mirrors /checkout so
+    the frontend reuses the same Cashfree-open + /checkout/verify logic."""
     order = await _load_order(order_id)
     if not order:
         raise HTTPException(404, "Order not found")
@@ -3102,76 +3291,89 @@ async def checkout_pay(order_id: str, request: Request,
             raise HTTPException(
                 409, f"“{name}” is out of stock — only {available} of {total_qty} left.")
 
-    rp_key = os.environ.get("RAZORPAY_KEY_ID", "")
-    rp_secret = os.environ.get("RAZORPAY_KEY_SECRET", "")
-    if rp_key and rp_secret:
+    cf_app_id = os.environ.get("CASHFREE_APP_ID", "")
+    cf_secret = os.environ.get("CASHFREE_SECRET_KEY", "")
+    if cf_app_id and cf_secret:
         try:
-            rp_order_id = await _razorpay_create_order(rp_key, rp_secret, int(order["total"]), order_id)
+            cf_order = await _cashfree_create_order(
+                cf_app_id, cf_secret, int(order["total"]), "INR", order_id,
+                {"customer_id": re.sub(r"[^A-Za-z0-9]", "", str(user_id or order.get("user_id") or "guest"))[:50] or "guest",
+                 "customer_name": order.get("shipping_name"), "customer_email": order.get("shipping_email"),
+                 "customer_phone": order.get("shipping_phone")},
+                f"{os.environ.get('PUBLIC_APP_URL', '').rstrip('/')}/order-confirmed/{order_id}")
             await db.execute(
                 """UPDATE payments SET gateway_ref = $2, status = 'initiated'
                     WHERE id = (SELECT id FROM payments WHERE order_id = $1::uuid
                                 ORDER BY created_at DESC LIMIT 1)""",
-                order_id, rp_order_id)
-            return {"order": order, "razorpay_key_id": rp_key,
-                    "razorpay_order_id": rp_order_id, "mock_payment": False}
+                order_id, cf_order["order_id"])
+            return {"order": order, "payment_session_id": cf_order["payment_session_id"],
+                    "cf_app_id": cf_app_id, "mock_payment": False}
         except Exception as e:
-            log.warning(f"pay-now razorpay create failed: {e} — falling back to mock")
-    return {"order": order, "razorpay_key_id": None, "mock_payment": True}
+            log.warning(f"pay-now cashfree create failed: {e} — falling back to mock")
+    return {"order": order, "payment_session_id": None, "cf_app_id": None, "mock_payment": True}
 
 
-# ── Razorpay webhook (server-to-server, signature-verified, idempotent) ───────
-@api.post("/webhook/razorpay")
-async def razorpay_webhook(request: Request):
+# ── Cashfree webhook (server-to-server, signature-verified, idempotent) ───────
+@api.post("/webhook/cashfree")
+async def cashfree_webhook(request: Request):
     """
-    Razorpay -> here. Handles payment.captured / payment.failed / order.paid.
-    Signature is HMAC-SHA256 of the raw body with RAZORPAY_WEBHOOK_SECRET.
-    We ALWAYS return 200 to Razorpay after logging so they don't retry-storm us
-    on our own bugs; the event is retained in processed_webhooks for audit.
+    Cashfree -> here. Handles PAYMENT_SUCCESS_WEBHOOK / PAYMENT_FAILED_WEBHOOK.
+    Signature is Base64(HMAC-SHA256(x-webhook-timestamp + raw body, CASHFREE_SECRET_KEY))
+    compared against x-webhook-signature — Cashfree signs with the client secret
+    itself, there's no separate webhook secret the way Razorpay has one.
+    We ALWAYS return 200 to Cashfree after logging so they don't retry-storm us on
+    our own bugs; the event is retained in processed_webhooks for audit.
     """
-    secret = os.environ.get("RAZORPAY_WEBHOOK_SECRET", "")
+    secret = os.environ.get("CASHFREE_SECRET_KEY", "")
     raw = await request.body()
-    sig = request.headers.get("x-razorpay-signature", "")
-    event_id = request.headers.get("x-razorpay-event-id", "")
+    sig = request.headers.get("x-webhook-signature", "")
+    timestamp = request.headers.get("x-webhook-timestamp", "")
 
-    # 1. Verify signature (skip only if webhook secret hasn't been set yet)
+    # 1. Verify signature (skip only if the secret hasn't been set yet)
     verified = False
     if secret:
-        expected = hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+        expected = base64.b64encode(
+            hmac.new(secret.encode(), (timestamp + raw.decode("utf-8")).encode(),
+                     hashlib.sha256).digest()).decode()
         verified = hmac.compare_digest(expected, sig)
         if not verified:
-            log.warning(f"razorpay webhook: bad signature (event_id={event_id})")
+            log.warning("cashfree webhook: bad signature")
             raise HTTPException(400, "Bad signature")
     else:
-        log.warning("razorpay webhook: RAZORPAY_WEBHOOK_SECRET not set — accepting without verification")
-
-    # 2. Idempotency — dedupe by X-Razorpay-Event-Id
-    if event_id:
-        exists = await db.fetch_val(
-            "SELECT event_id FROM processed_webhooks WHERE event_id = $1", event_id)
-        if exists:
-            return {"ok": True, "duplicate": True}
+        log.warning("cashfree webhook: CASHFREE_SECRET_KEY not set — accepting without verification")
 
     try:
         payload = json.loads(raw or b"{}")
     except Exception:
         payload = {}
 
-    event = payload.get("event", "")
+    event = payload.get("type", "")
+    data = payload.get("data") or {}
+    cf_order_id = (data.get("order") or {}).get("order_id")
+    cf_payment = data.get("payment") or {}
+    # cf_payment_id is Cashfree's idempotency key — they don't send a separate
+    # event-id header the way Razorpay does (x-razorpay-event-id).
+    event_id = str(cf_payment.get("cf_payment_id") or "") or None
+
+    # 2. Idempotency — dedupe by cf_payment_id
+    if event_id:
+        exists = await db.fetch_val(
+            "SELECT event_id FROM processed_webhooks WHERE event_id = $1", event_id)
+        if exists:
+            return {"ok": True, "duplicate": True}
+
     result: dict = {"ok": True, "event": event}
 
     try:
-        if event in ("payment.captured", "order.paid"):
-            payment = (payload.get("payload", {}) or {}).get("payment", {}).get("entity") or {}
-            razorpay_order_id = payment.get("order_id")
-            razorpay_payment_id = payment.get("id")
-            if razorpay_order_id:
+        if event == "PAYMENT_SUCCESS_WEBHOOK" and cf_payment.get("payment_status") == "SUCCESS":
+            if cf_order_id:
                 # Find our internal order via the payment's gateway_ref.
                 oid = await db.fetch_val(
                     "SELECT order_id::text FROM payments WHERE gateway_ref = $1"
-                    " ORDER BY created_at DESC LIMIT 1", razorpay_order_id)
+                    " ORDER BY created_at DESC LIMIT 1", cf_order_id)
                 order = await _load_order(oid) if oid else None
                 if order and order.get("status") != "paid":
-                    await _mark_paid(order, razorpay_payment_id or "")
+                    await _mark_paid(order, str(cf_payment.get("cf_payment_id") or ""))
                     result["order_id"] = order.get("order_id")
                     result["marked_paid"] = True
                 elif order:
@@ -3180,16 +3382,14 @@ async def razorpay_webhook(request: Request):
                     result["reason"] = "already paid"
                 else:
                     result["marked_paid"] = False
-                    result["reason"] = f"order for razorpay_order_id={razorpay_order_id} not found"
-        elif event == "payment.failed":
-            payment = (payload.get("payload", {}) or {}).get("payment", {}).get("entity") or {}
-            razorpay_order_id = payment.get("order_id")
-            if razorpay_order_id:
-                reason = payment.get("error_description") or payment.get("error_code")
+                    result["reason"] = f"order for cf_order_id={cf_order_id} not found"
+        elif event == "PAYMENT_FAILED_WEBHOOK":
+            if cf_order_id:
+                reason = cf_payment.get("payment_message")
                 async with db.transaction() as conn:
                     oid = await conn.fetchval(
                         "SELECT order_id FROM payments WHERE gateway_ref = $1"
-                        " ORDER BY created_at DESC LIMIT 1", razorpay_order_id)
+                        " ORDER BY created_at DESC LIMIT 1", cf_order_id)
                     if oid:
                         await conn.execute(
                             """UPDATE orders SET status='payment_failed'
@@ -3203,24 +3403,24 @@ async def razorpay_webhook(request: Request):
                             """INSERT INTO order_events (id, order_id, to_status, reason)
                                VALUES ($1,$2,'payment_failed',$3)""",
                             uuid.uuid4(), oid, reason)
-                result["payment_failed_for"] = razorpay_order_id
+                result["payment_failed_for"] = cf_order_id
     except Exception as e:
-        log.exception(f"razorpay webhook handler crashed: {e}")
+        log.exception(f"cashfree webhook handler crashed: {e}")
         result["ok"] = False
         result["error"] = str(e)[:200]
 
     # 3. Persist event for audit + idempotency
     try:
-        # event_id is the idempotency key and is NOT NULL; synthesise one when Razorpay
-        # omits the header (such events can't be deduped anyway).
+        # event_id is the idempotency key and is NOT NULL; synthesise one when
+        # Cashfree omits cf_payment_id (such events can't be deduped anyway).
         await db.execute(
             """INSERT INTO processed_webhooks (event_id, gateway, event_type, verified,
                                                payload, result, processed_at)
-               VALUES ($1,'razorpay',$2,$3,$4,$5, now())
+               VALUES ($1,'cashfree',$2,$3,$4,$5, now())
                ON CONFLICT (event_id) DO NOTHING""",
             event_id or f"noid_{uuid.uuid4().hex}", event, verified, payload, result)
     except Exception as e:
-        log.warning(f"razorpay webhook: audit insert failed: {e}")
+        log.warning(f"cashfree webhook: audit insert failed: {e}")
 
     return result
 
@@ -3282,18 +3482,18 @@ async def cancel_order(order_id: str, body: OrderCancelIn, user_id: str = Depend
 
     refund_result = None
     if needs_refund:
-        rp_key = os.environ.get("RAZORPAY_KEY_ID", "")
-        rp_secret = os.environ.get("RAZORPAY_KEY_SECRET", "")
-        if not (rp_key and rp_secret):
+        cf_app_id = os.environ.get("CASHFREE_APP_ID", "")
+        cf_secret = os.environ.get("CASHFREE_SECRET_KEY", "")
+        if not (cf_app_id and cf_secret):
             raise HTTPException(503, "Refunds are temporarily unavailable. Please contact support.")
         try:
-            refund_result = await _razorpay_create_refund(
-                rp_key, rp_secret, payment["gateway_payment_id"],
+            refund_result = await _cashfree_create_refund(
+                cf_app_id, cf_secret, payment["gateway_ref"], f"rfnd_{uid()}",
                 db.to_paise(payment["amount"]))
         except CircuitOpenError:
             raise HTTPException(503, "Refund service temporarily unavailable. Please try again shortly.")
         except Exception as e:
-            log.warning(f"razorpay refund failed for order {order_id}: {e}")
+            log.warning(f"cashfree refund failed for order {order_id}: {e}")
             raise HTTPException(502, "Could not process the refund. Please contact support.")
 
     async with db.transaction() as conn:
@@ -3318,13 +3518,13 @@ async def cancel_order(order_id: str, body: OrderCancelIn, user_id: str = Depend
                     WHERE id = $1::uuid AND redeemed_order_id = $2::uuid""",
                 order["consultation_credit_id"], order_id)
         if needs_refund and refund_result:
-            refunded_now = refund_result.get("status") == "processed"
+            refunded_now = refund_result.get("refund_status") == "SUCCESS"
             await conn.execute(
                 """INSERT INTO refunds (id, payment_id, amount, status, gateway_ref, processed_at)
                    VALUES ($1,$2::uuid,$3,$4::refund_status,$5,$6)""",
                 uuid.uuid4(), payment["payment_id"], payment["amount"],
                 "completed" if refunded_now else "processing",
-                refund_result.get("id"), now() if refunded_now else None)
+                refund_result.get("refund_id"), now() if refunded_now else None)
             await conn.execute(
                 "UPDATE payments SET status = 'refunded', updated_at = now() WHERE id = $1::uuid",
                 payment["payment_id"])
@@ -3866,6 +4066,7 @@ def _shape_astro(row: Optional[dict], include_hash: bool = False) -> Optional[di
     out = {**{k: v for k, v in r.items()
               if k not in ("price_n", "commission_pct_n", "password_hash")},
            "price": db.to_paise(r["price_n"]),
+           "currency": "INR",
            "commission_pct": float(r["commission_pct_n"]) if r["commission_pct_n"] is not None else 0.0}
     if include_hash:
         out["password_hash"] = r.get("password_hash")
@@ -3935,17 +4136,27 @@ async def _load_consultation(booking_id: str) -> Optional[dict]:
         _CONSULT_SELECT + " WHERE c.id = $1::uuid", booking_id))
 
 
-async def _astrologers_body() -> list:
+async def _astrologers_body(currency: str = "INR") -> list:
     rows = await db.fetch_all(
         _ASTRO_SELECT + " WHERE a.is_active ORDER BY a.created_at LIMIT 50")
     db_a = [_shape_astro(r) for r in rows]
-    return db_a if db_a else ASTROLOGERS
+    if not db_a:
+        return [{"currency": "INR", **a} for a in ASTROLOGERS]
+    if currency != "INR":
+        overrides = await _resolve_prices(
+            "astrologer_prices", "astrologer_id", [a["astrologer_id"] for a in db_a], currency)
+        for a in db_a:
+            ov = overrides.get(a["astrologer_id"])
+            if ov:
+                a["price"], a["currency"] = ov["price"], ov["currency"]
+    return db_a
 
 
 @api.get("/consultation/astrologers")
-async def list_astrologers():
-    return await respcache.get_or_set("astrologers", ttl=120, tag="astrologers",
-                                      compute=_astrologers_body)
+async def list_astrologers(currency: str = "INR"):
+    currency = currency if currency in SUPPORTED_CURRENCIES else "INR"
+    return await respcache.get_or_set(f"astrologers:{currency}", ttl=120, tag="astrologers",
+                                      compute=lambda: _astrologers_body(currency))
 
 
 @api.post("/consultation/book")
@@ -3990,17 +4201,31 @@ async def book(body: ConsultationBookIn, request: Request,
 # date + time-of-day preference, and we assign whoever's free from the admin
 # panel (see admin_update_consultation below), which is when the video room is
 # created and both parties are WhatsApp-notified with the meet link.
-async def _consultation_fee_body() -> dict:
-    content = await _site_content("consultation")
-    return {"fee": (content or _DEFAULT_CONSULTATION)["fee_paise"]}
+async def _consultation_fee_body(currency: str = "INR") -> dict:
+    content = await _site_content("consultation") or _DEFAULT_CONSULTATION
+    fee_paise = content["fee_paise"]
+    if currency == "INR":
+        return {"fee": fee_paise, "currency": "INR"}
+    # fee_prices is an optional {"USD": 25, ...} block on the same site_content doc —
+    # set via the existing generic /admin/site-content/consultation PUT, no new schema.
+    fee_prices = content.get("fee_prices") or {}
+    override = fee_prices.get(currency)
+    resolved_currency = currency
+    if override is None:
+        override = fee_prices.get("USD")
+        resolved_currency = "USD"
+    if override is not None:
+        return {"fee": db.to_paise(str(override)), "currency": resolved_currency}
+    return {"fee": fee_paise, "currency": "INR"}
 
 
 @api.get("/consultation/fee")
-async def consultation_fee():
+async def consultation_fee(currency: str = "INR"):
+    currency = currency if currency in SUPPORTED_CURRENCIES else "INR"
     # Reads the "consultation" site_content key, so it shares that tag — a fee
     # edit via /admin/site-content/consultation invalidates this too.
-    return await respcache.get_or_set("consultation_fee", ttl=300, tag="site_content",
-                                      compute=_consultation_fee_body)
+    return await respcache.get_or_set(f"consultation_fee:{currency}", ttl=300, tag="site_content",
+                                      compute=lambda: _consultation_fee_body(currency))
 
 
 @api.post("/consultation/request")
@@ -4019,15 +4244,26 @@ async def consultation_request(body: ConsultationRequestIn,
     fee = (await _site_content("consultation") or _DEFAULT_CONSULTATION)["fee_paise"]
     booking_id = uuid.uuid4()
 
-    rp_key = os.environ.get("RAZORPAY_KEY_ID", "")
-    rp_secret = os.environ.get("RAZORPAY_KEY_SECRET", "")
-    rp_order_id = f"mock_{booking_id}"
-    if rp_key and rp_secret:
+    cf_app_id = os.environ.get("CASHFREE_APP_ID", "")
+    cf_secret = os.environ.get("CASHFREE_SECRET_KEY", "")
+    cf_order_id = f"mock_{booking_id}"
+    payment_session_id = None
+    if cf_app_id and cf_secret:
         try:
-            rp_order_id = await _razorpay_create_order(rp_key, rp_secret, fee, str(booking_id))
+            cf_order = await _cashfree_create_order(
+                cf_app_id, cf_secret, fee, "INR", str(booking_id),
+                {"customer_id": re.sub(r"[^A-Za-z0-9]", "", str(user_id or booking_id))[:50],
+                 "customer_name": body.name, "customer_email": body.email,
+                 "customer_phone": body.phone},
+                f"{os.environ.get('PUBLIC_APP_URL', '').rstrip('/')}/consultation")
+            cf_order_id = cf_order["order_id"]
+            payment_session_id = cf_order["payment_session_id"]
         except Exception as e:
-            log.warning(f"razorpay create failed (consultation): {e} — falling back to mock")
+            log.warning(f"cashfree create failed (consultation): {e} — falling back to mock")
 
+    # razorpay_order_id/razorpay_payment_id are gateway-agnostic gateway-ref columns
+    # in practice (they just predate the Cashfree switch) — reused as-is rather than
+    # renamed, to avoid a migration for what's purely a naming nicety.
     await db.execute(
         """INSERT INTO consultations (id, astrologer_id, astrologer_name_snapshot, slot_at,
                 preferred_date, time_of_day, user_id, contact_name, contact_email,
@@ -4035,28 +4271,38 @@ async def consultation_request(body: ConsultationRequestIn,
            VALUES ($1,NULL,NULL,$2,$3,$4,$5::uuid,$6,$7::citext,$8,$9,$10,
                    'requested','pending',$11)""",
         booking_id, slot_at, pref_date, body.time_of_day, user_id,
-        body.name, body.email, body.phone, body.concern, db.to_amount(fee), rp_order_id)
+        body.name, body.email, body.phone, body.concern, db.to_amount(fee), cf_order_id)
 
     consult = await _load_consultation(str(booking_id))
-    return {"consultation": consult, "razorpay_key_id": rp_key or None, "razorpay_order_id": rp_order_id}
+    return {"consultation": consult, "payment_session_id": payment_session_id, "cf_app_id": cf_app_id or None}
 
 
 @api.post("/consultation/{booking_id}/verify")
-async def consultation_verify(booking_id: str, body: RazorpayVerifyIn):
-    secret = os.environ.get("RAZORPAY_KEY_SECRET", "")
-    if not secret:
-        raise HTTPException(400, "Razorpay not configured — use /api/consultation/{id}/mock-pay for dev.")
-    expected = hmac.new(secret.encode(),
-                        f"{body.razorpay_order_id}|{body.razorpay_payment_id}".encode(),
-                        hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(expected, body.razorpay_signature):
-        raise HTTPException(400, "Bad signature")
+async def consultation_verify(booking_id: str):
+    """Same reasoning as /checkout/verify: Cashfree gives no client-side signature,
+    so the server asks Cashfree directly whether the payment succeeded."""
+    cf_app_id = os.environ.get("CASHFREE_APP_ID", "")
+    cf_secret = os.environ.get("CASHFREE_SECRET_KEY", "")
+    if not (cf_app_id and cf_secret):
+        raise HTTPException(400, "Cashfree not configured — use /api/consultation/{id}/mock-pay for dev.")
     consult = await _load_consultation(booking_id)
     if not consult:
         raise HTTPException(404, "Consultation not found")
     if consult["payment_status"] == "paid":
         return consult
-    return await _mark_consultation_paid(booking_id, body.razorpay_payment_id)
+    gateway_ref = await db.fetch_val(
+        "SELECT razorpay_order_id FROM consultations WHERE id = $1::uuid", booking_id)
+    if not gateway_ref:
+        raise HTTPException(404, "No payment attempt found for this booking")
+    try:
+        cf_payments = await _cashfree_get_order_payments(cf_app_id, cf_secret, gateway_ref)
+    except Exception as e:
+        log.warning(f"cashfree verify fetch failed (consultation): {e}")
+        raise HTTPException(502, "Could not confirm this payment with Cashfree. Please try again shortly.")
+    success = next((p for p in cf_payments if p.get("payment_status") == "SUCCESS"), None)
+    if not success:
+        raise HTTPException(400, "Payment not confirmed yet")
+    return await _mark_consultation_paid(booking_id, str(success.get("cf_payment_id")))
 
 
 @api.post("/consultation/{booking_id}/mock-pay")
@@ -4175,6 +4421,7 @@ class ProductUpdateIn(BaseModel):
     stock_qty: Optional[int] = None  # for non-serialised items
     care_instructions: Optional[List[str]] = None
     variant_options: Optional[VariantOptionsIn] = None
+    prices: Optional[List[PriceOverrideIn]] = None  # omit to leave unchanged; [] clears all
 
 
 class CategoryIn(BaseModel):
@@ -4208,6 +4455,7 @@ class AstrologerIn(BaseModel):
     phone: Optional[str] = None             # for the WhatsApp onboarding message
     commission_pct: float = 10.0            # 0-100, per-astrologer share of affiliate sales
     bio: Optional[str] = ""
+    prices: List[PriceOverrideIn] = []  # region_pricing: per-currency price overrides
 
 
 class AstrologerUpdateIn(BaseModel):
@@ -4222,6 +4470,7 @@ class AstrologerUpdateIn(BaseModel):
     phone: Optional[str] = None
     commission_pct: Optional[float] = None
     bio: Optional[str] = None
+    prices: Optional[List[PriceOverrideIn]] = None  # omit to leave unchanged; [] clears all
 
 
 # ── Astrologer-side auth & self-serve models ─────────────────────────────────
@@ -4838,13 +5087,20 @@ async def admin_update_product(product_id: str, body: ProductUpdateIn, actor: st
         await db.execute(
             """UPDATE product_variants SET stock_qty = $2, updated_at = now()
                 WHERE product_id = $1::uuid""", product_id, updates["stock_qty"])
+    if "prices" in sent:  # explicitly sent, even as [] (clears all overrides)
+        async with db.transaction() as conn:
+            await _replace_price_overrides(
+                conn, "product_prices", "product_id", product_id, body.prices or [])
     row = await db.fetch_one(_PRODUCT_SELECT + " AND p.id = $1::uuid", product_id)
     if not row:
         raise HTTPException(404, "Product not found")
     # Log which fields changed, not the whole product — keeps the trail readable.
     await audit_log(actor, "product.update", product_id,
                     {"fields": sorted(sent.keys()), "name": row.get("name")})
-    return _shape_product(row)
+    doc = _shape_product(row)
+    doc["prices"] = (await _fetch_price_overrides(
+        "product_prices", "product_id", [product_id])).get(product_id, [])
+    return doc
 
 
 async def _delete_units(conn, unit_ids: list[str]) -> int:
@@ -5182,7 +5438,12 @@ async def admin_list_astrologers(_: str = Depends(require_perm("astrologers")), 
     where = "" if include_inactive else " WHERE a.is_active"
     rows = await db.fetch_all(
         _ASTRO_SELECT + where + " ORDER BY a.created_at DESC LIMIT 200")
-    return [_shape_astro(r) for r in rows]
+    astros = [_shape_astro(r) for r in rows]
+    overrides = await _fetch_price_overrides(
+        "astrologer_prices", "astrologer_id", [a["astrologer_id"] for a in astros])
+    for a in astros:
+        a["prices"] = overrides.get(a["astrologer_id"], [])
+    return astros
 
 
 @api.post("/admin/astrologers")
@@ -5218,7 +5479,11 @@ async def admin_create_astrologer(body: AstrologerIn, actor: str = Depends(requi
         if astro_phone:
             _wa_fire_event("astrologer.created", phone=astro_phone, name=payload["name"],
                      variables={"welcome_url": welcome_url})
+    await _replace_price_overrides(db, "astrologer_prices", "astrologer_id", astro_id, body.prices)
     doc = _shape_astro(await db.fetch_one(_ASTRO_SELECT + " WHERE a.id = $1::uuid", str(astro_id)))
+    doc["prices"] = [pr.model_dump() for pr in body.prices
+                      if pr.currency_code.strip().upper() in SUPPORTED_CURRENCIES
+                      and pr.currency_code.strip().upper() != "INR"]
     await audit_log(actor, "astrologer.create", target=str(astro_id), meta={"email": payload.get("email")})
     respcache.invalidate("astrologers")
     return {**doc, "welcome_url": welcome_url}
@@ -5281,9 +5546,15 @@ async def admin_update_astrologer(astrologer_id: str, body: AstrologerUpdateIn, 
             raise HTTPException(404, "Astrologer not found")
     elif not await db.fetch_val("SELECT id::text FROM astrologers WHERE id=$1::uuid", astrologer_id):
         raise HTTPException(404, "Astrologer not found")
-    await audit_log(actor, "astrologer.update", target=astrologer_id, meta=updates)
+    if "prices" in updates:  # explicitly sent, even as [] (clears all overrides)
+        await _replace_price_overrides(
+            db, "astrologer_prices", "astrologer_id", astrologer_id, body.prices or [])
+    await audit_log(actor, "astrologer.update", target=astrologer_id, meta={k: v for k, v in updates.items() if k != "prices"})
     respcache.invalidate("astrologers")
-    return _shape_astro(await db.fetch_one(_ASTRO_SELECT + " WHERE a.id = $1::uuid", astrologer_id))
+    doc = _shape_astro(await db.fetch_one(_ASTRO_SELECT + " WHERE a.id = $1::uuid", astrologer_id))
+    doc["prices"] = (await _fetch_price_overrides(
+        "astrologer_prices", "astrologer_id", [astrologer_id])).get(astrologer_id, [])
+    return doc
 
 
 @api.delete("/admin/astrologers/{astrologer_id}")
@@ -5353,6 +5624,9 @@ async def astro_login(body: AstroLoginIn, _rl: None = Depends(rate_limit(10, 60)
         raise HTTPException(401, "Invalid credentials")
     if not verify_password(body.password, a["password_hash"]):
         raise HTTPException(401, "Invalid credentials")
+    if needs_rehash(a["password_hash"]):
+        await db.execute("UPDATE astrologers SET password_hash = $2 WHERE id = $1::uuid",
+                          a["astrologer_id"], hash_password(body.password))
     token = _make_astro_jwt(a["astrologer_id"])
     return {"token": token, "astrologer": _astro_public(a)}
 

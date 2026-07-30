@@ -7,6 +7,7 @@ import PhoneVerify from "@/components/gemora/PhoneVerify";
 import AccountSupport from "@/components/gemora/AccountSupport";
 import OrderTracking from "@/components/gemora/OrderTracking";
 import { toast } from "sonner";
+import { openCashfreeCheckout } from "@/lib/cashfree";
 
 export default function Account() {
   const { user, loading, refresh, patchUser } = useAuth();
@@ -58,58 +59,37 @@ export default function Account() {
     }
   };
 
-  const openRazorpay = (options) => {
-    if (!window.Razorpay) {
-      const s = document.createElement("script");
-      s.src = "https://checkout.razorpay.com/v1/checkout.js";
-      s.onload = () => new window.Razorpay(options).open();
-      document.body.appendChild(s);
-    } else {
-      new window.Razorpay(options).open();
-    }
-  };
-
   // "Pay now" for an unpaid order: re-initiates payment on the existing order, then
-  // reuses the same Razorpay-open + verify flow as checkout (or the mock path).
+  // reuses the same Cashfree-open + verify flow as checkout (or the mock path).
+  // Cashfree's modal gives no success/failure signal itself — /verify (which asks
+  // Cashfree directly) is what actually confirms the payment, same as in Checkout.jsx.
   const payNow = async (o) => {
     setPayingId(o.order_id);
     try {
       const { data } = await api.post(`/checkout/pay/${o.order_id}`);
       if (data.already_paid) { toast.success("This order is already paid"); await loadOrders(); return; }
-      if (data.mock_payment || !data.razorpay_key_id) {
+      if (data.mock_payment || !data.payment_session_id) {
         const paid = await api.post(`/checkout/mock-pay/${o.order_id}`);
         toast.success("Payment complete (test mode)");
         await loadOrders();
         nav(`/order-confirmed/${paid.data.order_id}`);
         return;
       }
-      const options = {
-        key: data.razorpay_key_id,
-        amount: o.total,
-        currency: "INR",
-        name: "Tredev",
-        description: "Complete your pending payment",
-        order_id: data.razorpay_order_id,
-        prefill: { name: user.name, email: user.email, contact: user.phone || "" },
-        theme: { color: "#722F37" },
-        handler: async (rp) => {
-          try {
-            await api.post("/checkout/verify", {
-              order_id: o.order_id,
-              razorpay_order_id: rp.razorpay_order_id,
-              razorpay_payment_id: rp.razorpay_payment_id,
-              razorpay_signature: rp.razorpay_signature,
-            });
-          } catch (err) {
-            toast.error("Payment verification failed");
-            return;
-          }
-          toast.success("Payment verified");
-          await loadOrders();
-          nav(`/order-confirmed/${o.order_id}`);
-        },
-      };
-      openRazorpay(options);
+      try {
+        await openCashfreeCheckout(data.payment_session_id);
+      } catch (err) {
+        toast.error(err.message || "Could not load the payment gateway");
+        return;
+      }
+      try {
+        await api.post("/checkout/verify", { order_id: o.order_id });
+      } catch (err) {
+        toast.error("Payment verification failed");
+        return;
+      }
+      toast.success("Payment verified");
+      await loadOrders();
+      nav(`/order-confirmed/${o.order_id}`);
     } catch (err) {
       toast.error(err.response?.data?.detail || "Could not start payment");
     } finally {

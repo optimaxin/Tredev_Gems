@@ -9,7 +9,7 @@ import {
 
 const stepsFor = (refunded) => [
   refunded
-    ? { Icon: Wallet, title: "Refund initiated", body: "We've already asked Razorpay to send your payment back to its original method." }
+    ? { Icon: Wallet, title: "Refund initiated", body: "We've already asked Cashfree to send your payment back to its original method." }
     : { Icon: Wallet, title: "Nothing was charged", body: "This order hadn't been paid for, so there's nothing to refund — you're all clear." },
   { Icon: ArrowCounterClockwise, title: "Stock released", body: "Any pieces reserved for this order are back in the vault, available for other buyers." },
   refunded

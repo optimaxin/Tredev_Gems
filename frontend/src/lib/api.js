@@ -7,9 +7,21 @@ export const api = axios.create({
   withCredentials: true,
 });
 
+// Region-based pricing: the visitor's detected currency (set once by
+// CurrencyProvider on mount), attached to the handful of GET endpoints whose
+// prices vary by currency. See lib/currency.js.
+let currentCurrency = "INR";
+export function setCurrentCurrency(c) { currentCurrency = c; }
+const _currencyAware = (url = "") => /(\/products|\/consultation\/astrologers|\/consultation\/fee)/.test(url);
+
 api.interceptors.request.use((config) => {
   const t = localStorage.getItem("gemora_jwt");
   if (t) config.headers.Authorization = `Bearer ${t}`;
+  if ((config.method || "get").toLowerCase() === "get" && _currencyAware(config.url)) {
+    // An explicit currency param (a caller forcing INR for an actual charge amount,
+    // e.g. Consultation.jsx) always wins over the auto-detected one.
+    config.params = { currency: currentCurrency, ...config.params };
+  }
   return config;
 });
 
@@ -25,7 +37,7 @@ const _cache = new Map(); // key -> { t: epoch_ms, response }
 
 // Endpoints that must always be fresh — auth/session/payment flows.
 const _noCache = (url = "") =>
-  /(\/auth|\/otp|\/logout|\/checkout|\/mock-pay|\/razorpay|\/webhook|\/cart)/.test(url);
+  /(\/auth|\/otp|\/logout|\/checkout|\/mock-pay|\/cashfree|\/webhook|\/cart)/.test(url);
 
 const _keyOf = (config) => {
   const params = config.params ? JSON.stringify(config.params) : "";

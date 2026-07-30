@@ -667,7 +667,7 @@ function ConsultBanner({ reduce }) {
 const POLICIES = [
   { Icon: Truck, title: "Shipping", body: "Free insured shipping across India, dispatched within 48 hours and fully tracked. Worldwide delivery available; duties borne by the buyer.", to: "/verify" },
   { Icon: ArrowsClockwise, title: "Returns", body: "7 days from delivery, in original condition with the certificate. On return the certificate is revoked — its QR reads REVOKED forever.", to: "/verify" },
-  { Icon: CreditCard, title: "Payment", body: "UPI, all major cards, net banking and wallets via Razorpay. Prepaid orders carry a 5% discount. No card details ever touch our servers.", to: "/checkout" },
+  { Icon: CreditCard, title: "Payment", body: "UPI, all major cards, net banking and wallets via Cashfree, including international cards. Prepaid orders carry a 5% discount. No card details ever touch our servers.", to: "/checkout" },
 ];
 function Policies() {
   return (

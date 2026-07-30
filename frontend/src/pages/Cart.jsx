@@ -109,7 +109,7 @@ export default function Cart() {
                   <ShoppingBag size={16} weight="duotone" /> Proceed to checkout
                 </button>
                 <div className="mt-4 text-xs text-ink-muted leading-relaxed">
-                  Payments are processed through Razorpay. Your unique units are only marked "sold" after a signature-verified payment.
+                  Payments are processed through Cashfree. Your unique units are only marked "sold" after a payment Cashfree confirms as successful.
                 </div>
               </>
             ) : (

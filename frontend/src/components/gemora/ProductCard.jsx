@@ -1,6 +1,7 @@
 import React from "react";
 import { Link } from "react-router-dom";
-import { api, formatINR } from "@/lib/api";
+import { api } from "@/lib/api";
+import { formatPrice } from "@/lib/currency";
 import { ShieldCheck, Star, CreditCard } from "@phosphor-icons/react";
 
 export default function ProductCard({ p }) {
@@ -44,9 +45,9 @@ export default function ProductCard({ p }) {
           <span className="text-ink-muted ml-1">(4.9)</span>
         </div>
         <div className="mt-auto pt-5 flex items-baseline gap-3">
-          <span className="font-display text-2xl text-maroon-deep">{formatINR(p.price)}</span>
+          <span className="font-display text-2xl text-maroon-deep">{formatPrice(p.price, p.currency)}</span>
           {p.mrp && p.mrp > p.price && (
-            <span className="text-sm text-ink-muted line-through">{formatINR(p.mrp)}</span>
+            <span className="text-sm text-ink-muted line-through">{formatPrice(p.mrp, p.currency)}</span>
           )}
         </div>
         <div className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-mono text-verified uppercase tracking-widest">

@@ -4,10 +4,12 @@ import { toast } from "sonner";
 import { PlusCircle, PencilSimple, Trash, Calendar, Copy, WhatsappLogo, X, LinkSimple, ChartBar, ArrowClockwise } from "@phosphor-icons/react";
 import { copyToClipboard } from "@/lib/clipboard";
 import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
+import RegionalPricesEditor from "@/components/gemora/RegionalPricesEditor";
 
 const EMPTY = {
   name: "", devanagari: "", expertise: "", price: "1500", years: 10, picture: "",
   email: "", phone: "", commission_pct: 10, bio: "",
+  prices: [], // region_pricing: [{currency_code, amount}]
 };
 
 export default function AdminAstrologers() {
@@ -49,6 +51,13 @@ export default function AdminAstrologers() {
         expertise: form.expertise.split(",").map((s) => s.trim()).filter(Boolean),
         email: form.email?.trim() || null,
         phone: form.phone?.trim() || null,
+        prices: form.prices
+          .filter((pr) => pr.currency_code && pr.amount !== "")
+          .map((pr) => {
+            const n = Number(pr.amount);
+            if (isNaN(n) || n < 0) throw new Error(`Enter a valid ${pr.currency_code} price`);
+            return { currency_code: pr.currency_code, amount: n };
+          }),
       };
       if (editing === "new") {
         const { data } = await api.post("/admin/astrologers", payload);
@@ -105,6 +114,7 @@ export default function AdminAstrologers() {
       expertise: (a.expertise || []).join(", "),
       email: a.email || "",
       phone: a.phone || "",
+      prices: (a.prices || []).map((pr) => ({ currency_code: pr.currency_code, amount: pr.amount.toString() })),
     });
   };
   const startNew = () => { setEditing("new"); setForm(EMPTY); };
@@ -141,6 +151,9 @@ export default function AdminAstrologers() {
               <input type="number" min="0" step="0.01" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} data-testid="astro-price" className="flex-1 px-3 py-2 outline-none" />
             </div>
           </label>
+          <div className="md:col-span-2 pt-2 border-t border-gold/20">
+            <RegionalPricesEditor rows={form.prices} onChange={(prices) => setForm((f) => ({ ...f, prices }))} />
+          </div>
           <label className="block"><div className="text-xs text-ink-muted mb-1">Commission % (affiliate)</div>
             <div className="flex gold-line bg-ivory overflow-hidden focus-within:border-maroon">
               <input type="number" min="0" max="100" step="0.5" value={form.commission_pct} onChange={(e) => setForm({ ...form, commission_pct: e.target.value })} data-testid="astro-commission" className="flex-1 px-3 py-2 outline-none" />

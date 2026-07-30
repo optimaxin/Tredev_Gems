@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { CheckCircle } from "@phosphor-icons/react";
 import OrderTruckButton from "@/components/gemora/OrderTruckButton";
 import PaymentFailedModal from "@/components/gemora/PaymentFailedModal";
+import { openCashfreeCheckout } from "@/lib/cashfree";
 
 export default function Checkout() {
   const { cart, refresh, subtotal } = useCart();
@@ -54,65 +55,34 @@ export default function Checkout() {
       const affiliate_ref = getAffiliateRef();
       const { data } = await api.post("/checkout", { ...form, affiliate_ref });
 
-      // Test mode (Razorpay keys not configured on the server): complete server-side.
-      if (data.order.mock_payment || !data.razorpay_key_id) {
+      // Test mode (Cashfree keys not configured on the server): complete server-side.
+      if (data.order.mock_payment || !data.payment_session_id) {
         await api.post(`/checkout/mock-pay/${data.order.order_id}`);
         toast.success("Payment complete (test mode)");
         await deliverAndGo(data.order.order_id);
         return;
       }
 
-      // Real Razorpay — open the checkout to collect payment. The truck only plays
-      // after the payment is verified in the handler below.
-      const options = {
-        key: data.razorpay_key_id,
-        amount: data.order.total,
-        currency: "INR",
-        name: "Tredev",
-        description: "Serialized authentic goods",
-        order_id: data.order.razorpay_order_id,
-        prefill: { name: form.shipping_name, email: form.email, contact: form.shipping_phone },
-        theme: { color: "#722F37" },
-        handler: async (rp) => {
-          try {
-            await api.post("/checkout/verify", {
-              order_id: data.order.order_id,
-              razorpay_order_id: rp.razorpay_order_id,
-              razorpay_payment_id: rp.razorpay_payment_id,
-              razorpay_signature: rp.razorpay_signature,
-            });
-          } catch (err) {
-            setFailed({ open: true, reason: "We couldn't confirm this payment. If any amount was deducted, it will be refunded within 5-7 business days." });
-            setPhase("idle");
-            return;
-          }
-          toast.success("Payment verified");
-          await deliverAndGo(data.order.order_id); // ← truck plays now, after paying
-        },
-        // Buyer closed the Razorpay window without paying — reset the button.
-        modal: { ondismiss: () => setPhase("idle") },
-      };
-
-      const openRzp = () => {
-        const rzp = new window.Razorpay(options);
-        rzp.on("payment.failed", (resp) => {
-          setPhase("idle");
-          setFailed({
-            open: true,
-            reason: resp.error?.description ? `Your bank declined this payment: ${resp.error.description}` : null,
-          });
-        });
-        rzp.open();
-      };
-      if (!window.Razorpay) {
-        const s = document.createElement("script");
-        s.src = "https://checkout.razorpay.com/v1/checkout.js";
-        s.onload = openRzp;
-        s.onerror = () => { toast.error("Could not load the payment gateway"); setPhase("idle"); };
-        document.body.appendChild(s);
-      } else {
-        openRzp();
+      // Real Cashfree — open the checkout modal to collect payment. Unlike Razorpay,
+      // Cashfree gives no client-side success/failure signal of its own: the modal's
+      // promise just resolves once the buyer is done with it either way, so /verify
+      // (which asks Cashfree directly) is what actually decides what happened next.
+      try {
+        await openCashfreeCheckout(data.payment_session_id);
+      } catch (err) {
+        toast.error(err.message || "Could not load the payment gateway");
+        setPhase("idle");
+        return;
       }
+      try {
+        await api.post("/checkout/verify", { order_id: data.order.order_id });
+      } catch (err) {
+        setFailed({ open: true, reason: "We couldn't confirm this payment. If any amount was deducted, it will be refunded within 5-7 business days." });
+        setPhase("idle");
+        return;
+      }
+      toast.success("Payment verified");
+      await deliverAndGo(data.order.order_id); // ← truck plays now, after paying
     } catch (err) {
       toast.error(err.response?.data?.detail || "Checkout failed");
       setPhase("idle");
@@ -189,7 +159,7 @@ export default function Checkout() {
             />
           </div>
           <div className="mt-3 text-[11px] text-ink-muted flex items-center gap-1">
-            <CheckCircle size={12} weight="duotone" className="text-verified" /> If Razorpay is not configured on the server, a test-mode payment completes the order.
+            <CheckCircle size={12} weight="duotone" className="text-verified" /> If Cashfree is not configured on the server, a test-mode payment completes the order.
           </div>
         </aside>
       </form>

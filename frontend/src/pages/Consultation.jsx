@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { api, formatINR } from "@/lib/api";
+import { formatPrice } from "@/lib/currency";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import {
@@ -8,6 +9,7 @@ import {
   ArrowsClockwise, SunHorizon, Sun, MoonStars, Sparkle, PaperPlaneTilt,
 } from "@phosphor-icons/react";
 import PaymentFailedModal from "@/components/gemora/PaymentFailedModal";
+import { openCashfreeCheckout } from "@/lib/cashfree";
 
 // Next 5 calendar days STARTING TOMORROW (never today/past) — exact time is a
 // preference (morning/afternoon/evening), the real slot is agreed over WhatsApp
@@ -43,23 +45,6 @@ const STEPS = [
 
 const DATES = nextDates(5);
 
-function openRazorpay(options, onFailed) {
-  const launch = () => {
-    const rzp = new window.Razorpay(options);
-    if (onFailed) rzp.on("payment.failed", (resp) => onFailed(resp.error?.description));
-    rzp.open();
-  };
-  if (!window.Razorpay) {
-    const s = document.createElement("script");
-    s.src = "https://checkout.razorpay.com/v1/checkout.js";
-    s.onload = launch;
-    s.onerror = () => toast.error("Could not load the payment gateway");
-    document.body.appendChild(s);
-  } else {
-    launch();
-  }
-}
-
 const fieldBase = "w-full gold-line bg-ivory px-4 py-3 outline-none transition-colors focus:border-maroon focus-visible:ring-2 focus-visible:ring-gold/50";
 const pickerBase = "text-xs p-3 border transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-gold/50 flex items-center justify-center gap-1.5";
 const pickerOn = "border-maroon brand-gradient text-ivory";
@@ -68,7 +53,13 @@ const pickerOff = "border-gold/40 text-ink-soft hover:border-maroon hover:bg-cre
 export default function Consultation() {
   const { user } = useAuth();
   const reduce = useReducedMotion();
-  const [fee, setFee] = useState(39900);
+  const [fee, setFee] = useState(39900); // INR paise — what Cashfree/mock-pay actually charges
+  // Local-currency teaser only. The payment itself (Cashfree/mock-pay) is INR-only for
+  // now — local-currency consultation charging is a fast-follow (region_pricing already
+  // has the per-currency fee data) — so the button and "amount paid" summary deliberately
+  // keep showing the real INR amount rather than a mismatched currency.
+  const [teaserFee, setTeaserFee] = useState(39900);
+  const [teaserCurrency, setTeaserCurrency] = useState("INR");
   const [date, setDate] = useState(DATES[0]);
   const [timeOfDay, setTimeOfDay] = useState("morning");
   const [form, setForm] = useState({ name: "", phone: "", email: "", concern: "" });
@@ -77,7 +68,10 @@ export default function Consultation() {
   const [failed, setFailed] = useState({ open: false, reason: null });
 
   useEffect(() => {
-    api.get("/consultation/fee").then((r) => setFee(r.data.fee)).catch(() => {});
+    api.get("/consultation/fee", { params: { currency: "INR" } }).then((r) => setFee(r.data.fee)).catch(() => {});
+    api.get("/consultation/fee").then((r) => {
+      setTeaserFee(r.data.fee); setTeaserCurrency(r.data.currency || "INR");
+    }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -88,9 +82,9 @@ export default function Consultation() {
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
-  const verify = async (bookingId, payload) => {
+  const verify = async (bookingId) => {
     try {
-      const { data } = await api.post(`/consultation/${bookingId}/verify`, payload);
+      const { data } = await api.post(`/consultation/${bookingId}/verify`);
       toast.success("Payment verified");
       setBooked(data);
     } catch (err) {
@@ -109,8 +103,8 @@ export default function Consultation() {
       });
       const bookingId = data.consultation.booking_id;
 
-      if (!data.razorpay_key_id) {
-        // Mock mode (no live Razorpay keys on the server) — complete immediately.
+      if (!data.payment_session_id) {
+        // Mock mode (no live Cashfree keys on the server) — complete immediately.
         const mp = await api.post(`/consultation/${bookingId}/mock-pay`);
         toast.success("Payment complete (test mode)");
         setBooked(mp.data);
@@ -118,27 +112,17 @@ export default function Consultation() {
         return;
       }
 
-      const options = {
-        key: data.razorpay_key_id,
-        amount: fee,
-        currency: "INR",
-        name: "Tredev",
-        description: "Astrology consultation",
-        order_id: data.razorpay_order_id, // the actual Razorpay order — required for checkout to open correctly
-        prefill: { name: form.name, email: form.email, contact: form.phone },
-        theme: { color: "#722F37" },
-        handler: (rp) => verify(bookingId, {
-          order_id: bookingId,
-          razorpay_order_id: rp.razorpay_order_id,
-          razorpay_payment_id: rp.razorpay_payment_id,
-          razorpay_signature: rp.razorpay_signature,
-        }),
-        modal: { ondismiss: () => setPaying(false) },
-      };
-      openRazorpay(options, (reason) => {
+      // Cashfree's modal gives no success/failure signal itself — /verify (which
+      // asks Cashfree directly) is what actually confirms the payment, same as
+      // in Checkout.jsx.
+      try {
+        await openCashfreeCheckout(data.payment_session_id);
+      } catch (err) {
+        toast.error(err.message || "Could not load the payment gateway");
         setPaying(false);
-        setFailed({ open: true, reason: reason ? `Your bank declined this payment: ${reason}` : null });
-      });
+        return;
+      }
+      await verify(bookingId);
     } catch (err) {
       toast.error(err.response?.data?.detail || "Could not start booking");
       setPaying(false);
@@ -230,7 +214,7 @@ export default function Consultation() {
           </div>
 
           <div className="mt-6 flex items-baseline gap-2">
-            <span className="font-display text-3xl text-maroon-deep">{formatINR(fee)}</span>
+            <span className="font-display text-3xl text-maroon-deep">{formatPrice(teaserFee, teaserCurrency)}</span>
             <span className="text-xs text-ink-muted">/ session</span>
           </div>
           <div className="mt-1 text-xs text-ink-muted">

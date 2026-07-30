@@ -6,7 +6,7 @@ import React, { useEffect, useRef, useState } from "react";
  * The truck animation plays ONLY once payment has actually succeeded, driven by
  * the `state` prop, not by the click. States:
  *   • "idle"       → clickable "Pay securely" (a normal form submit fires).
- *   • "loading"    → "Processing…" while the payment (Razorpay / test-pay) runs.
+ *   • "loading"    → "Processing…" while the payment (Cashfree / test-pay) runs.
  *   • "delivering" → the truck drives off and reveals "On its way ✓".
  *
  * The parent keeps the page mounted for ~`duration` while state is "delivering"
