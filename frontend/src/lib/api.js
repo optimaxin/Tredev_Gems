@@ -8,18 +8,22 @@ export const api = axios.create({
 });
 
 // Region-based pricing: the visitor's detected currency (set once by
-// CurrencyProvider on mount), attached to the handful of GET endpoints whose
-// prices vary by currency. See lib/currency.js.
+// CurrencyProvider on mount), attached to every endpoint whose prices vary by
+// currency — browsing (GET) and now the actual cart/checkout/consultation-booking
+// writes (POST) too, since region_pricing extends to what's actually charged.
+// See lib/currency.js.
 let currentCurrency = "INR";
 export function setCurrentCurrency(c) { currentCurrency = c; }
-const _currencyAware = (url = "") => /(\/products|\/consultation\/astrologers|\/consultation\/fee)/.test(url);
+const _currencyAware = (url = "") =>
+  /(\/products|\/consultation\/astrologers|\/consultation\/fee|\/consultation\/request|\/cart\/add|^\/checkout$)/.test(url);
 
 api.interceptors.request.use((config) => {
   const t = localStorage.getItem("gemora_jwt");
   if (t) config.headers.Authorization = `Bearer ${t}`;
-  if ((config.method || "get").toLowerCase() === "get" && _currencyAware(config.url)) {
-    // An explicit currency param (a caller forcing INR for an actual charge amount,
-    // e.g. Consultation.jsx) always wins over the auto-detected one.
+  if (_currencyAware(config.url)) {
+    // An explicit currency param a caller sets itself always wins over the
+    // auto-detected one (e.g. checkout_pay's retry reuses the order's own
+    // already-fixed currency server-side, so it never needs this at all).
     config.params = { currency: currentCurrency, ...config.params };
   }
   return config;

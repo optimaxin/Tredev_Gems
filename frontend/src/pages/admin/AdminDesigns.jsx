@@ -9,7 +9,7 @@ import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
 // which is why Form and Metal carry no charge on the product form. The buyer's total is
 // simply the gemstone's price + the chosen design's price.
 const EMPTY = {
-  product_id: "", code: "", applies_to: "ring", metal: "18k Gold", price: "",
+  product_id: "", code: "", applies_to: "ring", metal: "18k Gold", price: "", price_usd: "",
   image_url: "", note: "", is_active: true, sort_order: "0",
 };
 
@@ -45,6 +45,7 @@ export default function AdminDesigns() {
       applies_to: d.applies_to,
       metal: d.metal,
       price: d.price ? (d.price / 100).toString() : "",
+      price_usd: d.price_usd ? (d.price_usd / 100).toString() : "",
       image_url: d.image_url || "",
       note: d.note || "",
       is_active: d.is_active,
@@ -58,9 +59,15 @@ export default function AdminDesigns() {
       if (!form.product_id) throw new Error("Pick which gemstone this design is for");
       const n = form.price === "" ? 0 : Number(form.price);
       if (isNaN(n) || n < 0) throw new Error("Enter a valid price in rupees");
+      let usd = null;
+      if (form.price_usd !== "") {
+        usd = Number(form.price_usd);
+        if (isNaN(usd) || usd < 0) throw new Error("Enter a valid USD price");
+      }
       const payload = {
         ...form,
         price: Math.round(n * 100), // rupees -> paise
+        price_usd: usd == null ? null : Math.round(usd * 100), // dollars -> cents
         sort_order: parseInt(form.sort_order, 10) || 0,
         image_url: form.image_url.trim() || null,
         note: form.note.trim() || null,
@@ -165,6 +172,19 @@ export default function AdminDesigns() {
                 className="flex-1 px-3 py-2 outline-none" />
             </div>
           </label>
+          <label className="block">
+            <div className="text-xs text-ink-muted mb-1">USD price — for international checkout, optional</div>
+            <div className="flex gold-line bg-ivory overflow-hidden focus-within:border-maroon">
+              <span className="px-3 py-2 bg-cream text-ink-soft border-r border-gold/30 font-serifd">$</span>
+              <input type="number" min="0" step="0.01" inputMode="decimal"
+                value={form.price_usd} onChange={(e) => setForm({ ...form, price_usd: e.target.value })}
+                placeholder="e.g. 95" data-testid="design-price-usd-input"
+                className="flex-1 px-3 py-2 outline-none" />
+            </div>
+            <div className="text-[10px] text-ink-muted mt-1">
+              Left blank, this design can't be added to a USD checkout — the visitor is asked to switch to India instead.
+            </div>
+          </label>
           <label className="block md:col-span-2">
             <div className="text-xs text-ink-muted mb-1">Image URL</div>
             <input value={form.image_url} onChange={(e) => setForm({ ...form, image_url: e.target.value })}
@@ -215,7 +235,9 @@ export default function AdminDesigns() {
                       : <div className="w-full h-full flex items-center justify-center text-[10px] text-ink-muted">No image</div>}
                   </div>
                   <div className="mt-1.5 text-xs font-medium">{d.code} · {d.metal}</div>
-                  <div className="text-[11px] text-maroon-deep">{formatINR(d.price)}</div>
+                  <div className="text-[11px] text-maroon-deep">
+                    {formatINR(d.price)}{d.price_usd ? ` · $${(d.price_usd / 100).toFixed(2)}` : ""}
+                  </div>
                   {!filter && <div className="text-[10px] text-ink-muted truncate">{d.product_name}</div>}
                   {d.note && <div className="text-[10px] text-ink-muted truncate">{d.note}</div>}
                   {!d.is_active && <div className="text-[10px] text-ink-muted">hidden</div>}

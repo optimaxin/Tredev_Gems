@@ -12,13 +12,14 @@ const EMPTY = {
   prices: [], // region_pricing: [{currency_code, amount}]
 };
 
-// Surcharges travel as paise; the form edits rupees.
+// Surcharges travel as paise/cents; the form edits rupees/dollars.
 const groupsToForm = (groups) =>
   (groups || []).map((g) => ({
     ...g, // keeps show_if / optional intact for the round-trip back to the API
     choices: (g.choices || []).map((c) => ({
       ...c,
       surcharge: c.surcharge ? (c.surcharge / 100).toString() : "",
+      surcharge_usd: c.surcharge_usd ? (c.surcharge_usd / 100).toString() : "",
     })),
   }));
 
@@ -134,6 +135,14 @@ export default function AdminProducts() {
         if (isNaN(n) || n < 0) throw new Error("Enter a valid surcharge in rupees");
         return Math.round(n * 100);
       };
+      // Unlike surcharge, blank here means "no USD price set" (null), not "free" (0) —
+      // _compute_variant_price treats those very differently for USD checkout.
+      const surchargeUsdToCents = (v) => {
+        if (v === "" || v == null) return null;
+        const n = Number(v);
+        if (isNaN(n) || n < 0) throw new Error("Enter a valid USD surcharge");
+        return Math.round(n * 100);
+      };
       const { groups, prices, ...rest } = form;
       const payload = {
         ...rest,
@@ -168,7 +177,11 @@ export default function AdminProducts() {
             ...(g.optional ? { optional: true } : {}),
             ...(g.priced === false ? { priced: false } : {}),
             choices: (g.choices || [])
-              .map((c) => ({ label: c.label.trim(), surcharge: surchargeToPaise(c.surcharge) }))
+              .map((c) => ({
+                label: c.label.trim(),
+                surcharge: surchargeToPaise(c.surcharge),
+                surcharge_usd: surchargeUsdToCents(c.surcharge_usd),
+              }))
               .filter((c) => c.label),
           })),
         },
@@ -211,7 +224,7 @@ export default function AdminProducts() {
   const addChoice = (gi) =>
     setForm((f) => ({
       ...f,
-      groups: f.groups.map((g, i) => (i !== gi ? g : { ...g, choices: [...g.choices, { label: "", surcharge: "" }] })),
+      groups: f.groups.map((g, i) => (i !== gi ? g : { ...g, choices: [...g.choices, { label: "", surcharge: "", surcharge_usd: "" }] })),
     }));
   const removeChoice = (gi, ci) =>
     setForm((f) => ({
@@ -360,6 +373,19 @@ export default function AdminProducts() {
                                       className="flex-1 px-2 py-2 outline-none text-sm"
                                     />
                                   )}
+                                </div>
+                              )}
+                              {priced && !isDefault && (
+                                <div className="flex gold-line bg-ivory overflow-hidden focus-within:border-maroon w-28 shrink-0" title="USD price — for international checkout. Left blank, this choice can't be added to a USD checkout.">
+                                  <span className="px-2 py-2 bg-cream text-ink-soft border-r border-gold/30 font-serifd text-sm">$</span>
+                                  <input
+                                    type="number" min="0" step="0.01" inputMode="decimal"
+                                    value={c.surcharge_usd}
+                                    onChange={(e) => setChoice(gi, ci, "surcharge_usd", e.target.value)}
+                                    placeholder="—"
+                                    data-testid={`product-${g.key}-surcharge-usd-${ci}`}
+                                    className="flex-1 px-2 py-2 outline-none text-sm"
+                                  />
                                 </div>
                               )}
                               {!isDefault ? (

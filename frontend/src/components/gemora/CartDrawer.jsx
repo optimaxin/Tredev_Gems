@@ -3,7 +3,8 @@ import { Link } from "react-router-dom";
 import { X } from "@phosphor-icons/react";
 import { useCart } from "@/context/CartContext";
 import { useAuth } from "@/context/AuthContext";
-import { formatINR, describeOptions } from "@/lib/api";
+import { describeOptions } from "@/lib/api";
+import { formatPrice } from "@/lib/currency";
 import { ShieldCheck, TrashSimple, ShoppingBag, LockKey } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
@@ -11,6 +12,7 @@ export default function CartDrawer({ open, onClose }) {
   const { cart, remove, subtotal } = useCart();
   const { user } = useAuth();
   const items = cart.items || [];
+  const currency = cart.currency || "INR";
 
   const removeLine = async (line_id) => {
     try {
@@ -58,7 +60,7 @@ export default function CartDrawer({ open, onClose }) {
                 {describeOptions(li.options_list) && (
                   <div className="text-[10px] text-ink-muted">{describeOptions(li.options_list)}</div>
                 )}
-                <div className="text-xs text-maroon-deep mt-1">{formatINR(li.price * li.qty)}</div>
+                <div className="text-xs text-maroon-deep mt-1">{formatPrice(li.price * li.qty, currency)}</div>
               </div>
               <button onClick={() => removeLine(li.line_id)} className="text-ink-muted hover:text-revoked">
                 <TrashSimple size={16} />
@@ -72,7 +74,7 @@ export default function CartDrawer({ open, onClose }) {
               <>
                 <div className="flex justify-between items-baseline">
                   <span className="text-sm">Subtotal</span>
-                  <span className="font-display text-2xl text-maroon-deep">{formatINR(subtotal)}</span>
+                  <span className="font-display text-2xl text-maroon-deep">{formatPrice(subtotal, currency)}</span>
                 </div>
                 <div className="text-xs text-ink-muted mt-1">GST added at checkout</div>
                 <Link

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { api, formatINR } from "@/lib/api";
+import { api } from "@/lib/api";
 import { formatPrice } from "@/lib/currency";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
@@ -53,13 +53,11 @@ const pickerOff = "border-gold/40 text-ink-soft hover:border-maroon hover:bg-cre
 export default function Consultation() {
   const { user } = useAuth();
   const reduce = useReducedMotion();
-  const [fee, setFee] = useState(39900); // INR paise — what Cashfree/mock-pay actually charges
-  // Local-currency teaser only. The payment itself (Cashfree/mock-pay) is INR-only for
-  // now — local-currency consultation charging is a fast-follow (region_pricing already
-  // has the per-currency fee data) — so the button and "amount paid" summary deliberately
-  // keep showing the real INR amount rather than a mismatched currency.
-  const [teaserFee, setTeaserFee] = useState(39900);
-  const [teaserCurrency, setTeaserCurrency] = useState("INR");
+  // What booking actually charges, in the visitor's currency — /consultation/fee
+  // and /consultation/request both resolve the same way (region_pricing), so this
+  // is never just a display estimate the way it briefly was.
+  const [fee, setFee] = useState(39900);
+  const [currency, setCurrency] = useState("INR");
   const [date, setDate] = useState(DATES[0]);
   const [timeOfDay, setTimeOfDay] = useState("morning");
   const [form, setForm] = useState({ name: "", phone: "", email: "", concern: "" });
@@ -68,9 +66,8 @@ export default function Consultation() {
   const [failed, setFailed] = useState({ open: false, reason: null });
 
   useEffect(() => {
-    api.get("/consultation/fee", { params: { currency: "INR" } }).then((r) => setFee(r.data.fee)).catch(() => {});
     api.get("/consultation/fee").then((r) => {
-      setTeaserFee(r.data.fee); setTeaserCurrency(r.data.currency || "INR");
+      setFee(r.data.fee); setCurrency(r.data.currency || "INR");
     }).catch(() => {});
   }, []);
 
@@ -164,12 +161,12 @@ export default function Consultation() {
           >
             <div className="flex justify-between text-sm"><span className="text-ink-muted">Date</span><span>{new Date(booked.preferred_date || date).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })}</span></div>
             <div className="flex justify-between text-sm mt-2"><span className="text-ink-muted">Preferred time</span><span className="capitalize">{booked.time_of_day || timeOfDay}</span></div>
-            <div className="flex justify-between text-sm mt-2 pt-2 border-t border-gold/30"><span className="text-ink-muted">Amount paid</span><span className="font-display text-lg text-maroon-deep">{formatINR(fee)}</span></div>
+            <div className="flex justify-between text-sm mt-2 pt-2 border-t border-gold/30"><span className="text-ink-muted">Amount paid</span><span className="font-display text-lg text-maroon-deep">{formatPrice(booked.amount ?? fee, booked.currency || currency)}</span></div>
           </motion.div>
 
           <div className="mt-6 text-xs text-ink-muted inline-flex items-center gap-2">
             <ArrowsClockwise size={14} weight="duotone" className="text-verified" />
-            If you purchase anything after this, {formatINR(fee)} is credited toward that order (within 90 days).
+            If you purchase anything after this, {formatPrice(booked.amount ?? fee, booked.currency || currency)} is credited toward that order (within 90 days).
           </div>
         </div>
       </section>
@@ -214,7 +211,7 @@ export default function Consultation() {
           </div>
 
           <div className="mt-6 flex items-baseline gap-2">
-            <span className="font-display text-3xl text-maroon-deep">{formatPrice(teaserFee, teaserCurrency)}</span>
+            <span className="font-display text-3xl text-maroon-deep">{formatPrice(fee, currency)}</span>
             <span className="text-xs text-ink-muted">/ session</span>
           </div>
           <div className="mt-1 text-xs text-ink-muted">
@@ -268,7 +265,7 @@ export default function Consultation() {
             disabled={paying}
             className="w-full brand-gradient text-ivory py-3.5 text-sm uppercase tracking-widest inline-flex items-center justify-center gap-2 hover-lift transition-opacity disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-gold/50"
           >
-            {paying ? "Processing…" : (<><PaperPlaneTilt size={15} weight="duotone" /> Pay {formatINR(fee)} & book</>)}
+            {paying ? "Processing…" : (<><PaperPlaneTilt size={15} weight="duotone" /> Pay {formatPrice(fee, currency)} & book</>)}
           </button>
         </form>
       </div>

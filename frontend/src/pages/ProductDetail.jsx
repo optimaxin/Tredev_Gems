@@ -81,15 +81,22 @@ export default function ProductDetail() {
     else if (!g.optional) resolved[g.key] = choices[0].label;
   }
 
-  // Option surcharges are only ever priced in INR (no per-currency admin UI for them
-  // yet — a bigger change than region_pricing's base-price overrides). Applying them
-  // on top of a converted foreign-currency base price would mix currencies, so for a
-  // non-INR visitor the displayed price just stays the flat base price.
-  // ponytail: surcharges shown INR-only; extend option_choices with per-currency
-  // pricing if international checkout needs the real total to include them.
-  const unitPrice = p.currency !== "INR" ? p.price : visible.reduce((sum, g) => {
+  // Option/design surcharges only ever carry an INR price plus one USD fallback
+  // (no full per-currency matrix — see _compute_variant_price on the backend for
+  // why). So checkout only ever charges in INR or USD; a choice's price in any
+  // other currency is undefined. surchargeIn mirrors that: INR/USD resolve for
+  // real, anything else (a product with an exact regional override but no
+  // matching regional surcharge data) is treated as unpriced rather than guessed.
+  const surchargeIn = (choice, currency) => {
+    if (!choice) return 0;
+    if (currency === "INR") return choice.surcharge || 0;
+    if (currency === "USD") return choice.surcharge_usd || 0;
+    return 0;
+  };
+  const pricedCurrency = p.currency === "INR" || p.currency === "USD";
+  const unitPrice = !pricedCurrency ? p.price : visible.reduce((sum, g) => {
     const c = g.choices.find((x) => x.label === resolved[g.key]);
-    return sum + (c?.surcharge || 0);
+    return sum + surchargeIn(c, p.currency);
   }, p.price);
 
   // Send only what's actually visible — a stale pick from a hidden group (e.g. a
@@ -314,8 +321,8 @@ export default function ProductDetail() {
                             <div className="mt-1 text-[11px] leading-tight">
                               <div className="font-medium">{c.label}</div>
                               {c.note && <div className="text-ink-muted">{c.note}</div>}
-                              {c.surcharge > 0 && p.currency === "INR" && (
-                                <div className="text-maroon-deep">+{formatPrice(c.surcharge, p.currency)}</div>
+                              {pricedCurrency && surchargeIn(c, p.currency) > 0 && (
+                                <div className="text-maroon-deep">+{formatPrice(surchargeIn(c, p.currency), p.currency)}</div>
                               )}
                             </div>
                           </button>
@@ -338,7 +345,7 @@ export default function ProductDetail() {
                             }`}
                           >
                             {c.label}
-                            {c.surcharge > 0 && p.currency === "INR" && <span className="text-xs text-ink-muted"> +{formatPrice(c.surcharge, p.currency)}</span>}
+                            {pricedCurrency && surchargeIn(c, p.currency) > 0 && <span className="text-xs text-ink-muted"> +{formatPrice(surchargeIn(c, p.currency), p.currency)}</span>}
                           </button>
                         );
                       })}
@@ -354,7 +361,7 @@ export default function ProductDetail() {
                       {g.optional && <option value="">Select {g.label.replace(/^Select /, "")}</option>}
                       {g.choices.map((c) => (
                         <option key={c.label} value={c.label}>
-                          {c.label}{c.surcharge > 0 && p.currency === "INR" ? ` (+${formatPrice(c.surcharge, p.currency)})` : ""}
+                          {c.label}{pricedCurrency && surchargeIn(c, p.currency) > 0 ? ` (+${formatPrice(surchargeIn(c, p.currency), p.currency)})` : ""}
                         </option>
                       ))}
                     </select>

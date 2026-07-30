@@ -574,6 +574,7 @@ class LoginIn(BaseModel):
 class OptionChoiceIn(BaseModel):
     label: str
     surcharge: int = 0  # paise, added to base price when this choice is selected
+    surcharge_usd: Optional[int] = None  # cents — region_pricing's USD fallback for this choice
 
 
 class OptionShowIfIn(BaseModel):
@@ -1899,11 +1900,14 @@ def _normalize_variant_options(vo: dict) -> dict:
 
     Surcharges are clamped non-negative and stored in paise (the API's money unit —
     jsonb has no numeric type of its own, so this keeps the same convention as every
-    other price field). The first choice of each group is forced free because it's the
-    default a buyer lands on — the base price already covers it — except for `optional`
-    groups, which preselect nothing. Unpriced groups (Form, Metal) are zeroed entirely.
-    Groups with fewer than two choices are dropped: a selector with one option isn't a
-    choice, it's noise.
+    other price field). A choice may also carry `surcharge_usd` (cents) —
+    region_pricing's USD fallback for non-INR checkout, since a full per-currency
+    matrix per choice isn't practical here (see product_prices/astrologer_prices for
+    the base-price equivalent, which does get the full matrix). The first choice of
+    each group is forced free because it's the default a buyer lands on — the base
+    price already covers it — except for `optional` groups, which preselect nothing.
+    Unpriced groups (Form, Metal) are zeroed entirely. Groups with fewer than two
+    choices are dropped: a selector with one option isn't a choice, it's noise.
     """
     groups = []
     for g in (vo.get("groups") or []):
@@ -1919,6 +1923,8 @@ def _normalize_variant_options(vo: dict) -> dict:
                 continue
             choice = {"label": clabel,
                       "surcharge": max(0, int(c.get("surcharge") or 0)) if priced else 0}
+            if priced and c.get("surcharge_usd") is not None:
+                choice["surcharge_usd"] = max(0, int(c["surcharge_usd"]))
             for extra in ("image", "note"):  # carried through for the images grid
                 if c.get(extra):
                     choice[extra] = c[extra]
@@ -1934,6 +1940,7 @@ def _normalize_variant_options(vo: dict) -> dict:
         optional = bool(g.get("optional"))
         if not optional:
             deduped[0]["surcharge"] = 0  # the default is always free
+            deduped[0].pop("surcharge_usd", None)
         gtype = g.get("type") if g.get("type") in _OPTION_GROUP_TYPES else "dropdown"
         out = {"key": key, "label": label, "type": gtype, "choices": deduped}
         if optional:
@@ -1984,19 +1991,31 @@ def _visible_groups(groups: list[dict], selected: Dict[str, str]) -> list[dict]:
     return visible
 
 
-def _compute_variant_price(base_price: Decimal, variant_options: Optional[dict],
-                           options: Dict[str, str]) -> tuple[Decimal, dict]:
+def _compute_variant_price(base_price: Decimal, base_price_usd: Optional[Decimal],
+                           variant_options: Optional[dict], options: Dict[str, str],
+                           currency: str = "INR") -> tuple[Decimal, dict, bool]:
     """base price + the surcharge of each selected choice, across the groups that apply.
 
-    Returns (unit_price, resolved_options) where resolved_options is the buyer's picks
+    Returns (unit_price, resolved_options, ok). resolved_options is the buyer's picks
     filled in with each group's default for anything they didn't choose — so what gets
     stored on the cart/order line is always complete and self-describing. Hidden groups
     are skipped entirely: a Loose Gemstone can't be charged for a ring's metal, no
     matter what the client sends. Always run server-side: the client supplies *choices*,
     never a price, so this is the only place a cart/order line's price is decided.
+
+    `currency` is either "INR" (unchanged behaviour) or "USD" (region_pricing's only
+    other checkout currency — see _compute_variant_price's caller for why). In USD mode
+    `ok` is False when the product has no USD base price, or a *paid* selected choice
+    has no `surcharge_usd` — there's no per-currency matrix for choices/designs, only
+    USD, so anything without it can't be safely priced outside INR. Callers must refuse
+    the add/checkout rather than use `unit_price` when `ok` is False.
     """
-    total = base_price
+    use_usd = currency == "USD"
+    if use_usd and base_price_usd is None:
+        return Decimal(0), {}, False
+    total = base_price_usd if use_usd else base_price
     resolved: dict[str, str] = {}
+    ok = True
     for g in _visible_groups(((variant_options or {}).get("groups") or []), options):
         choices = g.get("choices") or []
         if not choices:
@@ -2012,8 +2031,16 @@ def _compute_variant_price(base_price: Decimal, variant_options: Optional[dict],
                 raise HTTPException(
                     400, f"Unknown {g.get('label', g['key'])} option: {picked_label}")
         resolved[g["key"]] = choice["label"]
-        total += db.to_amount(choice.get("surcharge") or 0)
-    return total, resolved
+        surcharge = choice.get("surcharge") or 0
+        if use_usd:
+            surcharge_usd = choice.get("surcharge_usd")
+            if surcharge > 0 and surcharge_usd is None:
+                ok = False
+                continue
+            total += db.to_amount(surcharge_usd or 0)
+        else:
+            total += db.to_amount(surcharge)
+    return total, resolved, ok
 
 
 def _shape_selected_options(selected: Optional[dict], variant_options: Optional[dict]) -> list[dict]:
@@ -2059,6 +2086,9 @@ def _build_design_groups(rows: list[dict]) -> list[dict]:
                 continue
             c = {"label": r["code"], "surcharge": db.to_paise(r["price"]) or 0,
                  "metal": r["metal"]}
+            usd = db.to_paise(r.get("price_usd"))
+            if usd is not None:
+                c["surcharge_usd"] = usd
             if r["image_url"]:
                 c["image"] = r["image_url"]
             if r["note"]:
@@ -2083,7 +2113,7 @@ async def _design_groups_for_products(product_ids: list[str], conn=None) -> dict
     if not ids:
         return {}
     sql = """SELECT product_id::text AS product_id, code, applies_to, metal,
-                    image_url, price, note
+                    image_url, price, price_usd, note
                FROM jewellery_designs
               WHERE is_active AND product_id = ANY($1::uuid[])
               ORDER BY applies_to, sort_order, code"""
@@ -2575,6 +2605,7 @@ async def _shape_cart(row: dict, conn=None) -> dict:
     return {"cart_id": row["cart_id"],
             "user_id": row.get("user_id"),
             "anon_key": row.get("anon_key"),
+            "currency": (row.get("currency") or "INR").strip(),
             "items": await _cart_items(row["cart_id"], conn),
             "created_at": row.get("created_at"),
             "updated_at": row.get("updated_at")}
@@ -2584,6 +2615,7 @@ _CART_SELECT = """
     SELECT c.id::text        AS cart_id,
            c.user_id::text   AS user_id,
            c.session_token   AS anon_key,
+           c.currency        AS currency,
            c.created_at      AS created_at,
            c.updated_at      AS updated_at
       FROM carts c
@@ -2619,7 +2651,11 @@ async def _claim_anon_cart(user_id: str, anon_key: Optional[str]) -> None:
             user_id, anon_cart["id"])
 
 
-async def _get_or_create_cart(user_id: Optional[str], anon_key: Optional[str]) -> dict:
+async def _get_or_create_cart(user_id: Optional[str], anon_key: Optional[str],
+                              currency: str = "INR") -> dict:
+    """`currency` only matters the moment a cart is first created — an existing
+    cart keeps whatever currency it started with, so a visitor's detected region
+    flipping mid-session (VPN, etc.) can't silently reprice items already in it."""
     if not user_id and not anon_key:
         # Mongo matched {"anon_key": None} here, which silently collided with any
         # cart lacking the field. Fail cleanly instead.
@@ -2633,9 +2669,9 @@ async def _get_or_create_cart(user_id: Optional[str], anon_key: Optional[str]) -
     cart_id = uuid.uuid4()
     await db.execute(
         """INSERT INTO carts (id, user_id, session_token, currency, status)
-           VALUES ($1, $2::uuid, $3, 'INR', 'active')
+           VALUES ($1, $2::uuid, $3, $4, 'active')
            ON CONFLICT DO NOTHING""",
-        cart_id, user_id, None if user_id else anon_key)
+        cart_id, user_id, None if user_id else anon_key, currency)
     row = await db.fetch_one(
         _CART_SELECT + (" AND c.user_id = $1::uuid" if user_id else " AND c.session_token = $1"),
         user_id or anon_key)
@@ -2643,7 +2679,9 @@ async def _get_or_create_cart(user_id: Optional[str], anon_key: Optional[str]) -
 
 
 @api.post("/cart/add")
-async def cart_add(body: CartAddIn, request: Request, response: Response, user_id: Optional[str] = Depends(get_user_id_optional)):
+async def cart_add(body: CartAddIn, request: Request, response: Response,
+                   currency: str = "INR",
+                   user_id: Optional[str] = Depends(get_user_id_optional)):
     product = await db.fetch_one(
         """SELECT p.id::text AS product_id, p.title, p.base_price, p.is_serialized,
                   p.variant_options AS variant_options, p.category_key::text AS category_key,
@@ -2658,21 +2696,38 @@ async def cart_add(body: CartAddIn, request: Request, response: Response, user_i
     if (product["attributes"] or {}).get("out_of_stock"):
         raise HTTPException(409, f"“{product['title']}” is out of stock")
 
+    anon_key = request.cookies.get("gemora_anon")
+    if not user_id and not anon_key:
+        anon_key = uid("anon_")
+        response.set_cookie("gemora_anon", anon_key, max_age=30 * 24 * 3600, httponly=False, path="/", **_cookie_kwargs())
+
+    # A cart's currency is fixed the moment it's first created (see
+    # _get_or_create_cart) — every line added later, including this one, prices
+    # against THAT currency, not a fresh per-request detection. region_pricing only
+    # ever checks out in INR or USD (see _compute_variant_price's docstring for why
+    # a visitor's exact local currency can't safely extend to priced add-ons), so
+    # anything else collapses to USD here, once, rather than in the frontend.
+    normalized_currency = currency if currency == "INR" else "USD"
+    cart = await _get_or_create_cart(user_id, anon_key, normalized_currency)
+
     # Price is decided here, from the product's admin-configured surcharges — the
     # client only ever supplies which choices it wants, never a price. Priced against
     # the effective options so shared designs / ring sizes are honoured too.
     effective = _effective_variant_options(
         product["category_key"], product["variant_options"],
         await _design_groups_for_product(product["product_id"]))
-    unit_price, selected = _compute_variant_price(
-        product["base_price"], effective, body.options)
-
-    anon_key = request.cookies.get("gemora_anon")
-    if not user_id and not anon_key:
-        anon_key = uid("anon_")
-        response.set_cookie("gemora_anon", anon_key, max_age=30 * 24 * 3600, httponly=False, path="/", **_cookie_kwargs())
-
-    cart = await _get_or_create_cart(user_id, anon_key)
+    base_price_usd = None
+    if cart["currency"] != "INR":
+        override = (await _resolve_prices(
+            "product_prices", "product_id", [product["product_id"]], "USD")).get(product["product_id"])
+        base_price_usd = db.to_amount(override["price"]) if override else None
+    unit_price, selected, priced_ok = _compute_variant_price(
+        product["base_price"], base_price_usd, effective, body.options, cart["currency"])
+    if not priced_ok:
+        raise HTTPException(
+            409, f"“{product['title']}” with these options isn't available for "
+                 f"{cart['currency']} checkout yet — switch your region to India to order it, "
+                 f"or contact us.")
 
     add_qty = max(1, body.qty)
 
@@ -3004,8 +3059,11 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
     # A paid consultation credits its fee toward the buyer's next purchase. Reserved
     # here by reference (not yet marked redeemed — that happens in _mark_paid, once
     # the payment actually completes) so an abandoned checkout doesn't burn it.
+    # Only applied when it matches the order's currency — a ₹399 credit can't
+    # discount a $130 order, or vice versa; it just stays available for later.
     credit = await _find_eligible_credit(user_id)
-    discount = min(db.to_paise(credit["amount"]), subtotal) if credit else 0
+    credit_usable = bool(credit) and (credit.get("currency") or "INR").strip() == cart["currency"]
+    discount = min(db.to_paise(credit["amount"]), subtotal) if credit_usable else 0
     total = subtotal + gst - discount
 
     order_id = uuid.uuid4()
@@ -3027,7 +3085,7 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
     if cf_app_id and cf_secret:
         try:
             cf_order = await _cashfree_create_order(
-                cf_app_id, cf_secret, total, "INR", str(order_id),
+                cf_app_id, cf_secret, total, cart["currency"], str(order_id),
                 {"customer_id": re.sub(r"[^A-Za-z0-9]", "", str(buyer_id))[:50] or "guest",
                  "customer_name": body.shipping_name, "customer_email": body.email,
                  "customer_phone": body.shipping_phone},
@@ -3054,11 +3112,11 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
                     subtotal, discount_total, tax_total, shipping_total, grand_total,
                     shipping_address_id, billing_address_id, affiliate_code,
                     affiliate_astrologer_id, placed_at, consultation_credit_id)
-               VALUES ($1,$2::uuid,$3,'pending','INR',$4,$5,$6,0,$7,$8,$8,$9::citext,$10::uuid, now(),$11::uuid)""",
+               VALUES ($1,$2::uuid,$3,'pending',$12,$4,$5,$6,0,$7,$8,$8,$9::citext,$10::uuid, now(),$11::uuid)""",
             order_id, buyer_id, None,
             db.to_amount(subtotal), db.to_amount(discount), db.to_amount(gst), db.to_amount(total),
             addr_id, aff_ref if aff_astro_id else None, aff_astro_id,
-            credit["id"] if credit else None)
+            credit["id"] if credit_usable else None, cart["currency"])
 
         item_ids = [uuid.uuid4() for _ in items]
         product_ids = [li["product_id"] for li in items]
@@ -3090,8 +3148,8 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
         await conn.execute(
             """INSERT INTO payments (id, order_id, gateway, gateway_ref, amount, currency,
                                      status)
-               VALUES ($1,$2,'cashfree',$3,$4,'INR','initiated')""",
-            uuid.uuid4(), order_id, cf_order_id, db.to_amount(total))
+               VALUES ($1,$2,'cashfree',$3,$4,$5,'initiated')""",
+            uuid.uuid4(), order_id, cf_order_id, db.to_amount(total), cart["currency"])
 
         # Cart is converted, not deleted — it's the audit trail of what was bought.
         await conn.execute(
@@ -3174,11 +3232,12 @@ async def _mark_paid(order: dict, payment_id: str) -> dict:
                     """INSERT INTO affiliate_commissions (id, astrologer_id, affiliate_code,
                             order_id, order_subtotal, order_total, commission_pct,
                             commission_amount, currency, status)
-                       VALUES ($1,$2::uuid,$3::citext,$4::uuid,$5,$6,$7,$8,'INR','pending')
+                       VALUES ($1,$2::uuid,$3::citext,$4::uuid,$5,$6,$7,$8,$9,'pending')
                        ON CONFLICT (order_id) DO NOTHING""",
                     cid, order["affiliate_astrologer_id"], order.get("affiliate_code"),
                     order_id, subtotal, db.to_amount(order.get("total") or 0), pct,
-                    (subtotal * pct / 100).quantize(Decimal("0.01")))
+                    (subtotal * pct / 100).quantize(Decimal("0.01")),
+                    order.get("currency") or "INR")
         # order_events is this schema's status audit trail — Mongo had no equivalent.
         await conn.execute(
             """INSERT INTO order_events (id, order_id, from_status, to_status, reason)
@@ -3296,7 +3355,7 @@ async def checkout_pay(order_id: str, request: Request,
     if cf_app_id and cf_secret:
         try:
             cf_order = await _cashfree_create_order(
-                cf_app_id, cf_secret, int(order["total"]), "INR", order_id,
+                cf_app_id, cf_secret, int(order["total"]), order.get("currency") or "INR", order_id,
                 {"customer_id": re.sub(r"[^A-Za-z0-9]", "", str(user_id or order.get("user_id") or "guest"))[:50] or "guest",
                  "customer_name": order.get("shipping_name"), "customer_email": order.get("shipping_email"),
                  "customer_phone": order.get("shipping_phone")},
@@ -4111,6 +4170,7 @@ _CONSULT_SELECT = """
            c.contact_phone                AS phone,
            COALESCE(c.concern, '')        AS concern,
            c.amount                       AS amount_n,
+           c.currency                     AS currency,
            c.status::text                 AS status,
            c.payment_status                AS payment_status,
            c.preferred_date                AS preferred_date,
@@ -4229,7 +4289,7 @@ async def consultation_fee(currency: str = "INR"):
 
 
 @api.post("/consultation/request")
-async def consultation_request(body: ConsultationRequestIn,
+async def consultation_request(body: ConsultationRequestIn, currency: str = "INR",
                                user_id: Optional[str] = Depends(get_user_id_optional)):
     try:
         pref_date = date.fromisoformat(body.preferred_date)
@@ -4241,7 +4301,12 @@ async def consultation_request(body: ConsultationRequestIn,
     slot_at = datetime.combine(pref_date, dtime(hour=_TIME_OF_DAY_HOUR[body.time_of_day]),
                                tzinfo=timezone.utc)
 
-    fee = (await _site_content("consultation") or _DEFAULT_CONSULTATION)["fee_paise"]
+    # No surcharge/options concept here (unlike products), so — unlike checkout —
+    # the consultation can safely charge in the visitor's exact regional currency,
+    # not just INR/USD: _consultation_fee_body already does the full exact-currency
+    # -> USD -> INR fallback (region_pricing, Phase 1).
+    fee_resolved = await _consultation_fee_body(currency if currency in SUPPORTED_CURRENCIES else "INR")
+    fee, resolved_currency = fee_resolved["fee"], fee_resolved["currency"]
     booking_id = uuid.uuid4()
 
     cf_app_id = os.environ.get("CASHFREE_APP_ID", "")
@@ -4251,7 +4316,7 @@ async def consultation_request(body: ConsultationRequestIn,
     if cf_app_id and cf_secret:
         try:
             cf_order = await _cashfree_create_order(
-                cf_app_id, cf_secret, fee, "INR", str(booking_id),
+                cf_app_id, cf_secret, fee, resolved_currency, str(booking_id),
                 {"customer_id": re.sub(r"[^A-Za-z0-9]", "", str(user_id or booking_id))[:50],
                  "customer_name": body.name, "customer_email": body.email,
                  "customer_phone": body.phone},
@@ -4267,11 +4332,11 @@ async def consultation_request(body: ConsultationRequestIn,
     await db.execute(
         """INSERT INTO consultations (id, astrologer_id, astrologer_name_snapshot, slot_at,
                 preferred_date, time_of_day, user_id, contact_name, contact_email,
-                contact_phone, concern, amount, status, payment_status, razorpay_order_id)
-           VALUES ($1,NULL,NULL,$2,$3,$4,$5::uuid,$6,$7::citext,$8,$9,$10,
-                   'requested','pending',$11)""",
+                contact_phone, concern, amount, currency, status, payment_status, razorpay_order_id)
+           VALUES ($1,NULL,NULL,$2,$3,$4,$5::uuid,$6,$7::citext,$8,$9,$10,$11,
+                   'requested','pending',$12)""",
         booking_id, slot_at, pref_date, body.time_of_day, user_id,
-        body.name, body.email, body.phone, body.concern, db.to_amount(fee), cf_order_id)
+        body.name, body.email, body.phone, body.concern, db.to_amount(fee), resolved_currency, cf_order_id)
 
     consult = await _load_consultation(str(booking_id))
     return {"consultation": consult, "payment_session_id": payment_session_id, "cf_app_id": cf_app_id or None}
@@ -4328,16 +4393,18 @@ async def _mark_consultation_paid(booking_id: str, payment_id: str) -> dict:
         # _activate_consultation_credit, fired when status flips to 'completed').
         await conn.execute(
             """INSERT INTO consultation_credits (id, consultation_id, user_id, phone, email,
-                    amount, status, expires_at)
-               VALUES ($1,$2::uuid,$3::uuid,$4,$5::citext,$6,'pending', now() + interval '90 days')""",
+                    amount, currency, status, expires_at)
+               VALUES ($1,$2::uuid,$3::uuid,$4,$5::citext,$6,$7,'pending', now() + interval '90 days')""",
             uuid.uuid4(), booking_id, consult["user_id"], consult["phone"], consult["email"],
-            db.to_amount(consult["amount"]))
+            db.to_amount(consult["amount"]), consult.get("currency") or "INR")
     # Instant confirmation — astrologer + exact time + meet link follow separately
     # once staff assign them (see admin_update_consultation).
     if consult.get("phone"):
+        amount_label = (f"₹{consult['amount'] / 100:,.0f}" if (consult.get("currency") or "INR") == "INR"
+                        else f"{consult['amount'] / 100:,.2f} {consult.get('currency')}")
         _wa_fire_event("consultation.booked", phone=consult["phone"], name=consult["name"],
                       user_id=consult.get("user_id"),
-                      variables={"amount": f"₹{consult['amount'] / 100:,.0f}"})
+                      variables={"amount": amount_label})
     return await _load_consultation(booking_id)
 
 
@@ -4381,6 +4448,7 @@ async def my_consultation_credit(user_id: str = Depends(require_user)):
     if not credit:
         return {"available": False}
     return {"available": True, "amount": db.to_paise(credit["amount"]),
+            "currency": (credit.get("currency") or "INR").strip(),
             "expires_at": credit["expires_at"]}
 
 
@@ -5195,6 +5263,7 @@ class DesignIn(BaseModel):
     applies_to: str                 # "ring" | "pendant"
     metal: str                      # one row per metal; carries that metal's full price
     price: int = 0                  # paise, added to the gemstone's price
+    price_usd: Optional[int] = None  # cents — region_pricing's USD fallback for this design
     image_url: Optional[str] = None
     note: Optional[str] = None      # e.g. "21k Advance only"
     is_active: bool = True
@@ -5208,6 +5277,8 @@ def _validate_design(body: DesignIn) -> None:
         raise HTTPException(400, f"Unknown metal: {body.metal}")
     if body.price < 0:
         raise HTTPException(400, "Price can't be negative")
+    if body.price_usd is not None and body.price_usd < 0:
+        raise HTTPException(400, "USD price can't be negative")
 
 
 @api.get("/admin/designs")
@@ -5215,15 +5286,17 @@ async def admin_list_designs(_: str = Depends(require_perm("products")),
                              product_id: Optional[str] = None):
     sql = """SELECT d.id::text AS design_id, d.product_id::text AS product_id,
                     p.title AS product_name, d.code, d.applies_to, d.metal,
-                    d.price AS price_n, d.image_url, d.note, d.is_active, d.sort_order
+                    d.price AS price_n, d.price_usd AS price_usd_n,
+                    d.image_url, d.note, d.is_active, d.sort_order
                FROM jewellery_designs d JOIN products p ON p.id = d.product_id"""
     args = []
     if product_id:
         args.append(product_id)
         sql += " WHERE d.product_id = $1::uuid"
     rows = await db.fetch_all(sql + " ORDER BY p.title, d.applies_to, d.sort_order, d.code", *args)
-    return [{**{k: v for k, v in r.items() if k != "price_n"},
-             "price": db.to_paise(r["price_n"])} for r in rows]
+    return [{**{k: v for k, v in r.items() if k not in ("price_n", "price_usd_n")},
+             "price": db.to_paise(r["price_n"]), "price_usd": db.to_paise(r["price_usd_n"])}
+            for r in rows]
 
 
 @api.post("/admin/designs")
@@ -5233,10 +5306,10 @@ async def admin_create_design(body: DesignIn, actor: str = Depends(require_perm(
     try:
         await db.execute(
             """INSERT INTO jewellery_designs (id, product_id, code, applies_to, metal,
-                    price, image_url, note, is_active, sort_order)
-               VALUES ($1,$2::uuid,$3,$4,$5,$6,$7,$8,$9,$10)""",
+                    price, price_usd, image_url, note, is_active, sort_order)
+               VALUES ($1,$2::uuid,$3,$4,$5,$6,$7,$8,$9,$10,$11)""",
             did, body.product_id, body.code.strip(), body.applies_to, body.metal,
-            db.to_amount(body.price), body.image_url, body.note,
+            db.to_amount(body.price), db.to_amount(body.price_usd), body.image_url, body.note,
             body.is_active, body.sort_order)
     except asyncpg.exceptions.UniqueViolationError:
         raise HTTPException(
@@ -5253,11 +5326,11 @@ async def admin_update_design(design_id: str, body: DesignIn,
     _validate_design(body)
     got = await db.fetch_val(
         """UPDATE jewellery_designs SET product_id=$2::uuid, code=$3, applies_to=$4,
-               metal=$5, price=$6, image_url=$7, note=$8, is_active=$9, sort_order=$10,
-               updated_at=now()
+               metal=$5, price=$6, price_usd=$7, image_url=$8, note=$9, is_active=$10,
+               sort_order=$11, updated_at=now()
             WHERE id=$1::uuid RETURNING id::text""",
         design_id, body.product_id, body.code.strip(), body.applies_to, body.metal,
-        db.to_amount(body.price), body.image_url, body.note,
+        db.to_amount(body.price), db.to_amount(body.price_usd), body.image_url, body.note,
         body.is_active, body.sort_order)
     if not got:
         raise HTTPException(404, "Design not found")

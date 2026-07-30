@@ -2,7 +2,8 @@ import React from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useCart } from "@/context/CartContext";
 import { useAuth } from "@/context/AuthContext";
-import { formatINR, describeOptions } from "@/lib/api";
+import { describeOptions } from "@/lib/api";
+import { formatPrice } from "@/lib/currency";
 import { TrashSimple, ShieldCheck, ShoppingBag, Plus, Minus, LockKey } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
@@ -11,6 +12,7 @@ export default function Cart() {
   const { user } = useAuth();
   const nav = useNavigate();
   const items = cart.items || [];
+  const currency = cart.currency || "INR";
 
   const changeQty = async (li, next) => {
     if (next < 1) return removeLine(li.line_id);
@@ -79,7 +81,7 @@ export default function Cart() {
                     </button>
                   </div>
                 </div>
-                <div className="font-display text-xl text-maroon-deep">{formatINR(li.price * li.qty)}</div>
+                <div className="font-display text-xl text-maroon-deep">{formatPrice(li.price * li.qty, currency)}</div>
                 <button onClick={() => removeLine(li.line_id)} data-testid={`cart-remove-${li.line_id}`} className="text-ink-muted hover:text-revoked">
                   <TrashSimple size={20} />
                 </button>
@@ -92,14 +94,14 @@ export default function Cart() {
             {user ? (
               <>
                 <div className="mt-4 flex items-baseline justify-between">
-                  <span>Subtotal</span><span className="font-display text-xl">{formatINR(subtotal)}</span>
+                  <span>Subtotal</span><span className="font-display text-xl">{formatPrice(subtotal, currency)}</span>
                 </div>
                 <div className="mt-2 flex items-baseline justify-between text-sm text-ink-muted">
-                  <span>GST (3%)</span><span>{formatINR(Math.round(subtotal * 0.03))}</span>
+                  <span>GST (3%)</span><span>{formatPrice(Math.round(subtotal * 0.03), currency)}</span>
                 </div>
                 <div className="mt-4 pt-4 border-t border-gold/40 flex items-baseline justify-between">
                   <span className="text-sm">Total</span>
-                  <span className="font-display text-3xl text-maroon-deep">{formatINR(subtotal + Math.round(subtotal * 0.03))}</span>
+                  <span className="font-display text-3xl text-maroon-deep">{formatPrice(subtotal + Math.round(subtotal * 0.03), currency)}</span>
                 </div>
                 <button
                   data-testid="cart-checkout-btn"

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, formatINR } from "@/lib/api";
+import { api } from "@/lib/api";
+import { formatPrice } from "@/lib/currency";
 import { useCart } from "@/context/CartContext";
 import { useAuth } from "@/context/AuthContext";
 import { getAffiliateRef } from "@/components/gemora/AffiliateTracker";
@@ -34,8 +35,13 @@ export default function Checkout() {
     shipping_city: "", shipping_state: "", shipping_pincode: "", email: "",
   });
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const currency = cart.currency || "INR";
   const gst = Math.round(subtotal * 0.03);
-  const discount = credit?.available ? Math.min(credit.amount, subtotal) : 0;
+  // A credit only applies when it matches this cart's currency (server enforces the
+  // same rule at /checkout — see checkout()'s credit_usable) — a ₹ credit can't
+  // discount a $ order or vice versa, so it just stays available for later instead.
+  const creditUsable = credit?.available && (credit.currency || "INR") === currency;
+  const discount = creditUsable ? Math.min(credit.amount, subtotal) : 0;
   const total = subtotal + gst - discount;
   const DELIVER_MS = 4200; // matches the truck animation length
 
@@ -131,21 +137,21 @@ export default function Checkout() {
             {cart.items.map((li) => (
               <div key={li.line_id} className="flex justify-between text-sm">
                 <span className="truncate max-w-[200px]">{li.name}</span>
-                <span className="font-mono">{formatINR(li.price * li.qty)}</span>
+                <span className="font-mono">{formatPrice(li.price * li.qty, currency)}</span>
               </div>
             ))}
           </div>
           <div className="mt-5 pt-4 border-t border-gold/40 flex justify-between text-sm">
-            <span>GST</span><span>{formatINR(gst)}</span>
+            <span>GST</span><span>{formatPrice(gst, currency)}</span>
           </div>
           {discount > 0 && (
             <div className="mt-2 flex justify-between text-sm text-verified">
-              <span>Consultation credit</span><span>−{formatINR(discount)}</span>
+              <span>Consultation credit</span><span>−{formatPrice(discount, currency)}</span>
             </div>
           )}
           <div className="mt-4 flex items-baseline justify-between">
             <span>Total</span>
-            <span className="font-display text-3xl text-maroon-deep">{formatINR(total)}</span>
+            <span className="font-display text-3xl text-maroon-deep">{formatPrice(total, currency)}</span>
           </div>
           <div className="mt-6">
             <OrderTruckButton
