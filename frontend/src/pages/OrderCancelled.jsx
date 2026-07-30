@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { motion, useReducedMotion } from "framer-motion";
-import { api, formatINR } from "@/lib/api";
+import { api } from "@/lib/api";
+import { formatPrice } from "@/lib/currency";
 import ProductCard from "@/components/gemora/ProductCard";
 import {
   Package, ArrowRight, Sparkle, ArrowCounterClockwise, Wallet, ClockCountdown, Tag,
@@ -136,7 +137,7 @@ export default function OrderCancelled() {
             </div>
             <div className="mt-4 pt-4 border-t border-gold/30 flex items-baseline justify-between">
               <span className="text-sm text-ink-soft">{refunded ? "Refund amount" : "Order value"}</span>
-              <span className="font-display text-2xl text-maroon-deep">{formatINR(order.total)}</span>
+              <span className="font-display text-2xl text-maroon-deep">{formatPrice(order.total, order.currency)}</span>
             </div>
           </motion.div>
         )}

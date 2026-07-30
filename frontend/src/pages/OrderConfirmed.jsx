@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { motion, useReducedMotion } from "framer-motion";
-import { api, formatINR, describeOptions } from "@/lib/api";
+import { api, describeOptions } from "@/lib/api";
+import { formatPrice } from "@/lib/currency";
 import {
   ShieldCheck, QrCode, Truck, HandHeart, ArrowRight, Package, Sparkle, Certificate,
 } from "@phosphor-icons/react";
@@ -183,13 +184,19 @@ export default function OrderConfirmed() {
                       )}
                     </span>
                   </span>
-                  <span className="font-mono text-ink-soft shrink-0">{formatINR(li.price * li.qty)}</span>
+                  <span className="font-mono text-ink-soft shrink-0">{formatPrice(li.price * li.qty, order.currency)}</span>
                 </div>
               ))}
             </div>
+            {order.shipping_total > 0 && (
+              <div className="mt-2 flex items-baseline justify-between text-sm text-ink-muted">
+                <span>Shipping</span>
+                <span>{formatPrice(order.shipping_total, order.currency)}</span>
+              </div>
+            )}
             <div className="mt-4 pt-4 border-t border-gold/30 flex items-baseline justify-between">
               <span className="text-sm text-ink-soft">Total paid</span>
-              <span className="font-display text-2xl text-maroon-deep">{formatINR(order.total)}</span>
+              <span className="font-display text-2xl text-maroon-deep">{formatPrice(order.total, order.currency)}</span>
             </div>
             {order.shipping?.shipping_city && (
               <div className="mt-3 text-xs text-ink-muted flex items-center gap-1">

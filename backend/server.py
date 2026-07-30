@@ -610,13 +610,6 @@ class VariantOptionsIn(BaseModel):
     groups: List[OptionGroupIn] = []
 
 
-class PriceOverrideIn(BaseModel):
-    """A region_pricing override: the price of a product/astrologer in one
-    non-INR currency, in that currency's major unit (e.g. dollars, not cents)."""
-    currency_code: str
-    amount: float
-
-
 class ProductIn(BaseModel):
     name: str
     slug: str
@@ -626,11 +619,12 @@ class ProductIn(BaseModel):
     subcategory_id: Optional[str] = None
     description: str = ""
     price: int  # in paise
+    price_usd: Optional[int] = None  # cents — shown/charged to visitors outside India
     mrp: Optional[int] = None
     images: List[str] = []
     attrs: dict = {}  # carat, graha, mukhi, origin, rashi, purpose, etc.
     devanagari_name: Optional[str] = None
-    prices: List[PriceOverrideIn] = []  # region_pricing: per-currency price overrides
+    shipping_charges: Dict[str, float] = {}  # region label -> USD amount; unlisted = free (India)
     is_serialized: bool = True  # if False, non-unit-based
     quantity: int = 0  # serialized only: auto-generate this many units with serial numbers
     care_instructions: List[str] = []  # rendered as bullet points on the product page
@@ -683,6 +677,9 @@ class CheckoutIn(BaseModel):
     shipping_pincode: str
     email: EmailStr
     affiliate_ref: Optional[str] = None  # astrologer's affiliate code, if any
+    # Required for a USD (outside-India) checkout, so each product's shipping_charges
+    # dict can be looked up — ignored for INR (always free within India).
+    shipping_region: Optional[str] = None
 
 
 class DispatchIn(BaseModel):
@@ -1176,60 +1173,16 @@ def _normalize_query(q: str) -> str:
 
 
 # ── region pricing ──────────────────────────────────────────────────────────
-# INR is the base currency stored on products/astrologers directly; these are the
-# currencies staff can additionally set an explicit price for (region_pricing).
-SUPPORTED_CURRENCIES = {
-    "INR", "USD", "CAD", "MXN", "GBP", "EUR", "CHF", "AUD", "JPY", "SGD",
-    "KRW", "MYR", "NZD", "HKD", "AED", "BDT", "LKR", "NPR", "BTN", "MVR",
-}
+# Binary: India sees INR (the base price stored directly on products/astrologers);
+# everyone else sees USD (the price_usd sibling column, optional — falls back to
+# the INR base if a product/astrologer doesn't have one set).
+SUPPORTED_CURRENCIES = {"INR", "USD"}
 
-
-async def _resolve_prices(table: str, id_col: str, ids: list[str], currency: str,
-                          conn=None) -> dict[str, dict]:
-    """{entity_id: {"price": paise_int, "currency": code}} for ids that have an
-    explicit override in `currency`, falling back to USD. Ids not present in the
-    returned dict have no override — the caller keeps the base INR price/currency."""
-    if currency == "INR" or not ids:
-        return {}
-    sql = (f"SELECT {id_col}::text AS id, currency_code, amount FROM {table} "
-           f"WHERE {id_col} = ANY($1::uuid[]) AND currency_code = ANY($2)")
-    rows = await (conn.fetch(sql, ids, [currency, "USD"]) if conn
-                  else db.fetch_all(sql, ids, [currency, "USD"]))
-    by_id: dict[str, dict] = {}
-    for r in rows:
-        # an exact-currency row always wins over the USD fallback
-        if r["id"] not in by_id or r["currency_code"].strip() == currency:
-            by_id[r["id"]] = r
-    return {i: {"price": db.to_paise(r["amount"]), "currency": r["currency_code"].strip()}
-            for i, r in by_id.items()}
-
-
-async def _replace_price_overrides(conn, table: str, id_col: str, entity_id,
-                                   prices: list["PriceOverrideIn"]) -> None:
-    """Admin write side of region_pricing: full replace, since there are at most a
-    couple dozen currencies — no need for row-level diffing."""
-    await conn.execute(f"DELETE FROM {table} WHERE {id_col} = $1::uuid", entity_id)
-    for p in prices:
-        code = p.currency_code.strip().upper()
-        if code == "INR" or code not in SUPPORTED_CURRENCIES:
-            continue
-        await conn.execute(
-            f"INSERT INTO {table} ({id_col}, currency_code, amount) VALUES ($1::uuid,$2,$3)",
-            entity_id, code, Decimal(str(p.amount)))
-
-
-async def _fetch_price_overrides(table: str, id_col: str, ids: list[str]) -> dict[str, list[dict]]:
-    """Full {currency_code, amount} list per entity, for admin edit forms."""
-    if not ids:
-        return {}
-    rows = await db.fetch_all(
-        f"SELECT {id_col}::text AS id, currency_code, amount FROM {table} "
-        f"WHERE {id_col} = ANY($1::uuid[]) ORDER BY currency_code", ids)
-    by_id: dict[str, list[dict]] = {}
-    for r in rows:
-        by_id.setdefault(r["id"], []).append(
-            {"currency_code": r["currency_code"].strip(), "amount": float(r["amount"])})
-    return by_id
+# Shipping is free within India; everywhere else, a product can carry a USD
+# shipping charge per region — the buyer picks their region at checkout (there's
+# no country->region mapping; the region IS the choice, kept deliberately coarse).
+SHIPPING_REGIONS = ["North America", "Europe", "Asia-Pacific",
+                    "SAARC / Neighboring Countries", "Rest of World"]
 
 
 # Rebuilds the flat product dict the frontend expects out of the normalised tables:
@@ -1248,6 +1201,7 @@ _PRODUCT_SELECT = """
            CASE WHEN cat.parent_id IS NOT NULL THEN cat.id::text END AS subcategory_id,
            CASE WHEN cat.parent_id IS NOT NULL THEN cat.name END     AS subcategory,
            p.base_price                            AS base_price,
+           p.price_usd                             AS price_usd,
            p.compare_at_price                      AS compare_at_price,
            p.is_serialized                         AS is_serialized,
            (p.status = 'active')                   AS is_active,
@@ -1300,24 +1254,22 @@ def _shape_product(row: Optional[dict]) -> Optional[dict]:
         **r,
         "category": db.CATEGORY_FROM_DB.get(r.pop("category_key"), r.get("category_key")),
         "price": db.to_paise(r.pop("base_price")),
+        "price_usd": db.to_paise(r.pop("price_usd")),
         "mrp": db.to_paise(r.pop("compare_at_price")),
         "currency": "INR",
         "attrs": attrs,
     }
 
 
-async def _apply_product_currency(products: list[dict], currency: str) -> list[dict]:
-    """Overlay each product's price with its region_pricing override for `currency`
-    (falling back to a USD override). Products without any override for this
-    currency are left showing their base INR price — there's nothing else to show."""
-    if currency == "INR" or not products:
+def _apply_product_currency(products: list[dict], currency: str) -> list[dict]:
+    """Binary region pricing: outside India, show price_usd if the product has
+    one set, else leave the INR base price showing — there's nothing else to
+    show. `mrp` has no USD equivalent, so it's dropped whenever price_usd is used."""
+    if currency != "USD":
         return products
-    overrides = await _resolve_prices(
-        "product_prices", "product_id", [p["product_id"] for p in products], currency)
     for p in products:
-        ov = overrides.get(p["product_id"])
-        if ov:
-            p["price"], p["currency"], p["mrp"] = ov["price"], ov["currency"], None
+        if p.get("price_usd") is not None:
+            p["price"], p["currency"], p["mrp"] = p["price_usd"], "USD", None
     return products
 
 
@@ -1331,7 +1283,6 @@ async def list_products(
     q: Optional[str] = None,
     limit: int = 60,
     currency: str = "INR",
-    include_prices: bool = False,  # admin product list: populate the regional-price editor
 ):
     where = ["p.status = 'active'"]
     args: list = []
@@ -1359,13 +1310,7 @@ async def list_products(
 
     sql = f"{_PRODUCT_SELECT} AND {' AND '.join(where)} ORDER BY p.created_at DESC LIMIT {_arg(limit)}"
     products = [_shape_product(r) for r in await db.fetch_all(sql, *args)]
-    await _apply_product_currency(products, currency if currency in SUPPORTED_CURRENCIES else "INR")
-    if include_prices:
-        overrides = await _fetch_price_overrides(
-            "product_prices", "product_id", [p["product_id"] for p in products])
-        for p in products:
-            p["prices"] = overrides.get(p["product_id"], [])
-    return products
+    return _apply_product_currency(products, currency if currency in SUPPORTED_CURRENCIES else "INR")
 
 
 @api.get("/products/{slug}")
@@ -1374,7 +1319,7 @@ async def get_product(slug: str, currency: str = "INR"):
     if not row:
         raise HTTPException(404, "Product not found")
     p = _shape_product(row)
-    await _apply_product_currency([p], currency if currency in SUPPORTED_CURRENCIES else "INR")
+    _apply_product_currency([p], currency if currency in SUPPORTED_CURRENCIES else "INR")
     # Buyers no longer pick a specific serial — they choose a quantity and units are
     # auto-assigned at payment. The page only needs the count of pieces still in stock
     # so it can cap the quantity selector. Non-serialized products aren't unit-tracked,
@@ -1900,10 +1845,9 @@ def _normalize_variant_options(vo: dict) -> dict:
 
     Surcharges are clamped non-negative and stored in paise (the API's money unit —
     jsonb has no numeric type of its own, so this keeps the same convention as every
-    other price field). A choice may also carry `surcharge_usd` (cents) —
-    region_pricing's USD fallback for non-INR checkout, since a full per-currency
-    matrix per choice isn't practical here (see product_prices/astrologer_prices for
-    the base-price equivalent, which does get the full matrix). The first choice of
+    other price field). A choice may also carry `surcharge_usd` (cents) — shown/
+    charged to visitors outside India, same binary INR/USD rule as `products.price_usd`
+    and `astrologers.price_usd`. The first choice of
     each group is forced free because it's the default a buyer lands on — the base
     price already covers it — except for `optional` groups, which preselect nothing.
     Unpriced groups (Form, Metal) are zeroed entirely. Groups with fewer than two
@@ -2217,14 +2161,15 @@ async def admin_create_product(p: ProductIn, user_id: str = Depends(require_admi
         async with db.transaction() as conn:
             await conn.execute(
                 """INSERT INTO products (id, category_id, category_key, title,
-                        title_devanagari, slug, description, base_price, compare_at_price,
-                        currency, is_serialized, attributes, care_instructions,
+                        title_devanagari, slug, description, base_price, price_usd,
+                        compare_at_price, currency, is_serialized, attributes,
+                        shipping_charges, care_instructions,
                         variant_options, status, published_at)
-                   VALUES ($1,$2::uuid,$3::category_key,$4,$5,$6::citext,$7,$8,$9,'INR',$10,
-                           $11,$12,$13,'active', now())""",
+                   VALUES ($1,$2::uuid,$3::category_key,$4,$5,$6::citext,$7,$8,$9,$10,'INR',$11,
+                           $12,$13,$14,$15,'active', now())""",
                 pid, cat_id, ck, p.name, p.devanagari_name, p.slug, p.description,
-                db.to_amount(p.price), db.to_amount(p.mrp), p.is_serialized,
-                p.attrs or {},
+                db.to_amount(p.price), db.to_amount(p.price_usd), db.to_amount(p.mrp), p.is_serialized,
+                p.attrs or {}, p.shipping_charges or {},
                 [s.strip() for s in p.care_instructions if s and s.strip()],
                 # No variant_options sent -> fall back to the category's template, so a
                 # product always offers the right selectors even via a bare API call.
@@ -2260,7 +2205,6 @@ async def admin_create_product(p: ProductIn, user_id: str = Depends(require_admi
                 await conn.execute(
                     """INSERT INTO product_media (id, product_id, media_id, position, is_primary)
                        VALUES ($1,$2,$3,$4,$5)""", uuid.uuid4(), pid, mid, i, i == 0)
-            await _replace_price_overrides(conn, "product_prices", "product_id", pid, p.prices)
     except HTTPException:
         raise
     except asyncpg.exceptions.UniqueViolationError as e:
@@ -2268,10 +2212,8 @@ async def admin_create_product(p: ProductIn, user_id: str = Depends(require_admi
         raise HTTPException(400, "A product with that slug already exists")
     await audit_log(user_id, "product.create", str(pid),
                     {"name": p.name, "slug": p.slug, "category": p.category, "price": p.price})
-    doc = _shape_product(await db.fetch_one(
+    return _shape_product(await db.fetch_one(
         _PRODUCT_SELECT + " AND p.id = $1::uuid", str(pid)))
-    doc["prices"] = [pr.model_dump() for pr in p.prices if pr.currency_code.strip().upper() in SUPPORTED_CURRENCIES and pr.currency_code.strip().upper() != "INR"]
-    return doc
 
 
 @api.post("/admin/units")
@@ -2683,7 +2625,7 @@ async def cart_add(body: CartAddIn, request: Request, response: Response,
                    currency: str = "INR",
                    user_id: Optional[str] = Depends(get_user_id_optional)):
     product = await db.fetch_one(
-        """SELECT p.id::text AS product_id, p.title, p.base_price, p.is_serialized,
+        """SELECT p.id::text AS product_id, p.title, p.base_price, p.price_usd, p.is_serialized,
                   p.variant_options AS variant_options, p.category_key::text AS category_key,
                   p.attributes AS attributes,
                   v.id::text AS variant_id
@@ -2716,11 +2658,7 @@ async def cart_add(body: CartAddIn, request: Request, response: Response,
     effective = _effective_variant_options(
         product["category_key"], product["variant_options"],
         await _design_groups_for_product(product["product_id"]))
-    base_price_usd = None
-    if cart["currency"] != "INR":
-        override = (await _resolve_prices(
-            "product_prices", "product_id", [product["product_id"]], "USD")).get(product["product_id"])
-        base_price_usd = db.to_amount(override["price"]) if override else None
+    base_price_usd = product["price_usd"] if cart["currency"] != "INR" else None
     unit_price, selected, priced_ok = _compute_variant_price(
         product["base_price"], base_price_usd, effective, body.options, cart["currency"])
     if not priced_ok:
@@ -2860,6 +2798,7 @@ _ORDER_SELECT = """
            o.order_no                    AS order_no,
            o.subtotal                    AS subtotal_n,
            o.tax_total                   AS gst_n,
+           o.shipping_total              AS shipping_n,
            o.grand_total                 AS total_n,
            o.discount_total              AS discount_n,
            o.consultation_credit_id::text AS consultation_credit_id,
@@ -3002,11 +2941,12 @@ async def _shape_order(row: Optional[dict], conn=None, items: Optional[list] = N
     shipping = {f"shipping_{k}": v for k, v in shipping.items()}
     shipping["email"] = r.pop("shipping_email", None)
     return {**{k: v for k, v in r.items()
-               if k not in ("subtotal_n", "gst_n", "total_n", "discount_n", "status_db")},
+               if k not in ("subtotal_n", "gst_n", "shipping_n", "total_n", "discount_n", "status_db")},
             "items": items,
             "events": events,
             "subtotal": db.to_paise(r["subtotal_n"]),
             "gst": db.to_paise(r["gst_n"]),
+            "shipping_total": db.to_paise(r["shipping_n"]),
             "total": db.to_paise(r["total_n"]),
             "discount": db.to_paise(r["discount_n"]),
             "status": db.ORDER_STATUS_FROM_DB.get(r["status_db"], r["status_db"]),
@@ -3030,6 +2970,13 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
     if not items:
         raise HTTPException(400, "Cart is empty")
 
+    # Shipping is free within India; outside it, each distinct product in the cart
+    # can carry its own USD charge for the buyer's chosen region (admin-set on the
+    # product, e.g. a heavier piece costing more to ship) — summed once per product,
+    # not per unit/qty.
+    if cart["currency"] != "INR" and body.shipping_region not in SHIPPING_REGIONS:
+        raise HTTPException(400, "Select a shipping region")
+
     # Stock guard before we create a payable order. Sums quantities across every line
     # of the same product — different certification/pendant/size choices are different
     # cart lines, but they draw from the one shared stock pool. Units are only assigned
@@ -3037,9 +2984,10 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
     qty_by_product: dict[str, int] = {}
     for li in items:
         qty_by_product[li["product_id"]] = qty_by_product.get(li["product_id"], 0) + li["qty"]
+    shipping_total = 0
     for pid, total_qty in qty_by_product.items():
         chk = await db.fetch_one(
-            """SELECT p.is_serialized, p.attributes,
+            """SELECT p.is_serialized, p.attributes, p.shipping_charges,
                       (SELECT count(*) FROM product_units pu
                         WHERE pu.product_id = p.id AND pu.status = 'in_stock') AS avail
                  FROM products p WHERE p.id = $1::uuid""", pid)
@@ -3052,6 +3000,10 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
             raise HTTPException(
                 409, f"“{name}” is out of stock — only {chk['avail']} of "
                      f"{total_qty} available.")
+        if cart["currency"] != "INR":
+            charge = (chk["shipping_charges"] or {}).get(body.shipping_region)
+            if charge:
+                shipping_total += db.to_paise(str(charge))
 
     subtotal = sum(li["price"] * li["qty"] for li in items)
     gst = int(round(subtotal * 0.03))  # 3% GST on gemstones (illustrative)
@@ -3064,7 +3016,7 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
     credit = await _find_eligible_credit(user_id)
     credit_usable = bool(credit) and (credit.get("currency") or "INR").strip() == cart["currency"]
     discount = min(db.to_paise(credit["amount"]), subtotal) if credit_usable else 0
-    total = subtotal + gst - discount
+    total = subtotal + gst + shipping_total - discount
 
     order_id = uuid.uuid4()
     # Attribute affiliate — either explicit in body, or fall back to cart's tracked ref
@@ -3112,11 +3064,11 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
                     subtotal, discount_total, tax_total, shipping_total, grand_total,
                     shipping_address_id, billing_address_id, affiliate_code,
                     affiliate_astrologer_id, placed_at, consultation_credit_id)
-               VALUES ($1,$2::uuid,$3,'pending',$12,$4,$5,$6,0,$7,$8,$8,$9::citext,$10::uuid, now(),$11::uuid)""",
+               VALUES ($1,$2::uuid,$3,'pending',$12,$4,$5,$6,$13,$7,$8,$8,$9::citext,$10::uuid, now(),$11::uuid)""",
             order_id, buyer_id, None,
             db.to_amount(subtotal), db.to_amount(discount), db.to_amount(gst), db.to_amount(total),
             addr_id, aff_ref if aff_astro_id else None, aff_astro_id,
-            credit["id"] if credit_usable else None, cart["currency"])
+            credit["id"] if credit_usable else None, cart["currency"], db.to_amount(shipping_total))
 
         item_ids = [uuid.uuid4() for _ in items]
         product_ids = [li["product_id"] for li in items]
@@ -4095,6 +4047,7 @@ _ASTRO_SELECT = """
            COALESCE(a.devanagari, '')  AS devanagari,
            a.expertise         AS expertise,
            a.price             AS price_n,
+           a.price_usd         AS price_usd_n,
            a.years             AS years,
            COALESCE(a.avatar_url, '')  AS picture,
            a.email::text       AS email,
@@ -4123,8 +4076,9 @@ def _shape_astro(row: Optional[dict], include_hash: bool = False) -> Optional[di
         return None
     r = dict(row)
     out = {**{k: v for k, v in r.items()
-              if k not in ("price_n", "commission_pct_n", "password_hash")},
+              if k not in ("price_n", "price_usd_n", "commission_pct_n", "password_hash")},
            "price": db.to_paise(r["price_n"]),
+           "price_usd": db.to_paise(r["price_usd_n"]),
            "currency": "INR",
            "commission_pct": float(r["commission_pct_n"]) if r["commission_pct_n"] is not None else 0.0}
     if include_hash:
@@ -4202,13 +4156,10 @@ async def _astrologers_body(currency: str = "INR") -> list:
     db_a = [_shape_astro(r) for r in rows]
     if not db_a:
         return [{"currency": "INR", **a} for a in ASTROLOGERS]
-    if currency != "INR":
-        overrides = await _resolve_prices(
-            "astrologer_prices", "astrologer_id", [a["astrologer_id"] for a in db_a], currency)
+    if currency == "USD":
         for a in db_a:
-            ov = overrides.get(a["astrologer_id"])
-            if ov:
-                a["price"], a["currency"] = ov["price"], ov["currency"]
+            if a.get("price_usd") is not None:
+                a["price"], a["currency"] = a["price_usd"], "USD"
     return db_a
 
 
@@ -4264,18 +4215,11 @@ async def book(body: ConsultationBookIn, request: Request,
 async def _consultation_fee_body(currency: str = "INR") -> dict:
     content = await _site_content("consultation") or _DEFAULT_CONSULTATION
     fee_paise = content["fee_paise"]
-    if currency == "INR":
-        return {"fee": fee_paise, "currency": "INR"}
-    # fee_prices is an optional {"USD": 25, ...} block on the same site_content doc —
-    # set via the existing generic /admin/site-content/consultation PUT, no new schema.
-    fee_prices = content.get("fee_prices") or {}
-    override = fee_prices.get(currency)
-    resolved_currency = currency
-    if override is None:
-        override = fee_prices.get("USD")
-        resolved_currency = "USD"
-    if override is not None:
-        return {"fee": db.to_paise(str(override)), "currency": resolved_currency}
+    # fee_usd (cents) is an optional sibling key on the same site_content doc — set
+    # via the existing generic /admin/site-content/consultation PUT, no new schema.
+    fee_usd = content.get("fee_usd")
+    if currency == "USD" and fee_usd is not None:
+        return {"fee": fee_usd, "currency": "USD"}
     return {"fee": fee_paise, "currency": "INR"}
 
 
@@ -4481,6 +4425,7 @@ class ProductUpdateIn(BaseModel):
     subcategory_id: Optional[str] = None  # sub under it; null files under the top-level
     description: Optional[str] = None
     price: Optional[int] = None
+    price_usd: Optional[int] = None  # cents — shown/charged to visitors outside India
     mrp: Optional[int] = None
     images: Optional[List[str]] = None
     attrs: Optional[dict] = None
@@ -4489,7 +4434,7 @@ class ProductUpdateIn(BaseModel):
     stock_qty: Optional[int] = None  # for non-serialised items
     care_instructions: Optional[List[str]] = None
     variant_options: Optional[VariantOptionsIn] = None
-    prices: Optional[List[PriceOverrideIn]] = None  # omit to leave unchanged; [] clears all
+    shipping_charges: Optional[Dict[str, float]] = None  # region label -> USD amount
 
 
 class CategoryIn(BaseModel):
@@ -4517,13 +4462,13 @@ class AstrologerIn(BaseModel):
     devanagari: Optional[str] = ""
     expertise: List[str] = []
     price: int
+    price_usd: Optional[int] = None  # cents — shown/charged to visitors outside India
     years: int = 0
     picture: str = ""
     email: Optional[EmailStr] = None       # login email; welcome mail is minted for this
     phone: Optional[str] = None             # for the WhatsApp onboarding message
     commission_pct: float = 10.0            # 0-100, per-astrologer share of affiliate sales
     bio: Optional[str] = ""
-    prices: List[PriceOverrideIn] = []  # region_pricing: per-currency price overrides
 
 
 class AstrologerUpdateIn(BaseModel):
@@ -4531,6 +4476,7 @@ class AstrologerUpdateIn(BaseModel):
     devanagari: Optional[str] = None
     expertise: Optional[List[str]] = None
     price: Optional[int] = None
+    price_usd: Optional[int] = None
     years: Optional[int] = None
     picture: Optional[str] = None
     is_active: Optional[bool] = None
@@ -4538,7 +4484,6 @@ class AstrologerUpdateIn(BaseModel):
     phone: Optional[str] = None
     commission_pct: Optional[float] = None
     bio: Optional[str] = None
-    prices: Optional[List[PriceOverrideIn]] = None  # omit to leave unchanged; [] clears all
 
 
 # ── Astrologer-side auth & self-serve models ─────────────────────────────────
@@ -5103,9 +5048,11 @@ _PRODUCT_PATCH_COLS = {
     "slug": ("slug", lambda v: v),
     "description": ("description", lambda v: v),
     "price": ("base_price", db.to_amount),
+    "price_usd": ("price_usd", db.to_amount),
     "mrp": ("compare_at_price", db.to_amount),
     "is_serialized": ("is_serialized", lambda v: v),
     "attrs": ("attributes", lambda v: v),
+    "shipping_charges": ("shipping_charges", lambda v: v),
     "care_instructions": ("care_instructions",
                           lambda v: [s.strip() for s in v if s and s.strip()]),
     "variant_options": ("variant_options", _normalize_variant_options),
@@ -5155,20 +5102,13 @@ async def admin_update_product(product_id: str, body: ProductUpdateIn, actor: st
         await db.execute(
             """UPDATE product_variants SET stock_qty = $2, updated_at = now()
                 WHERE product_id = $1::uuid""", product_id, updates["stock_qty"])
-    if "prices" in sent:  # explicitly sent, even as [] (clears all overrides)
-        async with db.transaction() as conn:
-            await _replace_price_overrides(
-                conn, "product_prices", "product_id", product_id, body.prices or [])
     row = await db.fetch_one(_PRODUCT_SELECT + " AND p.id = $1::uuid", product_id)
     if not row:
         raise HTTPException(404, "Product not found")
     # Log which fields changed, not the whole product — keeps the trail readable.
     await audit_log(actor, "product.update", product_id,
                     {"fields": sorted(sent.keys()), "name": row.get("name")})
-    doc = _shape_product(row)
-    doc["prices"] = (await _fetch_price_overrides(
-        "product_prices", "product_id", [product_id])).get(product_id, [])
-    return doc
+    return _shape_product(row)
 
 
 async def _delete_units(conn, unit_ids: list[str]) -> int:
@@ -5511,12 +5451,7 @@ async def admin_list_astrologers(_: str = Depends(require_perm("astrologers")), 
     where = "" if include_inactive else " WHERE a.is_active"
     rows = await db.fetch_all(
         _ASTRO_SELECT + where + " ORDER BY a.created_at DESC LIMIT 200")
-    astros = [_shape_astro(r) for r in rows]
-    overrides = await _fetch_price_overrides(
-        "astrologer_prices", "astrologer_id", [a["astrologer_id"] for a in astros])
-    for a in astros:
-        a["prices"] = overrides.get(a["astrologer_id"], [])
-    return astros
+    return [_shape_astro(r) for r in rows]
 
 
 @api.post("/admin/astrologers")
@@ -5534,11 +5469,11 @@ async def admin_create_astrologer(body: AstrologerIn, actor: str = Depends(requi
     affiliate_code = _gen_affiliate_code(payload["name"])
     astro_phone = normalize_phone(payload["phone"]) if payload.get("phone") else None
     await db.execute(
-        """INSERT INTO astrologers (id, full_name, devanagari, expertise, price, years,
-                avatar_url, email, phone, commission_pct, bio, is_active, affiliate_code)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8::citext,$9,$10,$11,true,$12::citext)""",
+        """INSERT INTO astrologers (id, full_name, devanagari, expertise, price, price_usd,
+                years, avatar_url, email, phone, commission_pct, bio, is_active, affiliate_code)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::citext,$10,$11,$12,true,$13::citext)""",
         astro_id, payload["name"], payload.get("devanagari") or "",
-        payload.get("expertise") or [], db.to_amount(payload["price"]),
+        payload.get("expertise") or [], db.to_amount(payload["price"]), db.to_amount(payload.get("price_usd")),
         payload.get("years") or 0, payload.get("picture") or None,
         payload.get("email"), astro_phone,
         # `or 10.0` would turn a deliberate 0% commission into 10% — 0 is falsy.
@@ -5552,11 +5487,7 @@ async def admin_create_astrologer(body: AstrologerIn, actor: str = Depends(requi
         if astro_phone:
             _wa_fire_event("astrologer.created", phone=astro_phone, name=payload["name"],
                      variables={"welcome_url": welcome_url})
-    await _replace_price_overrides(db, "astrologer_prices", "astrologer_id", astro_id, body.prices)
     doc = _shape_astro(await db.fetch_one(_ASTRO_SELECT + " WHERE a.id = $1::uuid", str(astro_id)))
-    doc["prices"] = [pr.model_dump() for pr in body.prices
-                      if pr.currency_code.strip().upper() in SUPPORTED_CURRENCIES
-                      and pr.currency_code.strip().upper() != "INR"]
     await audit_log(actor, "astrologer.create", target=str(astro_id), meta={"email": payload.get("email")})
     respcache.invalidate("astrologers")
     return {**doc, "welcome_url": welcome_url}
@@ -5581,6 +5512,7 @@ _ASTRO_PATCH_COLS = {
     "devanagari": ("devanagari", lambda v: v),
     "expertise": ("expertise", lambda v: v),
     "price": ("price", db.to_amount),
+    "price_usd": ("price_usd", db.to_amount),
     "years": ("years", lambda v: v),
     "picture": ("avatar_url", lambda v: v),
     "email": ("email", lambda v: v),
@@ -5619,15 +5551,9 @@ async def admin_update_astrologer(astrologer_id: str, body: AstrologerUpdateIn, 
             raise HTTPException(404, "Astrologer not found")
     elif not await db.fetch_val("SELECT id::text FROM astrologers WHERE id=$1::uuid", astrologer_id):
         raise HTTPException(404, "Astrologer not found")
-    if "prices" in updates:  # explicitly sent, even as [] (clears all overrides)
-        await _replace_price_overrides(
-            db, "astrologer_prices", "astrologer_id", astrologer_id, body.prices or [])
-    await audit_log(actor, "astrologer.update", target=astrologer_id, meta={k: v for k, v in updates.items() if k != "prices"})
+    await audit_log(actor, "astrologer.update", target=astrologer_id, meta=updates)
     respcache.invalidate("astrologers")
-    doc = _shape_astro(await db.fetch_one(_ASTRO_SELECT + " WHERE a.id = $1::uuid", astrologer_id))
-    doc["prices"] = (await _fetch_price_overrides(
-        "astrologer_prices", "astrologer_id", [astrologer_id])).get(astrologer_id, [])
-    return doc
+    return _shape_astro(await db.fetch_one(_ASTRO_SELECT + " WHERE a.id = $1::uuid", astrologer_id))
 
 
 @api.delete("/admin/astrologers/{astrologer_id}")

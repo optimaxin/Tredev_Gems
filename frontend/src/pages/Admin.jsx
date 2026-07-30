@@ -99,7 +99,7 @@ export default function Admin() {
   const defaultLanding = user.role === "owner" ? "dashboard" : (visibleItems[0]?.to || "products");
 
   return (
-    <div className="mx-auto max-w-[1400px] px-4 lg:px-8 py-8 grid grid-cols-1 lg:grid-cols-[240px_1fr] gap-6">
+    <div className="mx-auto max-w-[1400px] 2xl:max-w-[1800px] px-4 lg:px-8 py-8 grid grid-cols-1 lg:grid-cols-[240px_1fr] gap-6">
       <aside className="lg:sticky lg:top-24 h-fit">
         <div className="gold-line bg-ivory p-4">
           <Link to="/account" className="text-xs text-ink-muted hover:text-maroon flex items-center gap-1 mb-3">

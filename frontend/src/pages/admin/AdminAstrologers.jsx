@@ -4,12 +4,10 @@ import { toast } from "sonner";
 import { PlusCircle, PencilSimple, Trash, Calendar, Copy, WhatsappLogo, X, LinkSimple, ChartBar, ArrowClockwise } from "@phosphor-icons/react";
 import { copyToClipboard } from "@/lib/clipboard";
 import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
-import RegionalPricesEditor from "@/components/gemora/RegionalPricesEditor";
 
 const EMPTY = {
-  name: "", devanagari: "", expertise: "", price: "1500", years: 10, picture: "",
+  name: "", devanagari: "", expertise: "", price: "1500", price_usd: "", years: 10, picture: "",
   email: "", phone: "", commission_pct: 10, bio: "",
-  prices: [], // region_pricing: [{currency_code, amount}]
 };
 
 export default function AdminAstrologers() {
@@ -43,21 +41,22 @@ export default function AdminAstrologers() {
     e.preventDefault();
     try {
       const rupees = Number(form.price);
+      // Blank means "no USD price set" (null), not "free" (0) — an astrologer with
+      // no price_usd falls back to showing their ₹ price outside India.
+      let priceUsd = null;
+      if (form.price_usd !== "") {
+        priceUsd = Number(form.price_usd);
+        if (isNaN(priceUsd) || priceUsd < 0) throw new Error("Enter a valid USD price");
+      }
       const payload = {
         ...form,
         price: Math.max(0, Math.round(rupees * 100)),
+        price_usd: priceUsd == null ? null : Math.round(priceUsd * 100),
         years: parseInt(form.years) || 0,
         commission_pct: Math.max(0, Math.min(100, parseFloat(form.commission_pct) || 0)),
         expertise: form.expertise.split(",").map((s) => s.trim()).filter(Boolean),
         email: form.email?.trim() || null,
         phone: form.phone?.trim() || null,
-        prices: form.prices
-          .filter((pr) => pr.currency_code && pr.amount !== "")
-          .map((pr) => {
-            const n = Number(pr.amount);
-            if (isNaN(n) || n < 0) throw new Error(`Enter a valid ${pr.currency_code} price`);
-            return { currency_code: pr.currency_code, amount: n };
-          }),
       };
       if (editing === "new") {
         const { data } = await api.post("/admin/astrologers", payload);
@@ -110,11 +109,11 @@ export default function AdminAstrologers() {
       ...EMPTY,
       ...a,
       price: a.price != null ? (a.price / 100).toString() : "1500",
+      price_usd: a.price_usd != null ? (a.price_usd / 100).toString() : "",
       commission_pct: a.commission_pct ?? 10,
       expertise: (a.expertise || []).join(", "),
       email: a.email || "",
       phone: a.phone || "",
-      prices: (a.prices || []).map((pr) => ({ currency_code: pr.currency_code, amount: pr.amount.toString() })),
     });
   };
   const startNew = () => { setEditing("new"); setForm(EMPTY); };
@@ -151,9 +150,12 @@ export default function AdminAstrologers() {
               <input type="number" min="0" step="0.01" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} data-testid="astro-price" className="flex-1 px-3 py-2 outline-none" />
             </div>
           </label>
-          <div className="md:col-span-2 pt-2 border-t border-gold/20">
-            <RegionalPricesEditor rows={form.prices} onChange={(prices) => setForm((f) => ({ ...f, prices }))} />
-          </div>
+          <label className="block"><div className="text-xs text-ink-muted mb-1">USD price — shown/charged outside India, optional</div>
+            <div className="flex gold-line bg-ivory overflow-hidden focus-within:border-maroon">
+              <span className="px-3 py-2 bg-cream border-r border-gold/30 text-ink-soft">$</span>
+              <input type="number" min="0" step="0.01" value={form.price_usd} onChange={(e) => setForm({ ...form, price_usd: e.target.value })} data-testid="astro-price-usd" className="flex-1 px-3 py-2 outline-none" />
+            </div>
+          </label>
           <label className="block"><div className="text-xs text-ink-muted mb-1">Commission % (affiliate)</div>
             <div className="flex gold-line bg-ivory overflow-hidden focus-within:border-maroon">
               <input type="number" min="0" max="100" step="0.5" value={form.commission_pct} onChange={(e) => setForm({ ...form, commission_pct: e.target.value })} data-testid="astro-commission" className="flex-1 px-3 py-2 outline-none" />

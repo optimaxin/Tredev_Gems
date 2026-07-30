@@ -3,13 +3,14 @@ import { api, formatINR } from "@/lib/api";
 import { toast } from "sonner";
 import { PencilSimple, PlusCircle, Trash, Stack, Prohibit, CheckCircle } from "@phosphor-icons/react";
 import SearchBar from "@/components/gemora/SearchBar";
-import RegionalPricesEditor from "@/components/gemora/RegionalPricesEditor";
+import ShippingChargesEditor from "@/components/gemora/ShippingChargesEditor";
 
 const EMPTY = {
   name: "", slug: "", category: "gemstone", subcategory_id: "", description: "", price: "", mrp: "",
+  price_usd: "", // shown/charged to visitors outside India
   images: "", devanagari_name: "", attrs: "{}", quantity: "", care_instructions: "",
   groups: [], // option groups, seeded from the category template
-  prices: [], // region_pricing: [{currency_code, amount}]
+  shipping_charges: [], // [{region, amount}] — USD, outside-India only
 };
 
 // Surcharges travel as paise/cents; the form edits rupees/dollars.
@@ -33,7 +34,7 @@ export default function AdminProducts() {
   const [form, setForm] = useState(EMPTY);
 
   const refresh = () => {
-    api.get("/products?limit=500&include_prices=true").then((r) => setProducts(r.data));
+    api.get("/products?limit=500").then((r) => setProducts(r.data));
     api.get("/categories").then((r) => setCats(r.data.categories));
     api.get("/admin/products/stock").then((r) => setStock(r.data)).catch(() => {});
   };
@@ -94,14 +95,17 @@ export default function AdminProducts() {
       ...EMPTY,
       ...p,
       subcategory_id: p.subcategory_id || "",
-      // DB stores paise; UI shows rupees.
+      // DB stores paise/cents; UI shows rupees/dollars.
       price: p.price != null ? (p.price / 100).toString() : "",
+      price_usd: p.price_usd != null ? (p.price_usd / 100).toString() : "",
       mrp: p.mrp != null ? (p.mrp / 100).toString() : "",
       images: (p.images || []).join("\n"),
       attrs: JSON.stringify(p.attrs || {}, null, 2),
       care_instructions: (p.care_instructions || []).join("\n"),
       groups: groupsToForm(p.variant_options?.groups),
-      prices: (p.prices || []).map((pr) => ({ currency_code: pr.currency_code, amount: pr.amount.toString() })),
+      shipping_charges: Object.entries(p.shipping_charges || {}).map(([region, amount]) => ({
+        region, amount: amount.toString(),
+      })),
     });
   };
   const startNew = () => { setEditing("new"); setForm(EMPTY); loadTemplate(EMPTY.category); };
@@ -143,20 +147,30 @@ export default function AdminProducts() {
         if (isNaN(n) || n < 0) throw new Error("Enter a valid USD surcharge");
         return Math.round(n * 100);
       };
-      const { groups, prices, ...rest } = form;
+      // Blank means "no USD price set" (null), not "free" (0) — a product with no
+      // price_usd falls back to showing its ₹ price outside India.
+      const priceUsdToCents = (v) => {
+        if (v === "" || v == null) return null;
+        const n = Number(v);
+        if (isNaN(n) || n < 0) throw new Error("Enter a valid USD price");
+        return Math.round(n * 100);
+      };
+      const { groups, shipping_charges, ...rest } = form;
       const payload = {
         ...rest,
         price: rupeesToPaise(form.price) || 0,
+        price_usd: priceUsdToCents(form.price_usd),
         mrp: form.mrp ? rupeesToPaise(form.mrp) : null,
-        // Regional overrides — amount stays in the currency's major unit (dollars,
-        // not cents), unlike price/mrp above which the backend expects in paise.
-        prices: prices
-          .filter((pr) => pr.currency_code && pr.amount !== "")
-          .map((pr) => {
-            const n = Number(pr.amount);
-            if (isNaN(n) || n < 0) throw new Error(`Enter a valid ${pr.currency_code} price`);
-            return { currency_code: pr.currency_code, amount: n };
-          }),
+        // Region label -> USD amount (major unit, dollars — this is jsonb on the
+        // product row, not paise like price/mrp above).
+        shipping_charges: Object.fromEntries(
+          shipping_charges
+            .filter((r) => r.region && r.amount !== "")
+            .map((r) => {
+              const n = Number(r.amount);
+              if (isNaN(n) || n < 0) throw new Error(`Enter a valid shipping charge for ${r.region}`);
+              return [r.region, n];
+            })),
         images: form.images.split("\n").map((s) => s.trim()).filter(Boolean),
         attrs: JSON.parse(form.attrs || "{}"),
         // Number of pieces in stock — backend auto-generates a serial per unit.
@@ -279,9 +293,25 @@ export default function AdminProducts() {
               )}
             </label>
           ))}
+          <label className="block">
+            <div className="text-xs text-ink-muted mb-1">USD price — shown/charged outside India, optional</div>
+            <div className="flex gold-line bg-ivory overflow-hidden focus-within:border-maroon">
+              <span className="px-3 py-2 bg-cream text-ink-soft border-r border-gold/30 font-serifd">$</span>
+              <input
+                type="number" min="0" step="0.01" inputMode="decimal"
+                value={form.price_usd} onChange={(e) => setForm({ ...form, price_usd: e.target.value })}
+                placeholder="e.g. 105" data-testid="product-price-usd-input"
+                className="flex-1 px-3 py-2 outline-none"
+              />
+            </div>
+            <div className="text-[10px] text-ink-muted mt-1">Left blank, visitors outside India see the ₹ price instead.</div>
+          </label>
 
           <div className="md:col-span-2 pt-2 border-t border-gold/20">
-            <RegionalPricesEditor rows={form.prices} onChange={(prices) => setForm((f) => ({ ...f, prices }))} />
+            <ShippingChargesEditor
+              rows={form.shipping_charges}
+              onChange={(shipping_charges) => setForm((f) => ({ ...f, shipping_charges }))}
+            />
           </div>
 
           <label className="block">

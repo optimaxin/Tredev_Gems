@@ -10,6 +10,7 @@ import { CheckCircle } from "@phosphor-icons/react";
 import OrderTruckButton from "@/components/gemora/OrderTruckButton";
 import PaymentFailedModal from "@/components/gemora/PaymentFailedModal";
 import { openCashfreeCheckout } from "@/lib/cashfree";
+import { SHIPPING_REGIONS } from "@/lib/shipping";
 
 export default function Checkout() {
   const { cart, refresh, subtotal } = useCart();
@@ -33,6 +34,7 @@ export default function Checkout() {
   const [form, setForm] = useState({
     shipping_name: "", shipping_phone: "", shipping_address: "",
     shipping_city: "", shipping_state: "", shipping_pincode: "", email: "",
+    shipping_region: "", // required for a USD (outside-India) checkout only
   });
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const currency = cart.currency || "INR";
@@ -129,6 +131,21 @@ export default function Checkout() {
               />
             </label>
           ))}
+          {currency === "USD" && (
+            <label className="block">
+              <div className="text-xs text-ink-muted mb-1">Shipping region</div>
+              <select
+                required
+                data-testid="checkout-shipping_region"
+                value={form.shipping_region}
+                onChange={set("shipping_region")}
+                className="w-full gold-line bg-ivory px-4 py-3 outline-none focus:border-maroon"
+              >
+                <option value="" disabled>Select your region…</option>
+                {SHIPPING_REGIONS.map((r) => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </label>
+          )}
         </div>
 
         <aside className="gold-line-strong bg-cream p-6 h-fit">
@@ -144,13 +161,18 @@ export default function Checkout() {
           <div className="mt-5 pt-4 border-t border-gold/40 flex justify-between text-sm">
             <span>GST</span><span>{formatPrice(gst, currency)}</span>
           </div>
+          {currency === "USD" && (
+            <div className="mt-2 flex justify-between text-sm text-ink-muted">
+              <span>Shipping</span><span>Added for your region above</span>
+            </div>
+          )}
           {discount > 0 && (
             <div className="mt-2 flex justify-between text-sm text-verified">
               <span>Consultation credit</span><span>−{formatPrice(discount, currency)}</span>
             </div>
           )}
           <div className="mt-4 flex items-baseline justify-between">
-            <span>Total</span>
+            <span>{currency === "USD" ? "Total (+ shipping)" : "Total"}</span>
             <span className="font-display text-3xl text-maroon-deep">{formatPrice(total, currency)}</span>
           </div>
           <div className="mt-6">

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, formatINR, describeOptions } from "@/lib/api";
+import { formatPrice } from "@/lib/currency";
 import { useAuth } from "@/context/AuthContext";
 import { ShieldCheck, Package, Heart, Certificate as CertIcon, ArrowRight, Phone, WhatsappLogo, Gear, PencilSimple, LockKey, ChatCircleDots, CaretDown, CaretUp, MapPin, Calendar, VideoCamera, Wallet, XCircle } from "@phosphor-icons/react";
 import PhoneVerify from "@/components/gemora/PhoneVerify";
@@ -250,7 +251,7 @@ export default function Account() {
                   </div>
                   <div className="flex items-center gap-3">
                     <div className="text-right">
-                      <div className="font-display text-2xl text-maroon-deep">{formatINR(o.total)}</div>
+                      <div className="font-display text-2xl text-maroon-deep">{formatPrice(o.total, o.currency)}</div>
                       <div className={`text-xs uppercase tracking-widest ${o.status === "shipped" ? "text-verified" : o.status === "paid" ? "text-gold-soft" : o.status === "payment_failed" ? "text-revoked" : "text-ink-muted"}`}>{fmtStatus(o.status)}</div>
                     </div>
                     {isOpen ? <CaretUp size={18} className="text-ink-muted shrink-0" /> : <CaretDown size={18} className="text-ink-muted shrink-0" />}
@@ -262,7 +263,7 @@ export default function Account() {
                     {o.items.map((li) => (
                       <div key={li.line_id} className="flex justify-between">
                         <span>{li.name}</span>
-                        <span className="font-mono">{formatINR(li.price * li.qty)}</span>
+                        <span className="font-mono">{formatPrice(li.price * li.qty, o.currency)}</span>
                       </div>
                     ))}
                   </div>
@@ -289,16 +290,19 @@ export default function Account() {
                                 </div>
                               )}
                             </div>
-                            <span className="font-mono text-xs shrink-0">{formatINR(li.price * li.qty)}</span>
+                            <span className="font-mono text-xs shrink-0">{formatPrice(li.price * li.qty, o.currency)}</span>
                           </div>
                         ))}
                       </div>
                     </div>
 
                     <div className="gold-line bg-cream p-4 text-sm">
-                      <div className="flex justify-between"><span className="text-ink-muted">Subtotal</span><span className="font-mono">{formatINR(o.subtotal)}</span></div>
-                      <div className="flex justify-between mt-1"><span className="text-ink-muted">GST</span><span className="font-mono">{formatINR(o.gst)}</span></div>
-                      <div className="flex justify-between mt-2 pt-2 border-t border-gold/30 font-display text-lg text-maroon-deep"><span>Total</span><span>{formatINR(o.total)}</span></div>
+                      <div className="flex justify-between"><span className="text-ink-muted">Subtotal</span><span className="font-mono">{formatPrice(o.subtotal, o.currency)}</span></div>
+                      <div className="flex justify-between mt-1"><span className="text-ink-muted">GST</span><span className="font-mono">{formatPrice(o.gst, o.currency)}</span></div>
+                      {o.shipping_total > 0 && (
+                        <div className="flex justify-between mt-1"><span className="text-ink-muted">Shipping</span><span className="font-mono">{formatPrice(o.shipping_total, o.currency)}</span></div>
+                      )}
+                      <div className="flex justify-between mt-2 pt-2 border-t border-gold/30 font-display text-lg text-maroon-deep"><span>Total</span><span>{formatPrice(o.total, o.currency)}</span></div>
                     </div>
 
                     <div className="gold-line bg-cream p-4">
