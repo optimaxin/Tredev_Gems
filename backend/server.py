@@ -921,9 +921,10 @@ async def root():
     return {"app": "Tredev", "public_key_ed25519_hex": ED25519_PUBLIC_HEX}
 
 
+@app.get("/health")
 @api.get("/health")
 async def health():
-    return {"ok": True, "ts": iso(now())}
+    return {"success": True, "message": "Server is healthy", "timestamp": iso(now())}
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
