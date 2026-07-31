@@ -10,6 +10,7 @@ import { CheckCircle } from "@phosphor-icons/react";
 import OrderTruckButton from "@/components/gemora/OrderTruckButton";
 import PaymentFailedModal from "@/components/gemora/PaymentFailedModal";
 import { openCashfreeCheckout } from "@/lib/cashfree";
+import { openRazorpayCheckout } from "@/lib/razorpay";
 import { SHIPPING_REGIONS } from "@/lib/shipping";
 
 export default function Checkout() {
@@ -63,27 +64,50 @@ export default function Checkout() {
       const affiliate_ref = getAffiliateRef();
       const { data } = await api.post("/checkout", { ...form, affiliate_ref });
 
-      // Test mode (Cashfree keys not configured on the server): complete server-side.
-      if (data.order.mock_payment || !data.payment_session_id) {
+      // Test mode (no live keys configured on the server): complete server-side.
+      if (data.order.mock_payment || (!data.payment_session_id && !data.razorpay)) {
         await api.post(`/checkout/mock-pay/${data.order.order_id}`);
         toast.success("Payment complete (test mode)");
         await deliverAndGo(data.order.order_id);
         return;
       }
 
-      // Real Cashfree — open the checkout modal to collect payment. Unlike Razorpay,
-      // Cashfree gives no client-side success/failure signal of its own: the modal's
-      // promise just resolves once the buyer is done with it either way, so /verify
-      // (which asks Cashfree directly) is what actually decides what happened next.
-      try {
-        await openCashfreeCheckout(data.payment_session_id);
-      } catch (err) {
-        toast.error(err.message || "Could not load the payment gateway");
-        setPhase("idle");
-        return;
+      let verifyBody = { order_id: data.order.order_id };
+      if (data.razorpay) {
+        // International (non-INR) order — Razorpay, unlike Cashfree, hands back a
+        // signed payment/order/signature triple on success. The backend still
+        // verifies that signature itself before treating payment as confirmed.
+        try {
+          const rzp = await openRazorpayCheckout({
+            keyId: data.razorpay.key_id, amount: data.razorpay.amount, currency: data.razorpay.currency,
+            orderId: data.razorpay.order_id, name: form.shipping_name, email: form.email,
+            contact: form.shipping_phone,
+          });
+          verifyBody = {
+            ...verifyBody,
+            razorpay_payment_id: rzp.razorpay_payment_id,
+            razorpay_signature: rzp.razorpay_signature,
+          };
+        } catch (err) {
+          toast.error(err.message || "Could not load the payment gateway");
+          setPhase("idle");
+          return;
+        }
+      } else {
+        // Cashfree gives no client-side success/failure signal of its own: the
+        // modal's promise just resolves once the buyer is done with it either way,
+        // so /verify (which asks Cashfree directly) is what actually decides what
+        // happened next.
+        try {
+          await openCashfreeCheckout(data.payment_session_id);
+        } catch (err) {
+          toast.error(err.message || "Could not load the payment gateway");
+          setPhase("idle");
+          return;
+        }
       }
       try {
-        await api.post("/checkout/verify", { order_id: data.order.order_id });
+        await api.post("/checkout/verify", verifyBody);
       } catch (err) {
         setFailed({ open: true, reason: "We couldn't confirm this payment. If any amount was deducted, it will be refunded within 5-7 business days." });
         setPhase("idle");
@@ -187,7 +211,7 @@ export default function Checkout() {
             />
           </div>
           <div className="mt-3 text-[11px] text-ink-muted flex items-center gap-1">
-            <CheckCircle size={12} weight="duotone" className="text-verified" /> If Cashfree is not configured on the server, a test-mode payment completes the order.
+            <CheckCircle size={12} weight="duotone" className="text-verified" /> If the payment gateway is not configured on the server, a test-mode payment completes the order.
           </div>
         </aside>
       </form>

@@ -10,6 +10,7 @@ import {
 } from "@phosphor-icons/react";
 import PaymentFailedModal from "@/components/gemora/PaymentFailedModal";
 import { openCashfreeCheckout } from "@/lib/cashfree";
+import { openRazorpayCheckout } from "@/lib/razorpay";
 
 // Next 5 calendar days STARTING TOMORROW (never today/past) — exact time is a
 // preference (morning/afternoon/evening), the real slot is agreed over WhatsApp
@@ -79,9 +80,9 @@ export default function Consultation() {
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
-  const verify = async (bookingId) => {
+  const verify = async (bookingId, verifyBody) => {
     try {
-      const { data } = await api.post(`/consultation/${bookingId}/verify`);
+      const { data } = await api.post(`/consultation/${bookingId}/verify`, verifyBody);
       toast.success("Payment verified");
       setBooked(data);
     } catch (err) {
@@ -100,12 +101,31 @@ export default function Consultation() {
       });
       const bookingId = data.consultation.booking_id;
 
-      if (!data.payment_session_id) {
-        // Mock mode (no live Cashfree keys on the server) — complete immediately.
+      if (!data.payment_session_id && !data.razorpay) {
+        // Mock mode (no live gateway keys on the server) — complete immediately.
         const mp = await api.post(`/consultation/${bookingId}/mock-pay`);
         toast.success("Payment complete (test mode)");
         setBooked(mp.data);
         setPaying(false);
+        return;
+      }
+
+      if (data.razorpay) {
+        // International (non-INR) booking — Razorpay hands back a signed
+        // payment/order/signature triple on success, checked server-side by /verify.
+        try {
+          const rzp = await openRazorpayCheckout({
+            keyId: data.razorpay.key_id, amount: data.razorpay.amount, currency: data.razorpay.currency,
+            orderId: data.razorpay.order_id, name: form.name, email: form.email, contact: form.phone,
+          });
+          await verify(bookingId, {
+            razorpay_payment_id: rzp.razorpay_payment_id,
+            razorpay_signature: rzp.razorpay_signature,
+          });
+        } catch (err) {
+          toast.error(err.message || "Could not load the payment gateway");
+          setPaying(false);
+        }
         return;
       }
 

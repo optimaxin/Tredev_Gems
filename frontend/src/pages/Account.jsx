@@ -9,6 +9,7 @@ import AccountSupport from "@/components/gemora/AccountSupport";
 import OrderTracking from "@/components/gemora/OrderTracking";
 import { toast } from "sonner";
 import { openCashfreeCheckout } from "@/lib/cashfree";
+import { openRazorpayCheckout } from "@/lib/razorpay";
 
 export default function Account() {
   const { user, loading, refresh, patchUser } = useAuth();
@@ -69,21 +70,39 @@ export default function Account() {
     try {
       const { data } = await api.post(`/checkout/pay/${o.order_id}`);
       if (data.already_paid) { toast.success("This order is already paid"); await loadOrders(); return; }
-      if (data.mock_payment || !data.payment_session_id) {
+      if (data.mock_payment || (!data.payment_session_id && !data.razorpay)) {
         const paid = await api.post(`/checkout/mock-pay/${o.order_id}`);
         toast.success("Payment complete (test mode)");
         await loadOrders();
         nav(`/order-confirmed/${paid.data.order_id}`);
         return;
       }
-      try {
-        await openCashfreeCheckout(data.payment_session_id);
-      } catch (err) {
-        toast.error(err.message || "Could not load the payment gateway");
-        return;
+      let verifyBody = { order_id: o.order_id };
+      if (data.razorpay) {
+        try {
+          const rzp = await openRazorpayCheckout({
+            keyId: data.razorpay.key_id, amount: data.razorpay.amount, currency: data.razorpay.currency,
+            orderId: data.razorpay.order_id, name: user?.name, email: user?.email, contact: user?.phone,
+          });
+          verifyBody = {
+            ...verifyBody,
+            razorpay_payment_id: rzp.razorpay_payment_id,
+            razorpay_signature: rzp.razorpay_signature,
+          };
+        } catch (err) {
+          toast.error(err.message || "Could not load the payment gateway");
+          return;
+        }
+      } else {
+        try {
+          await openCashfreeCheckout(data.payment_session_id);
+        } catch (err) {
+          toast.error(err.message || "Could not load the payment gateway");
+          return;
+        }
       }
       try {
-        await api.post("/checkout/verify", { order_id: o.order_id });
+        await api.post("/checkout/verify", verifyBody);
       } catch (err) {
         toast.error("Payment verification failed");
         return;

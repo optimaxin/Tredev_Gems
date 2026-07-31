@@ -226,6 +226,65 @@ async def _cashfree_create_refund(app_id: str, secret: str, order_id: str, refun
     return await _cashfree_circuit.call(_refund)
 
 
+# ── Razorpay (international / non-INR checkout only — Cashfree still handles INR) ──
+_razorpay_circuit = get_circuit("razorpay", failure_threshold=3, reset_timeout=20.0,
+                                call_timeout=8.0, max_concurrency=10)
+_RAZORPAY_BASE_URL = "https://api.razorpay.com/v1"
+
+
+def _razorpay_keys() -> tuple[str, str]:
+    return (os.environ.get("RAZORPAY_KEY_ID", "").strip(),
+            os.environ.get("RAZORPAY_KEY_SECRET", "").strip())
+
+
+async def _razorpay_create_order(key_id: str, key_secret: str, amount: int, currency: str,
+                                  receipt: str) -> dict:
+    """Create a Razorpay order for a non-INR checkout. `amount` is in paise/cents
+    (this backend's usual minor-unit convention) — Razorpay's REST API already wants
+    the same minor unit, unlike Cashfree which wants the major unit.
+
+    Razorpay mints its own order id (unlike Cashfree's caller-chosen one); callers
+    store it as payments.gateway_ref to look the attempt back up later (webhook,
+    signature verify). httpx is natively async, so — unlike the old Razorpay SDK —
+    this needs no worker-thread wrapping; the circuit still caps concurrency/timeout.
+    """
+    async def _create():
+        async with httpx.AsyncClient(timeout=8.0, auth=(key_id, key_secret)) as client:
+            resp = await client.post(
+                f"{_RAZORPAY_BASE_URL}/orders",
+                json={"amount": amount, "currency": currency, "receipt": receipt[:40]})
+            resp.raise_for_status()
+            return resp.json()
+
+    data = await _razorpay_circuit.call(_create)
+    return {"order_id": data["id"]}
+
+
+def _razorpay_verify_signature(order_id: str, payment_id: str, signature: str, key_secret: str) -> bool:
+    """Unlike Cashfree, Razorpay's checkout.js hands the client a signed
+    order_id/payment_id/signature triple on success — HMAC-SHA256("order_id|payment_id",
+    key_secret) — so the server verifies that signature itself rather than trusting
+    the client outright."""
+    expected = hmac.new(key_secret.encode(), f"{order_id}|{payment_id}".encode(),
+                        hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature or "")
+
+
+async def _razorpay_create_refund(key_id: str, key_secret: str, payment_id: str,
+                                   amount_paise: int) -> dict:
+    """Refund a captured Razorpay payment — keyed by the gateway *payment* id
+    (unlike Cashfree's refund, which is keyed by the order id)."""
+    async def _refund():
+        async with httpx.AsyncClient(timeout=8.0, auth=(key_id, key_secret)) as client:
+            resp = await client.post(
+                f"{_RAZORPAY_BASE_URL}/payments/{payment_id}/refund",
+                json={"amount": amount_paise})
+            resp.raise_for_status()
+            return resp.json()
+
+    return await _razorpay_circuit.call(_refund)
+
+
 def _otp_provider() -> str:
     # Priority: Twilio Verify → mock.
     if _TWILIO_SID and _TWILIO_TOKEN and _TWILIO_VERIFY_SID:
@@ -2597,7 +2656,11 @@ async def _get_or_create_cart(user_id: Optional[str], anon_key: Optional[str],
                               currency: str = "INR") -> dict:
     """`currency` only matters the moment a cart is first created — an existing
     cart keeps whatever currency it started with, so a visitor's detected region
-    flipping mid-session (VPN, etc.) can't silently reprice items already in it."""
+    flipping mid-session (VPN, etc.) can't silently reprice items already in it.
+    The one exception: a still-EMPTY existing cart carries no repricing risk (there's
+    nothing priced yet), so it's safe to re-point its currency at whatever's newly
+    detected — this is what lets a stale cart (created before region detection
+    settled, or from an earlier visit) recover once its items are removed."""
     if not user_id and not anon_key:
         # Mongo matched {"anon_key": None} here, which silently collided with any
         # cart lacking the field. Fail cleanly instead.
@@ -2607,6 +2670,14 @@ async def _get_or_create_cart(user_id: Optional[str], anon_key: Optional[str],
     else:
         row = await db.fetch_one(_CART_SELECT + " AND c.session_token = $1", anon_key)
     if row:
+        if (row.get("currency") or "INR").strip() != currency:
+            has_items = await db.fetch_val(
+                "SELECT EXISTS(SELECT 1 FROM cart_items WHERE cart_id = $1::uuid)", row["cart_id"])
+            if not has_items:
+                await db.execute(
+                    "UPDATE carts SET currency = $2, updated_at = now() WHERE id = $1::uuid",
+                    row["cart_id"], currency)
+                row["currency"] = currency
         return await _shape_cart(row)
     cart_id = uuid.uuid4()
     await db.execute(
@@ -3029,23 +3100,39 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
 
     buyer_id = user_id
 
-    # Cashfree: create order if keys available, else mock
-    cf_app_id = os.environ.get("CASHFREE_APP_ID", "")
-    cf_secret = os.environ.get("CASHFREE_SECRET_KEY", "")
+    # India/INR stays on Cashfree; everywhere else (USD) goes through Razorpay, which
+    # — unlike Cashfree for this merchant — can actually take international cards.
+    gateway = "razorpay" if cart["currency"] != "INR" else "cashfree"
+    cf_app_id = None
     cf_order_id = f"mock_{order_id}"
     payment_session_id = None
-    if cf_app_id and cf_secret:
-        try:
-            cf_order = await _cashfree_create_order(
-                cf_app_id, cf_secret, total, cart["currency"], str(order_id),
-                {"customer_id": re.sub(r"[^A-Za-z0-9]", "", str(buyer_id))[:50] or "guest",
-                 "customer_name": body.shipping_name, "customer_email": body.email,
-                 "customer_phone": body.shipping_phone},
-                f"{os.environ.get('PUBLIC_APP_URL', '').rstrip('/')}/order-confirmed/{order_id}")
-            cf_order_id = cf_order["order_id"]
-            payment_session_id = cf_order["payment_session_id"]
-        except Exception as e:
-            log.warning(f"cashfree create failed: {e} — falling back to mock")
+    razorpay_order = None
+    if gateway == "razorpay":
+        rzp_key_id, rzp_secret = _razorpay_keys()
+        if rzp_key_id and rzp_secret:
+            try:
+                rzp_order = await _razorpay_create_order(
+                    rzp_key_id, rzp_secret, total, cart["currency"], str(order_id))
+                cf_order_id = rzp_order["order_id"]
+                razorpay_order = {"order_id": cf_order_id, "key_id": rzp_key_id,
+                                   "amount": total, "currency": cart["currency"]}
+            except Exception as e:
+                log.warning(f"razorpay create failed: {e} — falling back to mock")
+    else:
+        cf_app_id = os.environ.get("CASHFREE_APP_ID", "")
+        cf_secret = os.environ.get("CASHFREE_SECRET_KEY", "")
+        if cf_app_id and cf_secret:
+            try:
+                cf_order = await _cashfree_create_order(
+                    cf_app_id, cf_secret, total, cart["currency"], str(order_id),
+                    {"customer_id": re.sub(r"[^A-Za-z0-9]", "", str(buyer_id))[:50] or "guest",
+                     "customer_name": body.shipping_name, "customer_email": body.email,
+                     "customer_phone": body.shipping_phone},
+                    f"{os.environ.get('PUBLIC_APP_URL', '').rstrip('/')}/order-confirmed/{order_id}")
+                cf_order_id = cf_order["order_id"]
+                payment_session_id = cf_order["payment_session_id"]
+            except Exception as e:
+                log.warning(f"cashfree create failed: {e} — falling back to mock")
 
     # Address, order, lines and the pending payment are one transaction — Mongo wrote
     # a single document, so this has to be all-or-nothing too.
@@ -3100,8 +3187,8 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
         await conn.execute(
             """INSERT INTO payments (id, order_id, gateway, gateway_ref, amount, currency,
                                      status)
-               VALUES ($1,$2,'cashfree',$3,$4,$5,'initiated')""",
-            uuid.uuid4(), order_id, cf_order_id, db.to_amount(total), cart["currency"])
+               VALUES ($1,$2,$6,$3,$4,$5,'initiated')""",
+            uuid.uuid4(), order_id, cf_order_id, db.to_amount(total), cart["currency"], gateway)
 
         # Cart is converted, not deleted — it's the audit trail of what was bought.
         await conn.execute(
@@ -3109,7 +3196,8 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
             cart["cart_id"])
 
     order = await _load_order(str(order_id))
-    return {"order": order, "payment_session_id": payment_session_id, "cf_app_id": cf_app_id or None}
+    return {"order": order, "payment_session_id": payment_session_id, "cf_app_id": cf_app_id or None,
+            "razorpay": razorpay_order}
 
 
 @api.post("/checkout/mock-pay/{order_id}")
@@ -3227,18 +3315,19 @@ async def _mark_paid(order: dict, payment_id: str) -> dict:
 
 class CashfreeVerifyIn(BaseModel):
     order_id: str
+    # Only set for a Razorpay (non-INR) checkout — Razorpay's checkout.js hands the
+    # client this signed triple on success, unlike Cashfree which gives no client-side
+    # signal at all.
+    razorpay_payment_id: Optional[str] = None
+    razorpay_signature: Optional[str] = None
 
 
 @api.post("/checkout/verify")
 async def checkout_verify(body: CashfreeVerifyIn):
-    """Cashfree, unlike Razorpay, gives the client no signature to check — the
-    checkout modal just resolves when the buyer is done. So the server is the one
-    that asks Cashfree directly whether the order's payment actually succeeded,
-    rather than trusting anything the client passed."""
-    cf_app_id = os.environ.get("CASHFREE_APP_ID", "")
-    cf_secret = os.environ.get("CASHFREE_SECRET_KEY", "")
-    if not (cf_app_id and cf_secret):
-        raise HTTPException(400, "Cashfree not configured — use /api/checkout/mock-pay for dev.")
+    """Cashfree gives the client no signature to check — the checkout modal just
+    resolves when the buyer is done, so the server asks Cashfree directly whether
+    the order's payment actually succeeded. Razorpay orders instead verify the
+    client-supplied signature (see _razorpay_verify_signature)."""
     order = await _load_order(body.order_id)
     if not order:
         raise HTTPException(404, "Order not found")
@@ -3249,11 +3338,28 @@ async def checkout_verify(body: CashfreeVerifyIn):
     # the same status guard the webhook uses below.
     if order.get("status") == "paid":
         return order
-    gateway_ref = await db.fetch_val(
-        """SELECT gateway_ref FROM payments WHERE order_id = $1::uuid
+    payment = await db.fetch_one(
+        """SELECT gateway, gateway_ref FROM payments WHERE order_id = $1::uuid
             ORDER BY created_at DESC LIMIT 1""", body.order_id)
-    if not gateway_ref:
+    if not payment or not payment["gateway_ref"]:
         raise HTTPException(404, "No payment attempt found for this order")
+    gateway_ref = payment["gateway_ref"]
+
+    if payment["gateway"] == "razorpay":
+        rzp_key_id, rzp_secret = _razorpay_keys()
+        if not (rzp_key_id and rzp_secret):
+            raise HTTPException(400, "Razorpay not configured — use /api/checkout/mock-pay for dev.")
+        if not (body.razorpay_payment_id and body.razorpay_signature):
+            raise HTTPException(400, "Missing Razorpay payment confirmation")
+        if not _razorpay_verify_signature(gateway_ref, body.razorpay_payment_id,
+                                          body.razorpay_signature, rzp_secret):
+            raise HTTPException(400, "Payment could not be verified")
+        return await _mark_paid(order, body.razorpay_payment_id)
+
+    cf_app_id = os.environ.get("CASHFREE_APP_ID", "")
+    cf_secret = os.environ.get("CASHFREE_SECRET_KEY", "")
+    if not (cf_app_id and cf_secret):
+        raise HTTPException(400, "Cashfree not configured — use /api/checkout/mock-pay for dev.")
     try:
         cf_payments = await _cashfree_get_order_payments(cf_app_id, cf_secret, gateway_ref)
     except Exception as e:
@@ -3269,11 +3375,12 @@ async def checkout_verify(body: CashfreeVerifyIn):
 async def checkout_pay(order_id: str, request: Request,
                        user_id: Optional[str] = Depends(get_user_id_optional)):
     """Re-initiate payment for an existing unpaid order — the "Pay now" button on the
-    account page. Creates a FRESH Cashfree order for the outstanding total and repoints
-    the payment row's gateway_ref at it (so the webhook/verify can still match), then
-    hands the payment session back to the client to open checkout. Falls back to the
-    mock path when Cashfree keys aren't configured. Response shape mirrors /checkout so
-    the frontend reuses the same Cashfree-open + /checkout/verify logic."""
+    account page. Creates a FRESH gateway order for the outstanding total (Cashfree for
+    INR, Razorpay for everything else — same split as /checkout) and repoints the
+    payment row's gateway_ref at it (so the webhook/verify can still match), then hands
+    the payment session back to the client to open checkout. Falls back to the mock path
+    when no keys are configured. Response shape mirrors /checkout so the frontend reuses
+    the same gateway-open + /checkout/verify logic."""
     order = await _load_order(order_id)
     if not order:
         raise HTTPException(404, "Order not found")
@@ -3302,26 +3409,47 @@ async def checkout_pay(order_id: str, request: Request,
             raise HTTPException(
                 409, f"“{name}” is out of stock — only {available} of {total_qty} left.")
 
+    order_currency = order.get("currency") or "INR"
+    if order_currency != "INR":
+        rzp_key_id, rzp_secret = _razorpay_keys()
+        if rzp_key_id and rzp_secret:
+            try:
+                rzp_order = await _razorpay_create_order(
+                    rzp_key_id, rzp_secret, int(order["total"]), order_currency, order_id)
+                await db.execute(
+                    """UPDATE payments SET gateway = 'razorpay', gateway_ref = $2, status = 'initiated'
+                        WHERE id = (SELECT id FROM payments WHERE order_id = $1::uuid
+                                    ORDER BY created_at DESC LIMIT 1)""",
+                    order_id, rzp_order["order_id"])
+                return {"order": order, "payment_session_id": None, "cf_app_id": None,
+                        "razorpay": {"order_id": rzp_order["order_id"], "key_id": rzp_key_id,
+                                     "amount": int(order["total"]), "currency": order_currency},
+                        "mock_payment": False}
+            except Exception as e:
+                log.warning(f"pay-now razorpay create failed: {e} — falling back to mock")
+        return {"order": order, "payment_session_id": None, "cf_app_id": None, "razorpay": None,
+                "mock_payment": True}
+
     cf_app_id = os.environ.get("CASHFREE_APP_ID", "")
     cf_secret = os.environ.get("CASHFREE_SECRET_KEY", "")
     if cf_app_id and cf_secret:
         try:
             cf_order = await _cashfree_create_order(
-                cf_app_id, cf_secret, int(order["total"]), order.get("currency") or "INR", order_id,
+                cf_app_id, cf_secret, int(order["total"]), order_currency, order_id,
                 {"customer_id": re.sub(r"[^A-Za-z0-9]", "", str(user_id or order.get("user_id") or "guest"))[:50] or "guest",
                  "customer_name": order.get("shipping_name"), "customer_email": order.get("shipping_email"),
                  "customer_phone": order.get("shipping_phone")},
                 f"{os.environ.get('PUBLIC_APP_URL', '').rstrip('/')}/order-confirmed/{order_id}")
             await db.execute(
-                """UPDATE payments SET gateway_ref = $2, status = 'initiated'
+                """UPDATE payments SET gateway = 'cashfree', gateway_ref = $2, status = 'initiated'
                     WHERE id = (SELECT id FROM payments WHERE order_id = $1::uuid
                                 ORDER BY created_at DESC LIMIT 1)""",
                 order_id, cf_order["order_id"])
             return {"order": order, "payment_session_id": cf_order["payment_session_id"],
-                    "cf_app_id": cf_app_id, "mock_payment": False}
+                    "cf_app_id": cf_app_id, "razorpay": None, "mock_payment": False}
         except Exception as e:
             log.warning(f"pay-now cashfree create failed: {e} — falling back to mock")
-    return {"order": order, "payment_session_id": None, "cf_app_id": None, "mock_payment": True}
+    return {"order": order, "payment_session_id": None, "cf_app_id": None, "razorpay": None, "mock_payment": True}
 
 
 # ── Cashfree webhook (server-to-server, signature-verified, idempotent) ───────
@@ -3436,6 +3564,109 @@ async def cashfree_webhook(request: Request):
     return result
 
 
+# ── Razorpay webhook (server-to-server, signature-verified, idempotent) ───────
+@api.post("/webhook/razorpay")
+async def razorpay_webhook(request: Request):
+    """
+    Razorpay -> here, for the non-INR (international) orders /checkout routes to
+    Razorpay. Handles payment.captured / payment.failed. Signature is
+    hex(HMAC-SHA256(raw body, RAZORPAY_WEBHOOK_SECRET)) compared against
+    x-razorpay-signature — a separate webhook secret, unlike Cashfree which signs
+    with the client secret itself.
+    We ALWAYS return 200 after logging so Razorpay doesn't retry-storm us on our
+    own bugs; the event is retained in processed_webhooks for audit.
+    """
+    secret = os.environ.get("RAZORPAY_WEBHOOK_SECRET", "").strip()
+    raw = await request.body()
+    sig = request.headers.get("x-razorpay-signature", "")
+
+    verified = False
+    if secret:
+        expected = hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+        verified = hmac.compare_digest(expected, sig)
+        if not verified:
+            log.warning("razorpay webhook: bad signature")
+            raise HTTPException(400, "Bad signature")
+    else:
+        log.warning("razorpay webhook: RAZORPAY_WEBHOOK_SECRET not set — accepting without verification")
+
+    try:
+        payload = json.loads(raw or b"{}")
+    except Exception:
+        payload = {}
+
+    event = payload.get("event", "")
+    rzp_payment = ((payload.get("payload") or {}).get("payment") or {}).get("entity") or {}
+    rzp_order_id = rzp_payment.get("order_id")
+    # rzp_payment.id is Razorpay's idempotency key here — same role as Cashfree's
+    # cf_payment_id above.
+    event_id = str(rzp_payment.get("id") or "") or None
+
+    if event_id:
+        exists = await db.fetch_val(
+            "SELECT event_id FROM processed_webhooks WHERE event_id = $1", event_id)
+        if exists:
+            return {"ok": True, "duplicate": True}
+
+    result: dict = {"ok": True, "event": event}
+
+    try:
+        if event == "payment.captured":
+            if rzp_order_id:
+                oid = await db.fetch_val(
+                    "SELECT order_id::text FROM payments WHERE gateway_ref = $1"
+                    " ORDER BY created_at DESC LIMIT 1", rzp_order_id)
+                order = await _load_order(oid) if oid else None
+                if order and order.get("status") != "paid":
+                    await _mark_paid(order, str(rzp_payment.get("id") or ""))
+                    result["order_id"] = order.get("order_id")
+                    result["marked_paid"] = True
+                elif order:
+                    result["order_id"] = order.get("order_id")
+                    result["marked_paid"] = False
+                    result["reason"] = "already paid"
+                else:
+                    result["marked_paid"] = False
+                    result["reason"] = f"order for razorpay_order_id={rzp_order_id} not found"
+        elif event == "payment.failed":
+            if rzp_order_id:
+                reason = rzp_payment.get("error_description")
+                async with db.transaction() as conn:
+                    oid = await conn.fetchval(
+                        "SELECT order_id FROM payments WHERE gateway_ref = $1"
+                        " ORDER BY created_at DESC LIMIT 1", rzp_order_id)
+                    if oid:
+                        await conn.execute(
+                            """UPDATE orders SET status='payment_failed'
+                                WHERE id = $1 AND status <> 'paid'""", oid)
+                        await conn.execute(
+                            """UPDATE payments SET status='failed',
+                                      method_details = COALESCE(method_details,'{}'::jsonb)
+                                                       || jsonb_build_object('failure_reason', $2::text)
+                                WHERE order_id = $1""", oid, reason)
+                        await conn.execute(
+                            """INSERT INTO order_events (id, order_id, to_status, reason)
+                               VALUES ($1,$2,'payment_failed',$3)""",
+                            uuid.uuid4(), oid, reason)
+                result["payment_failed_for"] = rzp_order_id
+    except Exception as e:
+        log.exception(f"razorpay webhook handler crashed: {e}")
+        result["ok"] = False
+        result["error"] = str(e)[:200]
+
+    try:
+        await db.execute(
+            """INSERT INTO processed_webhooks (event_id, gateway, event_type, verified,
+                                               payload, result, processed_at)
+               VALUES ($1,'razorpay',$2,$3,$4,$5, now())
+               ON CONFLICT (event_id) DO NOTHING""",
+            event_id or f"noid_{uuid.uuid4().hex}", event, verified, payload, result)
+    except Exception as e:
+        log.warning(f"razorpay webhook: audit insert failed: {e}")
+
+    return result
+
+
 @api.get("/orders")
 async def list_orders(user_id: str = Depends(require_user)):
     rows = await db.fetch_all(
@@ -3480,7 +3711,7 @@ async def cancel_order(order_id: str, body: OrderCancelIn, user_id: str = Depend
         raise HTTPException(409, "The 24-hour cancellation window for this order has passed.")
 
     payment = await db.fetch_one(
-        """SELECT id::text AS payment_id, gateway_payment_id, gateway_ref, status, amount
+        """SELECT id::text AS payment_id, gateway, gateway_payment_id, gateway_ref, status, amount
              FROM payments WHERE order_id = $1::uuid ORDER BY created_at DESC LIMIT 1""",
         order_id)
     # A mock/dev payment never actually took money, so it never needs a real refund —
@@ -3492,7 +3723,23 @@ async def cancel_order(order_id: str, body: OrderCancelIn, user_id: str = Depend
         and not str(payment.get("gateway_ref") or "").startswith("mock_"))
 
     refund_result = None
-    if needs_refund:
+    if needs_refund and payment["gateway"] == "razorpay":
+        rzp_key_id, rzp_secret = _razorpay_keys()
+        if not (rzp_key_id and rzp_secret):
+            raise HTTPException(503, "Refunds are temporarily unavailable. Please contact support.")
+        try:
+            # Razorpay refunds are keyed by the captured payment id, unlike Cashfree's
+            # order-id-keyed refund.
+            rzp_refund = await _razorpay_create_refund(
+                rzp_key_id, rzp_secret, payment["gateway_payment_id"], db.to_paise(payment["amount"]))
+            refund_result = {"refund_id": rzp_refund.get("id"),
+                             "refund_status": "SUCCESS" if rzp_refund.get("status") == "processed" else "PENDING"}
+        except CircuitOpenError:
+            raise HTTPException(503, "Refund service temporarily unavailable. Please try again shortly.")
+        except Exception as e:
+            log.warning(f"razorpay refund failed for order {order_id}: {e}")
+            raise HTTPException(502, "Could not process the refund. Please contact support.")
+    elif needs_refund:
         cf_app_id = os.environ.get("CASHFREE_APP_ID", "")
         cf_secret = os.environ.get("CASHFREE_SECRET_KEY", "")
         if not (cf_app_id and cf_secret):
@@ -4253,26 +4500,42 @@ async def consultation_request(body: ConsultationRequestIn, currency: str = "INR
     fee, resolved_currency = fee_resolved["fee"], fee_resolved["currency"]
     booking_id = uuid.uuid4()
 
-    cf_app_id = os.environ.get("CASHFREE_APP_ID", "")
-    cf_secret = os.environ.get("CASHFREE_SECRET_KEY", "")
+    # Same INR-stays-on-Cashfree / everything-else-goes-to-Razorpay split as /checkout.
+    cf_app_id = None
     cf_order_id = f"mock_{booking_id}"
     payment_session_id = None
-    if cf_app_id and cf_secret:
-        try:
-            cf_order = await _cashfree_create_order(
-                cf_app_id, cf_secret, fee, resolved_currency, str(booking_id),
-                {"customer_id": re.sub(r"[^A-Za-z0-9]", "", str(user_id or booking_id))[:50],
-                 "customer_name": body.name, "customer_email": body.email,
-                 "customer_phone": body.phone},
-                f"{os.environ.get('PUBLIC_APP_URL', '').rstrip('/')}/consultation")
-            cf_order_id = cf_order["order_id"]
-            payment_session_id = cf_order["payment_session_id"]
-        except Exception as e:
-            log.warning(f"cashfree create failed (consultation): {e} — falling back to mock")
+    razorpay_order = None
+    if resolved_currency != "INR":
+        rzp_key_id, rzp_secret = _razorpay_keys()
+        if rzp_key_id and rzp_secret:
+            try:
+                rzp_order = await _razorpay_create_order(
+                    rzp_key_id, rzp_secret, fee, resolved_currency, str(booking_id))
+                cf_order_id = rzp_order["order_id"]
+                razorpay_order = {"order_id": cf_order_id, "key_id": rzp_key_id,
+                                   "amount": fee, "currency": resolved_currency}
+            except Exception as e:
+                log.warning(f"razorpay create failed (consultation): {e} — falling back to mock")
+    else:
+        cf_app_id = os.environ.get("CASHFREE_APP_ID", "")
+        cf_secret = os.environ.get("CASHFREE_SECRET_KEY", "")
+        if cf_app_id and cf_secret:
+            try:
+                cf_order = await _cashfree_create_order(
+                    cf_app_id, cf_secret, fee, resolved_currency, str(booking_id),
+                    {"customer_id": re.sub(r"[^A-Za-z0-9]", "", str(user_id or booking_id))[:50],
+                     "customer_name": body.name, "customer_email": body.email,
+                     "customer_phone": body.phone},
+                    f"{os.environ.get('PUBLIC_APP_URL', '').rstrip('/')}/consultation")
+                cf_order_id = cf_order["order_id"]
+                payment_session_id = cf_order["payment_session_id"]
+            except Exception as e:
+                log.warning(f"cashfree create failed (consultation): {e} — falling back to mock")
 
     # razorpay_order_id/razorpay_payment_id are gateway-agnostic gateway-ref columns
     # in practice (they just predate the Cashfree switch) — reused as-is rather than
-    # renamed, to avoid a migration for what's purely a naming nicety.
+    # renamed, to avoid a migration for what's purely a naming nicety. They now hold
+    # an actual Razorpay order id again for non-INR bookings.
     await db.execute(
         """INSERT INTO consultations (id, astrologer_id, astrologer_name_snapshot, slot_at,
                 preferred_date, time_of_day, user_id, contact_name, contact_email,
@@ -4283,17 +4546,21 @@ async def consultation_request(body: ConsultationRequestIn, currency: str = "INR
         body.name, body.email, body.phone, body.concern, db.to_amount(fee), resolved_currency, cf_order_id)
 
     consult = await _load_consultation(str(booking_id))
-    return {"consultation": consult, "payment_session_id": payment_session_id, "cf_app_id": cf_app_id or None}
+    return {"consultation": consult, "payment_session_id": payment_session_id, "cf_app_id": cf_app_id or None,
+            "razorpay": razorpay_order}
+
+
+class ConsultationVerifyIn(BaseModel):
+    # Only set for a Razorpay (non-INR) booking — see CashfreeVerifyIn's twin fields.
+    razorpay_payment_id: Optional[str] = None
+    razorpay_signature: Optional[str] = None
 
 
 @api.post("/consultation/{booking_id}/verify")
-async def consultation_verify(booking_id: str):
+async def consultation_verify(booking_id: str, body: Optional[ConsultationVerifyIn] = None):
     """Same reasoning as /checkout/verify: Cashfree gives no client-side signature,
-    so the server asks Cashfree directly whether the payment succeeded."""
-    cf_app_id = os.environ.get("CASHFREE_APP_ID", "")
-    cf_secret = os.environ.get("CASHFREE_SECRET_KEY", "")
-    if not (cf_app_id and cf_secret):
-        raise HTTPException(400, "Cashfree not configured — use /api/consultation/{id}/mock-pay for dev.")
+    so the server asks Cashfree directly whether the payment succeeded. A non-INR
+    booking instead verifies the Razorpay-signed payment/order/signature triple."""
     consult = await _load_consultation(booking_id)
     if not consult:
         raise HTTPException(404, "Consultation not found")
@@ -4303,6 +4570,23 @@ async def consultation_verify(booking_id: str):
         "SELECT razorpay_order_id FROM consultations WHERE id = $1::uuid", booking_id)
     if not gateway_ref:
         raise HTTPException(404, "No payment attempt found for this booking")
+
+    if (consult.get("currency") or "INR") != "INR":
+        body = body or ConsultationVerifyIn()
+        rzp_key_id, rzp_secret = _razorpay_keys()
+        if not (rzp_key_id and rzp_secret):
+            raise HTTPException(400, "Razorpay not configured — use /api/consultation/{id}/mock-pay for dev.")
+        if not (body.razorpay_payment_id and body.razorpay_signature):
+            raise HTTPException(400, "Missing Razorpay payment confirmation")
+        if not _razorpay_verify_signature(gateway_ref, body.razorpay_payment_id,
+                                          body.razorpay_signature, rzp_secret):
+            raise HTTPException(400, "Payment could not be verified")
+        return await _mark_consultation_paid(booking_id, body.razorpay_payment_id)
+
+    cf_app_id = os.environ.get("CASHFREE_APP_ID", "")
+    cf_secret = os.environ.get("CASHFREE_SECRET_KEY", "")
+    if not (cf_app_id and cf_secret):
+        raise HTTPException(400, "Cashfree not configured — use /api/consultation/{id}/mock-pay for dev.")
     try:
         cf_payments = await _cashfree_get_order_payments(cf_app_id, cf_secret, gateway_ref)
     except Exception as e:
