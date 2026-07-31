@@ -921,9 +921,11 @@ async def root():
     return {"app": "Tredev", "public_key_ed25519_hex": ED25519_PUBLIC_HEX}
 
 
-@app.get("/health")
-@api.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
+@api.api_route("/health", methods=["GET", "HEAD"])
 async def health():
+    # methods includes HEAD — uptime monitors commonly probe with HEAD instead of
+    # GET to save bandwidth; GET-only left it 405ing for those checks.
     return {"success": True, "message": "Server is healthy", "timestamp": iso(now())}
 
 
