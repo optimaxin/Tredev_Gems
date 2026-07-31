@@ -2578,6 +2578,7 @@ async def _cart_items(cart_id: str, conn=None) -> list[dict]:
                p.variant_options                 AS variant_options,
                p.category_key::text              AS category_key,
                p.title                           AS name,
+               p.shipping_charges                AS shipping_charges,
                (SELECT ma.object_key FROM product_media pm
                   JOIN media_assets ma ON ma.id = pm.media_id
                  WHERE pm.product_id = p.id ORDER BY pm.position LIMIT 1) AS image

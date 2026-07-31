@@ -40,12 +40,22 @@ export default function Checkout() {
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const currency = cart.currency || "INR";
   const gst = Math.round(subtotal * 0.03);
+  // Mirrors the backend's /checkout shipping_total: one distinct product in the
+  // cart can carry its own USD shipping charge for the buyer's chosen region,
+  // summed once per product (not per unit/qty or per options-line) — so the total
+  // shown here matches exactly what the gateway ends up charging in one go.
+  const shippingTotal = currency === "USD" && form.shipping_region
+    ? [...new Map(cart.items.map((li) => [li.product_id, li])).values()].reduce((sum, li) => {
+        const charge = (li.shipping_charges || {})[form.shipping_region];
+        return charge ? sum + Math.round(Number(charge) * 100) : sum;
+      }, 0)
+    : 0;
   // A credit only applies when it matches this cart's currency (server enforces the
   // same rule at /checkout — see checkout()'s credit_usable) — a ₹ credit can't
   // discount a $ order or vice versa, so it just stays available for later instead.
   const creditUsable = credit?.available && (credit.currency || "INR") === currency;
   const discount = creditUsable ? Math.min(credit.amount, subtotal) : 0;
-  const total = subtotal + gst - discount;
+  const total = subtotal + gst + shippingTotal - discount;
   const DELIVER_MS = 4200; // matches the truck animation length
 
   // Payment is confirmed by here — play the delivery truck, then leave for the
@@ -187,7 +197,8 @@ export default function Checkout() {
           </div>
           {currency === "USD" && (
             <div className="mt-2 flex justify-between text-sm text-ink-muted">
-              <span>Shipping</span><span>Added for your region above</span>
+              <span>Shipping</span>
+              <span>{form.shipping_region ? formatPrice(shippingTotal, currency) : "Select your region above"}</span>
             </div>
           )}
           {discount > 0 && (
@@ -196,7 +207,7 @@ export default function Checkout() {
             </div>
           )}
           <div className="mt-4 flex items-baseline justify-between">
-            <span>{currency === "USD" ? "Total (+ shipping)" : "Total"}</span>
+            <span>Total</span>
             <span className="font-display text-3xl text-maroon-deep">{formatPrice(total, currency)}</span>
           </div>
           <div className="mt-6">
