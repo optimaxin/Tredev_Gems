@@ -131,7 +131,7 @@ export default function OrderCancelled() {
                     <Package size={14} weight="duotone" className="text-gold-soft shrink-0" />
                     <span className="truncate">{li.name}{li.qty > 1 ? ` × ${li.qty}` : ""}</span>
                   </span>
-                  <span className="font-mono text-ink-soft shrink-0">{formatINR(li.price * li.qty)}</span>
+                  <span className="font-mono text-ink-soft shrink-0">{formatPrice(li.price * li.qty, order.currency)}</span>
                 </div>
               ))}
             </div>
