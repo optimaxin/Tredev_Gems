@@ -11,7 +11,7 @@ import OrderTruckButton from "@/components/gemora/OrderTruckButton";
 import PaymentFailedModal from "@/components/gemora/PaymentFailedModal";
 import { openCashfreeCheckout } from "@/lib/cashfree";
 import { openRazorpayCheckout } from "@/lib/razorpay";
-import { SHIPPING_REGIONS } from "@/lib/shipping";
+import { SHIPPING_COUNTRIES, regionForCountry } from "@/lib/shipping";
 
 export default function Checkout() {
   const { cart, refresh, subtotal } = useCart();
@@ -35,18 +35,22 @@ export default function Checkout() {
   const [form, setForm] = useState({
     shipping_name: "", shipping_phone: "", shipping_address: "",
     shipping_city: "", shipping_state: "", shipping_pincode: "", email: "",
-    shipping_region: "", // required for a USD (outside-India) checkout only
+    shipping_country: "", // required for a USD (outside-India) checkout only
   });
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const currency = cart.currency || "INR";
   const gst = Math.round(subtotal * 0.03);
-  // Mirrors the backend's /checkout shipping_total: one distinct product in the
-  // cart can carry its own USD shipping charge for the buyer's chosen region,
-  // summed once per product (not per unit/qty or per options-line) — so the total
+  // The buyer picks their exact country (far less error-prone than asking them to
+  // self-classify into a region), which resolves to one of the admin's coarse
+  // shipping regions — same resolution the backend does server-side, so the total
   // shown here matches exactly what the gateway ends up charging in one go.
-  const shippingTotal = currency === "USD" && form.shipping_region
+  const shippingRegion = form.shipping_country ? regionForCountry(form.shipping_country) : null;
+  // Mirrors the backend's /checkout shipping_total: one distinct product in the
+  // cart can carry its own USD shipping charge per region, summed once per product
+  // (not per unit/qty or per options-line).
+  const shippingTotal = currency === "USD" && shippingRegion
     ? [...new Map(cart.items.map((li) => [li.product_id, li])).values()].reduce((sum, li) => {
-        const charge = (li.shipping_charges || {})[form.shipping_region];
+        const charge = (li.shipping_charges || {})[shippingRegion];
         return charge ? sum + Math.round(Number(charge) * 100) : sum;
       }, 0)
     : 0;
@@ -167,16 +171,16 @@ export default function Checkout() {
           ))}
           {currency === "USD" && (
             <label className="block">
-              <div className="text-xs text-ink-muted mb-1">Shipping region</div>
+              <div className="text-xs text-ink-muted mb-1">Shipping country</div>
               <select
                 required
-                data-testid="checkout-shipping_region"
-                value={form.shipping_region}
-                onChange={set("shipping_region")}
+                data-testid="checkout-shipping_country"
+                value={form.shipping_country}
+                onChange={set("shipping_country")}
                 className="w-full gold-line bg-ivory px-4 py-3 outline-none focus:border-maroon"
               >
-                <option value="" disabled>Select your region…</option>
-                {SHIPPING_REGIONS.map((r) => <option key={r} value={r}>{r}</option>)}
+                <option value="" disabled>Select your country…</option>
+                {SHIPPING_COUNTRIES.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
               </select>
             </label>
           )}
@@ -198,7 +202,7 @@ export default function Checkout() {
           {currency === "USD" && (
             <div className="mt-2 flex justify-between text-sm text-ink-muted">
               <span>Shipping</span>
-              <span>{form.shipping_region ? formatPrice(shippingTotal, currency) : "Select your region above"}</span>
+              <span>{shippingRegion ? formatPrice(shippingTotal, currency) : "Select your country above"}</span>
             </div>
           )}
           {discount > 0 && (

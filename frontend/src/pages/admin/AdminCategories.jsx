@@ -3,6 +3,7 @@ import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { PlusCircle, Trash, PencilSimple } from "@phosphor-icons/react";
 import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
+import AsyncButton from "@/components/gemora/AsyncButton";
 
 // Icons the storefront banner can render for a step (mirrors CategoryBanner's ICONS).
 const STEP_ICONS = ["sparkle", "drop", "sun", "moon", "leaf", "lotus", "hand", "shield",
@@ -35,6 +36,7 @@ export default function AdminCategories() {
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState(null); // "new" | cat | null
   const [form, setForm] = useState(EMPTY);
+  const [saving, setSaving] = useState(false);
 
   const refresh = () => api.get("/admin/categories").then((r) => setCats(r.data));
   useEffect(() => { refresh(); }, []);
@@ -47,12 +49,14 @@ export default function AdminCategories() {
 
   const save = async (e) => {
     e.preventDefault();
+    setSaving(true);
     try {
       const payload = { ...form, order: parseInt(form.order) || 100, parent_id: form.parent_id || null };
       if (editing === "new") await api.post("/admin/categories", payload);
       else await api.patch(`/admin/categories/${editing.category_id}`, payload);
       toast.success("Saved"); setEditing(null); refresh();
     } catch (e) { toast.error(e.response?.data?.detail); }
+    finally { setSaving(false); }
   };
 
   const remove = async (c) => {
@@ -220,7 +224,7 @@ export default function AdminCategories() {
           </div>
 
           <div className="md:col-span-2 flex gap-3">
-            <button type="submit" className="brand-gradient text-ivory px-5 py-3 text-xs uppercase tracking-widest">Save</button>
+            <AsyncButton type="submit" loading={saving} loadingText="Saving…" className="brand-gradient text-ivory px-5 py-3 text-xs uppercase tracking-widest">Save</AsyncButton>
             <button type="button" onClick={() => setEditing(null)} className="border border-gold/40 px-5 py-3 text-xs uppercase tracking-widest">Cancel</button>
           </div>
         </form>

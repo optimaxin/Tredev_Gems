@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { FIREBASE_ENABLED, fbAuth, ensureRecaptcha, clearRecaptcha, signInWithPhoneNumber } from "@/lib/firebase";
 import { X, Phone, ShieldCheck, WarningCircle } from "@phosphor-icons/react";
+import AsyncButton from "@/components/gemora/AsyncButton";
 
 /**
  * Firebase Phone Auth verification. onVerified(phone, otp_verification_token, session?) fires on success.
@@ -145,9 +146,9 @@ export default function PhoneVerify({ open = true, onClose, onVerified, prefillP
               />
             </div>
           </label>
-          <button onClick={send} disabled={sending} data-testid="phone-verify-send" className="mt-5 w-full brand-gradient text-ivory py-3 text-sm uppercase tracking-widest inline-flex items-center justify-center gap-2 hover-lift disabled:opacity-50">
-            {sending ? "Sending…" : "Send OTP"}
-          </button>
+          <AsyncButton onClick={send} loading={sending} loadingText="Sending…" data-testid="phone-verify-send" className="mt-5 w-full brand-gradient text-ivory py-3 text-sm uppercase tracking-widest inline-flex items-center justify-center gap-2 hover-lift disabled:opacity-50">
+            Send OTP
+          </AsyncButton>
         </>
       ) : (
         <>
@@ -160,12 +161,12 @@ export default function PhoneVerify({ open = true, onClose, onVerified, prefillP
               inputMode="numeric" maxLength={6} autoFocus
               className="w-full gold-line px-4 py-3 outline-none focus:border-maroon text-center font-mono text-2xl tracking-[0.5em]" />
           </label>
-          <button onClick={verify} disabled={verifying} data-testid="phone-verify-submit" className="mt-5 w-full brand-gradient text-ivory py-3 text-sm uppercase tracking-widest inline-flex items-center justify-center gap-2 hover-lift disabled:opacity-50">
-            <ShieldCheck size={16} weight="duotone" /> {verifying ? "Verifying…" : "Verify OTP"}
-          </button>
-          <button onClick={send} disabled={cooldown > 0 || sending} data-testid="phone-verify-resend" className="mt-3 w-full text-xs text-ink-muted hover:text-maroon disabled:opacity-50">
+          <AsyncButton onClick={verify} loading={verifying} loadingText="Verifying…" data-testid="phone-verify-submit" className="mt-5 w-full brand-gradient text-ivory py-3 text-sm uppercase tracking-widest inline-flex items-center justify-center gap-2 hover-lift disabled:opacity-50">
+            <ShieldCheck size={16} weight="duotone" /> Verify OTP
+          </AsyncButton>
+          <AsyncButton onClick={send} loading={sending} loadingText="Sending…" disabled={cooldown > 0} data-testid="phone-verify-resend" className="mt-3 w-full text-xs text-ink-muted hover:text-maroon disabled:opacity-50">
             {cooldown > 0 ? `Resend in ${cooldown}s` : "Resend OTP"}
-          </button>
+          </AsyncButton>
         </>
       )}
       {/* Firebase invisible reCAPTCHA anchor */}

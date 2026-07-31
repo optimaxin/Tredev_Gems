@@ -7,6 +7,7 @@ import {
   PlusCircle, Trash, X,
 } from "@phosphor-icons/react";
 import SearchBar from "@/components/gemora/SearchBar";
+import AsyncButton from "@/components/gemora/AsyncButton";
 
 const TABS = [
   { key: "inbox", label: "Inbox", Icon: ChatCircleDots },
@@ -143,10 +144,10 @@ function Inbox() {
               <input value={draft} onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), send())}
                 placeholder="Type a reply…" className="flex-1 gold-line bg-ivory px-3 py-2 text-sm outline-none focus:border-maroon" />
-              <button onClick={send} disabled={sending || !draft.trim()}
+              <AsyncButton onClick={send} loading={sending} loadingText="" disabled={!draft.trim()}
                 className="px-4 bg-maroon text-ivory disabled:opacity-40 flex items-center gap-1">
                 <PaperPlaneRight size={16} weight="fill" />
-              </button>
+              </AsyncButton>
             </div>
           </>
         )}
@@ -225,9 +226,9 @@ function NewTemplateForm({ meta, initialEvent = "manual", onDone, onCancel }) {
         </label>
       )}
       <div className="flex gap-2">
-        <button onClick={create} disabled={busy} className="text-xs inline-flex items-center gap-1 bg-maroon text-ivory px-4 py-2 disabled:opacity-40">
+        <AsyncButton onClick={create} loading={busy} loadingText="Creating…" className="text-xs inline-flex items-center gap-1 bg-maroon text-ivory px-4 py-2 disabled:opacity-40">
           <PlusCircle size={14} weight="fill" /> Create
-        </button>
+        </AsyncButton>
         <button onClick={onCancel} className="text-xs text-ink-muted px-2">Cancel</button>
       </div>
     </div>
@@ -239,6 +240,7 @@ function Templates() {
   const [editing, setEditing] = useState(null);
   const [body, setBody] = useState("");
   const [creating, setCreating] = useState(false);
+  const [testingKey, setTestingKey] = useState(null);
   const meta = useWaMeta();
   const load = () => api.get("/admin/whatsapp/templates").then((r) => setTemplates(r.data)).catch(() => {});
   useEffect(() => { load(); }, []);
@@ -287,10 +289,12 @@ function Templates() {
   const testSend = async (t) => {
     const phone = prompt(`Send a test "${t.name}" to which number? (with country code)`);
     if (!phone) return;
+    setTestingKey(t.key);
     try {
       await api.post(`/admin/whatsapp/templates/${t.key}/test`, { phone });
       toast.success("Test message sent");
     } catch (e) { toast.error(e.response?.data?.detail || "Test send failed"); }
+    finally { setTestingKey((k) => (k === t.key ? null : k)); }
   };
 
   return (
@@ -324,9 +328,9 @@ function Templates() {
               <code className="text-[11px] text-ink-muted">{t.key} · trigger: {t.trigger_event}</code>
             </div>
             <div className="flex items-center gap-3">
-              <button onClick={() => testSend(t)} className="text-xs inline-flex items-center gap-1 text-ink-soft hover:text-maroon">
+              <AsyncButton onClick={() => testSend(t)} loading={testingKey === t.key} loadingText="Sending…" className="text-xs inline-flex items-center gap-1 text-ink-soft hover:text-maroon">
                 <PaperPlaneTilt size={13} /> Test
-              </button>
+              </AsyncButton>
               <label className="inline-flex items-center gap-1.5 text-xs cursor-pointer">
                 <input type="checkbox" checked={t.enabled} onChange={() => toggle(t)} />
                 {t.enabled ? "On" : "Off"}
@@ -496,9 +500,9 @@ function Campaigns() {
           className="w-full gold-line bg-cream/40 px-3 py-2 text-sm outline-none focus:border-maroon" />
         <div className="flex items-center justify-between mt-2">
           <span className="text-[11px] text-ink-muted">Sends only to customers who opted in and have a verified phone. Paced by the gateway to reduce ban risk.</span>
-          <button onClick={launch} disabled={busy} className="bg-maroon text-ivory px-4 py-2 text-sm disabled:opacity-40 inline-flex items-center gap-1">
+          <AsyncButton onClick={launch} loading={busy} loadingText="Launching…" className="bg-maroon text-ivory px-4 py-2 text-sm disabled:opacity-40 inline-flex items-center gap-1">
             <MegaphoneSimple size={15} weight="fill" /> Launch
-          </button>
+          </AsyncButton>
         </div>
       </div>
 

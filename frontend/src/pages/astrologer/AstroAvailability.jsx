@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { apiAstro } from "@/context/AstroAuthContext";
 import { toast } from "sonner";
 import { Plus, Trash, CalendarX, FloppyDisk } from "@phosphor-icons/react";
+import AsyncButton from "@/components/gemora/AsyncButton";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -52,10 +53,10 @@ export default function AstroAvailability() {
           <h1 className="font-display text-4xl text-ink mt-1">Your weekly hours</h1>
           <p className="text-sm text-ink-muted mt-1">Times when clients can book consultations with you.</p>
         </div>
-        <button onClick={save} disabled={saving} data-testid="avail-save"
+        <AsyncButton onClick={save} loading={saving} loadingText="Saving…" data-testid="avail-save"
           className="brand-gradient text-ivory px-5 py-2.5 text-xs uppercase tracking-widest inline-flex items-center gap-2 disabled:opacity-50">
-          <FloppyDisk size={14} weight="duotone" /> {saving ? "Saving…" : "Save"}
-        </button>
+          <FloppyDisk size={14} weight="duotone" /> Save
+        </AsyncButton>
       </div>
 
       {loading ? (

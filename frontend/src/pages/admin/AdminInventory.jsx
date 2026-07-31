@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { PlusCircle, ShieldCheck } from "@phosphor-icons/react";
 import { useAuth } from "@/context/AuthContext";
 import SearchBar from "@/components/gemora/SearchBar";
+import AsyncButton from "@/components/gemora/AsyncButton";
 
 export default function AdminInventory() {
   const { user } = useAuth();
@@ -13,6 +14,9 @@ export default function AdminInventory() {
   const [sel, setSel] = useState("");
   const [addQty, setAddQty] = useState("");
   const [query, setQuery] = useState("");
+  const [addingUnits, setAddingUnits] = useState(false);
+  const [purging, setPurging] = useState(false);
+  const [issuingFor, setIssuingFor] = useState(null);
 
   const refresh = () => {
     api.get("/products?limit=500").then((r) => setProducts(r.data));
@@ -24,11 +28,13 @@ export default function AdminInventory() {
   const addUnits = async (product_id) => {
     const quantity = Math.max(0, parseInt(addQty, 10) || 0);
     if (!quantity) { toast.error("Enter how many pieces to add"); return; }
+    setAddingUnits(true);
     try {
       const { data } = await api.post("/admin/units/bulk", { product_id, quantity });
       toast.success(`${data.count} piece${data.count === 1 ? "" : "s"} added to inventory`);
       setAddQty(""); refresh();
     } catch (e) { toast.error(e.response?.data?.detail); }
+    finally { setAddingUnits(false); }
   };
 
   // Search across serial number and product name.
@@ -42,14 +48,17 @@ export default function AdminInventory() {
   const purgeAll = async () => {
     if (!confirm("Purge ALL inventory? Every unsold unit across every product is removed and non-serialized stock is zeroed. Sold units (in completed orders) are kept. This cannot be undone.")) return;
     if (!confirm("Are you absolutely sure? This wipes your entire sellable stock.")) return;
+    setPurging(true);
     try {
       const { data } = await api.post("/admin/inventory/purge");
       toast.success(`Purged · ${data.units_removed} unit${data.units_removed === 1 ? "" : "s"} removed`);
       refresh();
     } catch (e) { toast.error(e.response?.data?.detail); }
+    finally { setPurging(false); }
   };
 
   const issueCert = async (unit_id) => {
+    setIssuingFor(unit_id);
     try {
       await api.post("/admin/certificates/issue", {
         unit_id,
@@ -63,6 +72,7 @@ export default function AdminInventory() {
       });
       toast.success("Certificate signed"); refresh();
     } catch (e) { toast.error(e.response?.data?.detail); }
+    finally { setIssuingFor((id) => (id === unit_id ? null : id)); }
   };
 
   return (
@@ -73,9 +83,9 @@ export default function AdminInventory() {
           <h1 className="font-display text-4xl text-ink mt-1">Inventory</h1>
         </div>
         {user?.role === "owner" && (
-          <button onClick={purgeAll} data-testid="admin-inventory-purge" className="text-xs uppercase tracking-widest border border-revoked text-revoked px-4 py-2 hover:bg-revoked hover:text-ivory transition-colors">
+          <AsyncButton onClick={purgeAll} loading={purging} loadingText="Purging…" data-testid="admin-inventory-purge" className="text-xs uppercase tracking-widest border border-revoked text-revoked px-4 py-2 hover:bg-revoked hover:text-ivory transition-colors">
             Purge all inventory
-          </button>
+          </AsyncButton>
         )}
       </div>
 
@@ -97,9 +107,9 @@ export default function AdminInventory() {
               placeholder="Qty" data-testid="inventory-add-qty"
               className="w-20 gold-line px-2 py-1.5 text-sm outline-none focus:border-maroon"
             />
-            <button onClick={() => addUnits(sel)} data-testid="inventory-add-btn" className="text-xs uppercase tracking-widest border border-maroon text-maroon px-3 py-1.5 inline-flex items-center gap-1 hover:bg-maroon hover:text-ivory transition-colors">
+            <AsyncButton onClick={() => addUnits(sel)} loading={addingUnits} loadingText="Adding…" data-testid="inventory-add-btn" className="text-xs uppercase tracking-widest border border-maroon text-maroon px-3 py-1.5 inline-flex items-center gap-1 hover:bg-maroon hover:text-ivory transition-colors">
               <PlusCircle size={12} /> Add units
-            </button>
+            </AsyncButton>
           </div>
         )}
       </div>
@@ -119,7 +129,7 @@ export default function AdminInventory() {
                   <td className="px-4 py-3">{p?.name}</td>
                   <td className="px-4 py-3 uppercase text-xs">{u.status}</td>
                   <td className="px-4 py-3">{c ? <span className="text-verified inline-flex items-center gap-1"><ShieldCheck size={12} weight="duotone" /> {c.activated ? "active" : "issued"}</span> : "—"}</td>
-                  <td className="px-4 py-3">{!c && <button onClick={() => issueCert(u.unit_id)} className="text-xs text-maroon underline">Issue certificate</button>}</td>
+                  <td className="px-4 py-3">{!c && <AsyncButton onClick={() => issueCert(u.unit_id)} loading={issuingFor === u.unit_id} loadingText="Issuing…" className="text-xs text-maroon underline">Issue certificate</AsyncButton>}</td>
                 </tr>
               );
             })}

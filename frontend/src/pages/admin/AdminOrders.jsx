@@ -3,6 +3,7 @@ import { api, formatINR, describeOptions } from "@/lib/api";
 import { toast } from "sonner";
 import { PaperPlaneTilt, X, User, ClockCounterClockwise, MapPin, Package, Phone, CaretRight, Truck, Certificate, Receipt } from "@phosphor-icons/react";
 import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
+import AsyncButton from "@/components/gemora/AsyncButton";
 
 const STATUSES = ["pending_payment", "paid", "shipped", "delivered", "cancelled", "refunded"];
 
@@ -498,9 +499,9 @@ export default function AdminOrders() {
               </label>
             </div>
             <div className="mt-6 flex gap-3">
-              <button type="submit" disabled={sending} data-testid="dispatch-submit" className="brand-gradient text-ivory px-5 py-3 text-xs uppercase tracking-widest inline-flex items-center gap-2 disabled:opacity-50">
-                <PaperPlaneTilt size={14} weight="duotone" /> {sending ? "Dispatching…" : "Certify & dispatch"}
-              </button>
+              <AsyncButton type="submit" loading={sending} loadingText="Dispatching…" data-testid="dispatch-submit" className="brand-gradient text-ivory px-5 py-3 text-xs uppercase tracking-widest inline-flex items-center gap-2 disabled:opacity-50">
+                <PaperPlaneTilt size={14} weight="duotone" /> Certify &amp; dispatch
+              </AsyncButton>
               <button type="button" onClick={() => setDispatchFor(null)} className="border border-gold/40 text-ink-soft px-5 py-3 text-xs uppercase tracking-widest">Cancel</button>
             </div>
           </form>

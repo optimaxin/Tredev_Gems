@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api, formatINR } from "@/lib/api";
 import { toast } from "sonner";
+import AsyncButton from "@/components/gemora/AsyncButton";
 import {
   ChatCircleDots, PaperPlaneTilt, CheckCircle, Clock, X, UserCircle, Headset, CaretRight,
 } from "@phosphor-icons/react";
@@ -129,14 +130,16 @@ function QueryModal({ query, onClose, onUpdated }) {
                 data-testid="query-reply-input"
                 className="flex-1 gold-line bg-ivory px-3 py-2.5 text-sm outline-none focus:border-maroon resize-none"
               />
-              <button
+              <AsyncButton
                 onClick={send}
-                disabled={sending || !reply.trim()}
+                loading={sending}
+                disabled={!reply.trim()}
+                loadingText="Sending…"
                 data-testid="query-reply-send"
                 className="brand-gradient text-ivory px-5 py-3 text-xs uppercase tracking-widest inline-flex items-center gap-2 hover-lift disabled:opacity-40 shrink-0"
               >
-                <PaperPlaneTilt size={15} weight="duotone" /> {sending ? "Sending…" : "Send"}
-              </button>
+                <PaperPlaneTilt size={15} weight="duotone" /> Send
+              </AsyncButton>
             </div>
             <div className="text-[10px] text-ink-muted mt-2">Press ⌘/Ctrl + Enter to send. Our team is notified of every reply.</div>
           </div>
@@ -263,13 +266,14 @@ export default function AccountSupport({ user, orders = [] }) {
               We'll reply to <span className="font-mono">{user.email}</span>{user.phone ? <> or call <span className="font-mono">{user.phone}</span></> : ""}.
             </div>
 
-            <button
-              type="submit" disabled={submitting}
+            <AsyncButton
+              type="submit" loading={submitting}
+              loadingText="Submitting…"
               data-testid="support-submit"
               className="brand-gradient text-ivory px-6 py-3 text-xs uppercase tracking-widest inline-flex items-center gap-2 hover-lift disabled:opacity-50"
             >
-              <PaperPlaneTilt size={15} weight="duotone" /> {submitting ? "Submitting…" : "Submit query"}
-            </button>
+              <PaperPlaneTilt size={15} weight="duotone" /> Submit query
+            </AsyncButton>
           </form>
         )}
       </div>

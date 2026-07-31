@@ -7,6 +7,7 @@ import { ShieldCheck, Package, Heart, Certificate as CertIcon, ArrowRight, Phone
 import PhoneVerify from "@/components/gemora/PhoneVerify";
 import AccountSupport from "@/components/gemora/AccountSupport";
 import OrderTracking from "@/components/gemora/OrderTracking";
+import AsyncButton from "@/components/gemora/AsyncButton";
 import { toast } from "sonner";
 import { openCashfreeCheckout } from "@/lib/cashfree";
 import { openRazorpayCheckout } from "@/lib/razorpay";
@@ -342,14 +343,15 @@ export default function Account() {
                     <div className="text-xs text-ink-muted">
                       {o.status === "payment_failed" ? "Payment failed — no amount was deducted." : "Payment for this order is incomplete."}
                     </div>
-                    <button
+                    <AsyncButton
                       onClick={() => payNow(o)}
-                      disabled={payingId === o.order_id}
+                      loading={payingId === o.order_id}
+                      loadingText="Starting…"
                       data-testid={`order-pay-now-${o.order_id}`}
                       className="brand-gradient text-ivory px-6 py-3 text-xs uppercase tracking-widest inline-flex items-center gap-2 hover-lift disabled:opacity-50"
                     >
-                      <LockKey size={14} weight="duotone" /> {payingId === o.order_id ? "Starting…" : "Pay now"}
-                    </button>
+                      <LockKey size={14} weight="duotone" /> Pay now
+                    </AsyncButton>
                   </div>
                 )}
 
@@ -358,14 +360,15 @@ export default function Account() {
                     <div className="text-xs text-ink-muted">
                       Free cancellation within 24 hours of placing an order.
                     </div>
-                    <button
+                    <AsyncButton
                       onClick={() => cancelOrder(o)}
-                      disabled={cancellingId === o.order_id}
+                      loading={cancellingId === o.order_id}
+                      loadingText="Cancelling…"
                       data-testid={`order-cancel-${o.order_id}`}
                       className="border border-revoked text-revoked px-6 py-3 text-xs uppercase tracking-widest inline-flex items-center gap-2 hover:bg-revoked hover:text-ivory transition-colors disabled:opacity-50"
                     >
-                      <XCircle size={14} weight="duotone" /> {cancellingId === o.order_id ? "Cancelling…" : "Cancel order"}
-                    </button>
+                      <XCircle size={14} weight="duotone" /> Cancel order
+                    </AsyncButton>
                   </div>
                 )}
               </div>

@@ -736,9 +736,11 @@ class CheckoutIn(BaseModel):
     shipping_pincode: str
     email: EmailStr
     affiliate_ref: Optional[str] = None  # astrologer's affiliate code, if any
-    # Required for a USD (outside-India) checkout, so each product's shipping_charges
-    # dict can be looked up — ignored for INR (always free within India).
-    shipping_region: Optional[str] = None
+    # Required for a USD (outside-India) checkout — the buyer's exact country, an
+    # ISO-3166-1 alpha-2 code from SHIPPING_COUNTRIES. Resolved server-side to a
+    # shipping region (_shipping_region_for_country) to look up each product's
+    # shipping_charges dict. Ignored for INR (always free within India).
+    shipping_country: Optional[str] = None
 
 
 class DispatchIn(BaseModel):
@@ -1238,10 +1240,223 @@ def _normalize_query(q: str) -> str:
 SUPPORTED_CURRENCIES = {"INR", "USD"}
 
 # Shipping is free within India; everywhere else, a product can carry a USD
-# shipping charge per region — the buyer picks their region at checkout (there's
-# no country->region mapping; the region IS the choice, kept deliberately coarse).
-SHIPPING_REGIONS = ["North America", "Europe", "Asia-Pacific",
-                    "SAARC / Neighboring Countries", "Rest of World"]
+# shipping charge per region (admin-configured, coarse on purpose — a handful of
+# tiers, not one price per country). The buyer instead picks their exact COUNTRY at
+# checkout (see SHIPPING_COUNTRIES below) — far less error-prone than asking them to
+# self-classify into a region name — and the server resolves that to the region for
+# pricing (_shipping_region_for_country).
+SHIPPING_REGIONS = ["North America", "Europe", "Asia-Pacific", "South Asia",
+                    "Middle East & Africa", "South America", "Rest of World"]
+
+# {code, name, region} for every country this store ships to (all but India, which
+# is the INR/domestic case). `code` is the ISO-3166-1 alpha-2 code — also what's
+# stored on addresses.country; `region` is one of SHIPPING_REGIONS above. Mirrors
+# frontend/src/lib/shipping.js — keep both in sync if this list changes.
+SHIPPING_COUNTRIES = [
+    {"code": "AF", "name": "Afghanistan", "region": "South Asia"},
+    {"code": "AL", "name": "Albania", "region": "Europe"},
+    {"code": "DZ", "name": "Algeria", "region": "Middle East & Africa"},
+    {"code": "AD", "name": "Andorra", "region": "Europe"},
+    {"code": "AO", "name": "Angola", "region": "Middle East & Africa"},
+    {"code": "AG", "name": "Antigua and Barbuda", "region": "North America"},
+    {"code": "AR", "name": "Argentina", "region": "South America"},
+    {"code": "AM", "name": "Armenia", "region": "Europe"},
+    {"code": "AU", "name": "Australia", "region": "Asia-Pacific"},
+    {"code": "AT", "name": "Austria", "region": "Europe"},
+    {"code": "AZ", "name": "Azerbaijan", "region": "Europe"},
+    {"code": "BS", "name": "Bahamas", "region": "North America"},
+    {"code": "BH", "name": "Bahrain", "region": "Middle East & Africa"},
+    {"code": "BD", "name": "Bangladesh", "region": "South Asia"},
+    {"code": "BB", "name": "Barbados", "region": "North America"},
+    {"code": "BY", "name": "Belarus", "region": "Europe"},
+    {"code": "BE", "name": "Belgium", "region": "Europe"},
+    {"code": "BZ", "name": "Belize", "region": "North America"},
+    {"code": "BJ", "name": "Benin", "region": "Middle East & Africa"},
+    {"code": "BT", "name": "Bhutan", "region": "South Asia"},
+    {"code": "BO", "name": "Bolivia", "region": "South America"},
+    {"code": "BA", "name": "Bosnia and Herzegovina", "region": "Europe"},
+    {"code": "BW", "name": "Botswana", "region": "Middle East & Africa"},
+    {"code": "BR", "name": "Brazil", "region": "South America"},
+    {"code": "BN", "name": "Brunei", "region": "Asia-Pacific"},
+    {"code": "BG", "name": "Bulgaria", "region": "Europe"},
+    {"code": "BF", "name": "Burkina Faso", "region": "Middle East & Africa"},
+    {"code": "BI", "name": "Burundi", "region": "Middle East & Africa"},
+    {"code": "CV", "name": "Cabo Verde", "region": "Middle East & Africa"},
+    {"code": "KH", "name": "Cambodia", "region": "Asia-Pacific"},
+    {"code": "CM", "name": "Cameroon", "region": "Middle East & Africa"},
+    {"code": "CA", "name": "Canada", "region": "North America"},
+    {"code": "CF", "name": "Central African Republic", "region": "Middle East & Africa"},
+    {"code": "TD", "name": "Chad", "region": "Middle East & Africa"},
+    {"code": "CL", "name": "Chile", "region": "South America"},
+    {"code": "CN", "name": "China", "region": "Asia-Pacific"},
+    {"code": "CO", "name": "Colombia", "region": "South America"},
+    {"code": "KM", "name": "Comoros", "region": "Middle East & Africa"},
+    {"code": "CG", "name": "Congo (Republic of the)", "region": "Middle East & Africa"},
+    {"code": "CD", "name": "Congo (DRC)", "region": "Middle East & Africa"},
+    {"code": "CR", "name": "Costa Rica", "region": "North America"},
+    {"code": "CI", "name": "Côte d'Ivoire", "region": "Middle East & Africa"},
+    {"code": "HR", "name": "Croatia", "region": "Europe"},
+    {"code": "CU", "name": "Cuba", "region": "Rest of World"},
+    {"code": "CY", "name": "Cyprus", "region": "Europe"},
+    {"code": "CZ", "name": "Czechia", "region": "Europe"},
+    {"code": "DK", "name": "Denmark", "region": "Europe"},
+    {"code": "DJ", "name": "Djibouti", "region": "Middle East & Africa"},
+    {"code": "DM", "name": "Dominica", "region": "North America"},
+    {"code": "DO", "name": "Dominican Republic", "region": "North America"},
+    {"code": "EC", "name": "Ecuador", "region": "South America"},
+    {"code": "EG", "name": "Egypt", "region": "Middle East & Africa"},
+    {"code": "SV", "name": "El Salvador", "region": "North America"},
+    {"code": "GQ", "name": "Equatorial Guinea", "region": "Middle East & Africa"},
+    {"code": "ER", "name": "Eritrea", "region": "Middle East & Africa"},
+    {"code": "EE", "name": "Estonia", "region": "Europe"},
+    {"code": "SZ", "name": "Eswatini", "region": "Middle East & Africa"},
+    {"code": "ET", "name": "Ethiopia", "region": "Middle East & Africa"},
+    {"code": "FJ", "name": "Fiji", "region": "Asia-Pacific"},
+    {"code": "FI", "name": "Finland", "region": "Europe"},
+    {"code": "FR", "name": "France", "region": "Europe"},
+    {"code": "GA", "name": "Gabon", "region": "Middle East & Africa"},
+    {"code": "GM", "name": "Gambia", "region": "Middle East & Africa"},
+    {"code": "GE", "name": "Georgia", "region": "Europe"},
+    {"code": "DE", "name": "Germany", "region": "Europe"},
+    {"code": "GH", "name": "Ghana", "region": "Middle East & Africa"},
+    {"code": "GR", "name": "Greece", "region": "Europe"},
+    {"code": "GD", "name": "Grenada", "region": "North America"},
+    {"code": "GT", "name": "Guatemala", "region": "North America"},
+    {"code": "GN", "name": "Guinea", "region": "Middle East & Africa"},
+    {"code": "GW", "name": "Guinea-Bissau", "region": "Middle East & Africa"},
+    {"code": "GY", "name": "Guyana", "region": "South America"},
+    {"code": "HT", "name": "Haiti", "region": "North America"},
+    {"code": "HN", "name": "Honduras", "region": "North America"},
+    {"code": "HU", "name": "Hungary", "region": "Europe"},
+    {"code": "IS", "name": "Iceland", "region": "Europe"},
+    {"code": "ID", "name": "Indonesia", "region": "Asia-Pacific"},
+    {"code": "IR", "name": "Iran", "region": "Middle East & Africa"},
+    {"code": "IQ", "name": "Iraq", "region": "Middle East & Africa"},
+    {"code": "IE", "name": "Ireland", "region": "Europe"},
+    {"code": "IL", "name": "Israel", "region": "Middle East & Africa"},
+    {"code": "IT", "name": "Italy", "region": "Europe"},
+    {"code": "JM", "name": "Jamaica", "region": "North America"},
+    {"code": "JP", "name": "Japan", "region": "Asia-Pacific"},
+    {"code": "JO", "name": "Jordan", "region": "Middle East & Africa"},
+    {"code": "KZ", "name": "Kazakhstan", "region": "Asia-Pacific"},
+    {"code": "KE", "name": "Kenya", "region": "Middle East & Africa"},
+    {"code": "KI", "name": "Kiribati", "region": "Asia-Pacific"},
+    {"code": "XK", "name": "Kosovo", "region": "Europe"},
+    {"code": "KW", "name": "Kuwait", "region": "Middle East & Africa"},
+    {"code": "KG", "name": "Kyrgyzstan", "region": "Asia-Pacific"},
+    {"code": "LA", "name": "Laos", "region": "Asia-Pacific"},
+    {"code": "LV", "name": "Latvia", "region": "Europe"},
+    {"code": "LB", "name": "Lebanon", "region": "Middle East & Africa"},
+    {"code": "LS", "name": "Lesotho", "region": "Middle East & Africa"},
+    {"code": "LR", "name": "Liberia", "region": "Middle East & Africa"},
+    {"code": "LY", "name": "Libya", "region": "Middle East & Africa"},
+    {"code": "LI", "name": "Liechtenstein", "region": "Europe"},
+    {"code": "LT", "name": "Lithuania", "region": "Europe"},
+    {"code": "LU", "name": "Luxembourg", "region": "Europe"},
+    {"code": "MG", "name": "Madagascar", "region": "Middle East & Africa"},
+    {"code": "MW", "name": "Malawi", "region": "Middle East & Africa"},
+    {"code": "MY", "name": "Malaysia", "region": "Asia-Pacific"},
+    {"code": "MV", "name": "Maldives", "region": "South Asia"},
+    {"code": "ML", "name": "Mali", "region": "Middle East & Africa"},
+    {"code": "MT", "name": "Malta", "region": "Europe"},
+    {"code": "MH", "name": "Marshall Islands", "region": "Asia-Pacific"},
+    {"code": "MR", "name": "Mauritania", "region": "Middle East & Africa"},
+    {"code": "MU", "name": "Mauritius", "region": "Middle East & Africa"},
+    {"code": "MX", "name": "Mexico", "region": "North America"},
+    {"code": "FM", "name": "Micronesia", "region": "Asia-Pacific"},
+    {"code": "MD", "name": "Moldova", "region": "Europe"},
+    {"code": "MC", "name": "Monaco", "region": "Europe"},
+    {"code": "MN", "name": "Mongolia", "region": "Asia-Pacific"},
+    {"code": "ME", "name": "Montenegro", "region": "Europe"},
+    {"code": "MA", "name": "Morocco", "region": "Middle East & Africa"},
+    {"code": "MZ", "name": "Mozambique", "region": "Middle East & Africa"},
+    {"code": "MM", "name": "Myanmar", "region": "Asia-Pacific"},
+    {"code": "NA", "name": "Namibia", "region": "Middle East & Africa"},
+    {"code": "NR", "name": "Nauru", "region": "Asia-Pacific"},
+    {"code": "NP", "name": "Nepal", "region": "South Asia"},
+    {"code": "NL", "name": "Netherlands", "region": "Europe"},
+    {"code": "NZ", "name": "New Zealand", "region": "Asia-Pacific"},
+    {"code": "NI", "name": "Nicaragua", "region": "North America"},
+    {"code": "NE", "name": "Niger", "region": "Middle East & Africa"},
+    {"code": "NG", "name": "Nigeria", "region": "Middle East & Africa"},
+    {"code": "KP", "name": "North Korea", "region": "Rest of World"},
+    {"code": "MK", "name": "North Macedonia", "region": "Europe"},
+    {"code": "NO", "name": "Norway", "region": "Europe"},
+    {"code": "OM", "name": "Oman", "region": "Middle East & Africa"},
+    {"code": "PK", "name": "Pakistan", "region": "South Asia"},
+    {"code": "PW", "name": "Palau", "region": "Asia-Pacific"},
+    {"code": "PS", "name": "Palestine", "region": "Middle East & Africa"},
+    {"code": "PA", "name": "Panama", "region": "North America"},
+    {"code": "PG", "name": "Papua New Guinea", "region": "Asia-Pacific"},
+    {"code": "PY", "name": "Paraguay", "region": "South America"},
+    {"code": "PE", "name": "Peru", "region": "South America"},
+    {"code": "PH", "name": "Philippines", "region": "Asia-Pacific"},
+    {"code": "PL", "name": "Poland", "region": "Europe"},
+    {"code": "PT", "name": "Portugal", "region": "Europe"},
+    {"code": "QA", "name": "Qatar", "region": "Middle East & Africa"},
+    {"code": "RO", "name": "Romania", "region": "Europe"},
+    {"code": "RU", "name": "Russia", "region": "Rest of World"},
+    {"code": "RW", "name": "Rwanda", "region": "Middle East & Africa"},
+    {"code": "KN", "name": "Saint Kitts and Nevis", "region": "North America"},
+    {"code": "LC", "name": "Saint Lucia", "region": "North America"},
+    {"code": "VC", "name": "Saint Vincent and the Grenadines", "region": "North America"},
+    {"code": "WS", "name": "Samoa", "region": "Asia-Pacific"},
+    {"code": "SM", "name": "San Marino", "region": "Europe"},
+    {"code": "ST", "name": "Sao Tome and Principe", "region": "Middle East & Africa"},
+    {"code": "SA", "name": "Saudi Arabia", "region": "Middle East & Africa"},
+    {"code": "SN", "name": "Senegal", "region": "Middle East & Africa"},
+    {"code": "RS", "name": "Serbia", "region": "Europe"},
+    {"code": "SC", "name": "Seychelles", "region": "Middle East & Africa"},
+    {"code": "SL", "name": "Sierra Leone", "region": "Middle East & Africa"},
+    {"code": "SG", "name": "Singapore", "region": "Asia-Pacific"},
+    {"code": "SK", "name": "Slovakia", "region": "Europe"},
+    {"code": "SI", "name": "Slovenia", "region": "Europe"},
+    {"code": "SB", "name": "Solomon Islands", "region": "Asia-Pacific"},
+    {"code": "SO", "name": "Somalia", "region": "Middle East & Africa"},
+    {"code": "ZA", "name": "South Africa", "region": "Middle East & Africa"},
+    {"code": "KR", "name": "South Korea", "region": "Asia-Pacific"},
+    {"code": "SS", "name": "South Sudan", "region": "Middle East & Africa"},
+    {"code": "ES", "name": "Spain", "region": "Europe"},
+    {"code": "LK", "name": "Sri Lanka", "region": "South Asia"},
+    {"code": "SD", "name": "Sudan", "region": "Middle East & Africa"},
+    {"code": "SR", "name": "Suriname", "region": "South America"},
+    {"code": "SE", "name": "Sweden", "region": "Europe"},
+    {"code": "CH", "name": "Switzerland", "region": "Europe"},
+    {"code": "SY", "name": "Syria", "region": "Middle East & Africa"},
+    {"code": "TW", "name": "Taiwan", "region": "Asia-Pacific"},
+    {"code": "TJ", "name": "Tajikistan", "region": "Asia-Pacific"},
+    {"code": "TZ", "name": "Tanzania", "region": "Middle East & Africa"},
+    {"code": "TH", "name": "Thailand", "region": "Asia-Pacific"},
+    {"code": "TL", "name": "Timor-Leste", "region": "Asia-Pacific"},
+    {"code": "TG", "name": "Togo", "region": "Middle East & Africa"},
+    {"code": "TO", "name": "Tonga", "region": "Asia-Pacific"},
+    {"code": "TT", "name": "Trinidad and Tobago", "region": "North America"},
+    {"code": "TN", "name": "Tunisia", "region": "Middle East & Africa"},
+    {"code": "TR", "name": "Turkey", "region": "Middle East & Africa"},
+    {"code": "TM", "name": "Turkmenistan", "region": "Asia-Pacific"},
+    {"code": "TV", "name": "Tuvalu", "region": "Asia-Pacific"},
+    {"code": "UG", "name": "Uganda", "region": "Middle East & Africa"},
+    {"code": "UA", "name": "Ukraine", "region": "Europe"},
+    {"code": "AE", "name": "United Arab Emirates", "region": "Middle East & Africa"},
+    {"code": "GB", "name": "United Kingdom", "region": "Europe"},
+    {"code": "US", "name": "United States", "region": "North America"},
+    {"code": "UY", "name": "Uruguay", "region": "South America"},
+    {"code": "UZ", "name": "Uzbekistan", "region": "Asia-Pacific"},
+    {"code": "VU", "name": "Vanuatu", "region": "Asia-Pacific"},
+    {"code": "VA", "name": "Vatican City", "region": "Europe"},
+    {"code": "VE", "name": "Venezuela", "region": "South America"},
+    {"code": "VN", "name": "Vietnam", "region": "Asia-Pacific"},
+    {"code": "YE", "name": "Yemen", "region": "Middle East & Africa"},
+    {"code": "ZM", "name": "Zambia", "region": "Middle East & Africa"},
+    {"code": "ZW", "name": "Zimbabwe", "region": "Middle East & Africa"},
+]
+
+_COUNTRY_REGION = {c["code"]: c["region"] for c in SHIPPING_COUNTRIES}
+_SHIPPING_COUNTRY_CODES = set(_COUNTRY_REGION)
+
+
+def _shipping_region_for_country(country_code: str) -> str:
+    return _COUNTRY_REGION.get((country_code or "").upper(), "Rest of World")
 
 
 # Rebuilds the flat product dict the frontend expects out of the normalised tables:
@@ -3043,11 +3258,15 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
         raise HTTPException(400, "Cart is empty")
 
     # Shipping is free within India; outside it, each distinct product in the cart
-    # can carry its own USD charge for the buyer's chosen region (admin-set on the
-    # product, e.g. a heavier piece costing more to ship) — summed once per product,
-    # not per unit/qty.
-    if cart["currency"] != "INR" and body.shipping_region not in SHIPPING_REGIONS:
-        raise HTTPException(400, "Select a shipping region")
+    # can carry its own USD charge per shipping region (admin-set on the product,
+    # e.g. a heavier piece costing more to ship) — summed once per product, not per
+    # unit/qty. The buyer picks their exact country, not the region directly — much
+    # less error-prone (no more guessing "am I 'Asia-Pacific' or 'Rest of World'?")
+    # — and the country resolves to a region here, server-side.
+    if cart["currency"] != "INR" and (body.shipping_country or "").upper() not in _SHIPPING_COUNTRY_CODES:
+        raise HTTPException(400, "Select your shipping country")
+    shipping_region = (_shipping_region_for_country(body.shipping_country)
+                       if cart["currency"] != "INR" else None)
 
     # Stock guard before we create a payable order. Sums quantities across every line
     # of the same product — different certification/pendant/size choices are different
@@ -3073,7 +3292,7 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
                 409, f"“{name}” is out of stock — only {chk['avail']} of "
                      f"{total_qty} available.")
         if cart["currency"] != "INR":
-            charge = (chk["shipping_charges"] or {}).get(body.shipping_region)
+            charge = (chk["shipping_charges"] or {}).get(shipping_region)
             if charge:
                 shipping_total += db.to_paise(str(charge))
 
@@ -3139,13 +3358,14 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
     # a single document, so this has to be all-or-nothing too.
     async with db.transaction() as conn:
         addr_id = uuid.uuid4()
+        addr_country = body.shipping_country.upper() if cart["currency"] != "INR" else "IN"
         await conn.execute(
             """INSERT INTO addresses (id, user_id, label, recipient_name, phone, line1,
                                       city, state, pincode, country, email_snapshot, is_default)
-               VALUES ($1,$2::uuid,'Shipping',$3,$4,$5,$6,$7,$8,'IN',$9::citext,false)""",
+               VALUES ($1,$2::uuid,'Shipping',$3,$4,$5,$6,$7,$8,$10,$9::citext,false)""",
             addr_id, buyer_id, body.shipping_name, body.shipping_phone,
             body.shipping_address, body.shipping_city, body.shipping_state,
-            body.shipping_pincode, body.email.lower())
+            body.shipping_pincode, body.email.lower(), addr_country)
 
         await conn.execute(
             """INSERT INTO orders (id, user_id, guest_session_token, status, currency,

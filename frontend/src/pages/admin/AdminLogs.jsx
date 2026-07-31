@@ -3,6 +3,7 @@ import { api, clearApiCache } from "@/lib/api";
 import { toast } from "sonner";
 import { ArrowsClockwise, CaretLeft, CaretRight, ClockCounterClockwise } from "@phosphor-icons/react";
 import SearchBar from "@/components/gemora/SearchBar";
+import AsyncButton from "@/components/gemora/AsyncButton";
 
 const PAGE_SIZE = 50;
 
@@ -127,13 +128,15 @@ export default function AdminLogs() {
           <ClockCounterClockwise size={30} weight="duotone" className="text-gold-soft" />
           Activity Log
         </h1>
-        <button
+        <AsyncButton
           onClick={refresh}
+          loading={loading}
+          loadingText="Refreshing…"
           data-testid="logs-refresh"
           className="flex items-center gap-2 px-3 py-2 text-xs uppercase tracking-widest border border-gold/40 text-ink-soft hover:bg-cream hover:text-maroon transition-colors"
         >
           <ArrowsClockwise size={14} weight="bold" /> Refresh
-        </button>
+        </AsyncButton>
       </div>
       <p className="text-sm text-ink-muted mb-5">
         Every action taken by owners and staff, newest first. Owner-only.

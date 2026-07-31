@@ -6,6 +6,7 @@ import { describeOptions } from "@/lib/api";
 import { formatPrice } from "@/lib/currency";
 import { TrashSimple, ShieldCheck, ShoppingBag, Plus, Minus, LockKey } from "@phosphor-icons/react";
 import { toast } from "sonner";
+import AsyncButton from "@/components/gemora/AsyncButton";
 
 export default function Cart() {
   const { cart, remove, setQty, subtotal } = useCart();
@@ -13,21 +14,28 @@ export default function Cart() {
   const nav = useNavigate();
   const items = cart.items || [];
   const currency = cart.currency || "INR";
+  const [busyLine, setBusyLine] = React.useState(null);
 
   const changeQty = async (li, next) => {
     if (next < 1) return removeLine(li.line_id);
+    setBusyLine(li.line_id);
     try {
       await setQty(li.line_id, next);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Could not update quantity");
+    } finally {
+      setBusyLine((b) => (b === li.line_id ? null : b));
     }
   };
 
   const removeLine = async (line_id) => {
+    setBusyLine(line_id);
     try {
       await remove(line_id);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Could not remove item");
+    } finally {
+      setBusyLine((b) => (b === line_id ? null : b));
     }
   };
 
@@ -62,29 +70,34 @@ export default function Cart() {
                     <div className="mt-1 text-xs text-ink-muted">{describeOptions(li.options_list)}</div>
                   )}
                   <div className="mt-3 inline-flex items-center gold-line bg-cream">
-                    <button
+                    <AsyncButton
                       onClick={() => changeQty(li, li.qty - 1)}
+                      loading={busyLine === li.line_id}
+                      loadingText=""
                       data-testid={`cart-qty-dec-${li.line_id}`}
                       className="px-3 py-2 text-maroon hover:bg-ivory"
                       aria-label="Decrease quantity"
                     >
                       <Minus size={14} weight="bold" />
-                    </button>
+                    </AsyncButton>
                     <span className="px-4 py-2 font-display tabular-nums min-w-[2.5rem] text-center">{li.qty}</span>
-                    <button
+                    <AsyncButton
                       onClick={() => changeQty(li, li.qty + 1)}
+                      loading={busyLine === li.line_id}
+                      loadingText=""
                       data-testid={`cart-qty-inc-${li.line_id}`}
                       className="px-3 py-2 text-maroon hover:bg-ivory"
                       aria-label="Increase quantity"
                     >
                       <Plus size={14} weight="bold" />
-                    </button>
+                    </AsyncButton>
                   </div>
                 </div>
                 <div className="font-display text-xl text-maroon-deep">{formatPrice(li.price * li.qty, currency)}</div>
-                <button onClick={() => removeLine(li.line_id)} data-testid={`cart-remove-${li.line_id}`} className="text-ink-muted hover:text-revoked">
+                <AsyncButton onClick={() => removeLine(li.line_id)} loading={busyLine === li.line_id} loadingText=""
+                  data-testid={`cart-remove-${li.line_id}`} className="text-ink-muted hover:text-revoked" aria-label="Remove item">
                   <TrashSimple size={20} />
-                </button>
+                </AsyncButton>
               </div>
             ))}
           </div>

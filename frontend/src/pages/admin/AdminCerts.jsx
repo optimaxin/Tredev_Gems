@@ -4,10 +4,12 @@ import { toast } from "sonner";
 import { Certificate, User, Package } from "@phosphor-icons/react";
 import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
 import { formatCode } from "@/lib/fingerprint";
+import AsyncButton from "@/components/gemora/AsyncButton";
 
 export default function AdminCerts() {
   const [certs, setCerts] = useState([]);
   const [query, setQuery] = useState("");
+  const [revokingId, setRevokingId] = useState(null);
   const refresh = () => api.get("/admin/certificates").then((r) => setCerts(r.data));
   useEffect(() => { refresh(); }, []);
 
@@ -16,8 +18,12 @@ export default function AdminCerts() {
 
   const revoke = async (c) => {
     if (!confirm(`Revoke certificate for ${c.serial}? This is permanent.`)) return;
-    await api.post(`/admin/certificates/revoke/${c.cert_id}`);
-    toast.success("Revoked"); refresh();
+    setRevokingId(c.cert_id);
+    try {
+      await api.post(`/admin/certificates/revoke/${c.cert_id}`);
+      toast.success("Revoked"); refresh();
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not revoke certificate"); }
+    finally { setRevokingId((id) => (id === c.cert_id ? null : id)); }
   };
 
   return (
@@ -64,7 +70,7 @@ export default function AdminCerts() {
             </div>
             <div className="mt-3 flex gap-3 items-center">
               <a href={`/verify/${c.qr_token}`} target="_blank" rel="noreferrer" className="text-xs text-maroon underline">Preview verify page</a>
-              {!c.revoked && <button onClick={() => revoke(c)} className="text-xs text-revoked underline ml-auto">Revoke</button>}
+              {!c.revoked && <AsyncButton onClick={() => revoke(c)} loading={revokingId === c.cert_id} loadingText="Revoking…" className="text-xs text-revoked underline ml-auto">Revoke</AsyncButton>}
             </div>
           </div>
         ))}

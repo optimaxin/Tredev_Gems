@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { GoogleLogo, Phone, Envelope } from "@phosphor-icons/react";
 import PhoneVerify from "@/components/gemora/PhoneVerify";
 import AuthVisualPanel from "@/components/gemora/AuthVisualPanel";
+import AsyncButton from "@/components/gemora/AsyncButton";
 
 const TABS = [
   { key: "password", label: "Email + Password", Icon: Envelope },
@@ -139,10 +140,10 @@ export default function Login() {
                 <motion.div variants={fieldVariants} className="relative">
                   <div className="halo-breathe absolute inset-x-4 -inset-y-1 rounded-full opacity-40 pointer-events-none"
                     style={{ background: "radial-gradient(circle, rgba(212,175,55,0.5) 0%, transparent 70%)" }} />
-                  <button data-testid="login-submit" disabled={loading}
+                  <AsyncButton data-testid="login-submit" loading={loading} loadingText="Signing in…"
                     className="relative w-full brand-gradient text-ivory py-3 text-sm uppercase tracking-widest hover-lift disabled:opacity-50">
-                    {loading ? "Signing in…" : "Sign in"}
-                  </button>
+                    Sign in
+                  </AsyncButton>
                 </motion.div>
               </motion.form>
             ) : (
@@ -155,9 +156,10 @@ export default function Login() {
               <span className="bg-ivory px-3 relative z-10">or</span>
               <div className="absolute top-1/2 left-0 right-0 h-px bg-gold/30" />
             </div>
-            <button type="button" onClick={google} data-testid="login-google" className="w-full border border-maroon text-maroon py-3 text-sm uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-maroon hover:text-ivory transition-colors">
+            <AsyncButton type="button" onClick={google} loading={loading} loadingText="Signing in…" data-testid="login-google"
+              className="w-full border border-maroon text-maroon py-3 text-sm uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-maroon hover:text-ivory transition-colors">
               <GoogleLogo size={16} weight="bold" /> Continue with Google
-            </button>
+            </AsyncButton>
             <div className="mt-4 text-center text-sm text-ink-muted">
               New here? <Link to="/signup" state={location.state} className="text-maroon underline underline-offset-4 decoration-gold-soft">Create an account</Link>
             </div>

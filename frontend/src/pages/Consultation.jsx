@@ -9,6 +9,7 @@ import {
   ArrowsClockwise, SunHorizon, Sun, MoonStars, Sparkle, PaperPlaneTilt,
 } from "@phosphor-icons/react";
 import PaymentFailedModal from "@/components/gemora/PaymentFailedModal";
+import AsyncButton from "@/components/gemora/AsyncButton";
 import { openCashfreeCheckout } from "@/lib/cashfree";
 import { openRazorpayCheckout } from "@/lib/razorpay";
 
@@ -281,12 +282,13 @@ export default function Consultation() {
             <textarea value={form.concern} onChange={set("concern")} rows={3} className={`${fieldBase} resize-none`} />
           </label>
 
-          <button
-            disabled={paying}
+          <AsyncButton
+            loading={paying}
+            loadingText="Booking…"
             className="w-full brand-gradient text-ivory py-3.5 text-sm uppercase tracking-widest inline-flex items-center justify-center gap-2 hover-lift transition-opacity disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-gold/50"
           >
-            {paying ? "Processing…" : (<><PaperPlaneTilt size={15} weight="duotone" /> Pay {formatPrice(fee, currency)} & book</>)}
-          </button>
+            <PaperPlaneTilt size={15} weight="duotone" /> Pay {formatPrice(fee, currency)} &amp; book
+          </AsyncButton>
         </form>
       </div>
 

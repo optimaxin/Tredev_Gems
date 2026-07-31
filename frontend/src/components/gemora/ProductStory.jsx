@@ -6,6 +6,7 @@ import { api, mediaSrc } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import ProductCard from "@/components/gemora/ProductCard";
 import { Flourish } from "@/components/gemora/Ornament";
+import AsyncButton from "@/components/gemora/AsyncButton";
 import {
   copyFor, faqFor, prettyKey, prettyValue, CATEGORY_LABEL, CATEGORY_DEVA,
 } from "@/lib/productCopy";
@@ -510,15 +511,16 @@ function ReviewForm({ productId, onAdded }) {
         </div>
       </div>
 
-      <button
+      <AsyncButton
         onClick={submit}
-        disabled={submitting || uploading}
+        loading={submitting}
+        disabled={uploading}
+        loadingText="Submitting…"
         data-testid="write-review-submit"
         className="mt-6 inline-flex items-center gap-2 px-6 py-3 brand-gradient text-ivory text-sm uppercase tracking-widest disabled:opacity-60"
       >
-        {submitting ? <SpinnerGap size={16} className="animate-spin" /> : <PaperPlaneTilt size={16} weight="fill" />}
-        {submitting ? "Submitting…" : "Submit review"}
-      </button>
+        <PaperPlaneTilt size={16} weight="fill" /> Submit review
+      </AsyncButton>
     </div>
   );
 }

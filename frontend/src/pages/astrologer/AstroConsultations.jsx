@@ -3,6 +3,7 @@ import { apiAstro } from "@/context/AstroAuthContext";
 import { formatINR } from "@/lib/api";
 import { toast } from "sonner";
 import { VideoCamera, Note, CheckCircle, XCircle, Phone, EnvelopeSimple } from "@phosphor-icons/react";
+import AsyncButton from "@/components/gemora/AsyncButton";
 
 const STATUS_STYLES = {
   requested:  "border-suspicious text-suspicious",
@@ -17,6 +18,7 @@ export default function AstroConsultations() {
   const [filter, setFilter] = useState("all");
   const [editingId, setEditingId] = useState(null);
   const [noteDraft, setNoteDraft] = useState("");
+  const [busyId, setBusyId] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -30,12 +32,14 @@ export default function AstroConsultations() {
   useEffect(() => { load(); }, [load]);
 
   const update = async (id, patch) => {
+    setBusyId(id);
     try {
       await apiAstro.patch(`/astrologer/consultations/${id}`, patch);
       toast.success("Updated");
       setEditingId(null);
-      load();
+      await load();
     } catch (e) { toast.error(e?.response?.data?.detail || "Update failed"); }
+    finally { setBusyId((b) => (b === id ? null : b)); }
   };
 
   const filtered = filter === "all" ? items : items.filter((i) => i.status === filter);
@@ -95,16 +99,17 @@ export default function AstroConsultations() {
                   )}
                   <div className="flex gap-1">
                     {c.status !== "completed" && (
-                      <button onClick={() => update(c.booking_id, { status: "completed" })} data-testid={`astro-complete-${c.booking_id}`}
+                      <AsyncButton onClick={() => update(c.booking_id, { status: "completed" })} loading={busyId === c.booking_id} loadingText=""
+                        data-testid={`astro-complete-${c.booking_id}`}
                         className="border border-verified text-verified px-3 py-1.5 text-[10px] uppercase tracking-widest inline-flex items-center gap-1 hover:bg-verified hover:text-ivory">
                         <CheckCircle size={10} /> Complete
-                      </button>
+                      </AsyncButton>
                     )}
                     {c.status !== "cancelled" && c.status !== "completed" && (
-                      <button onClick={() => update(c.booking_id, { status: "cancelled" })}
+                      <AsyncButton onClick={() => update(c.booking_id, { status: "cancelled" })} loading={busyId === c.booking_id} loadingText=""
                         className="border border-ink-muted text-ink-muted px-3 py-1.5 text-[10px] uppercase tracking-widest inline-flex items-center gap-1 hover:bg-ink hover:text-ivory">
                         <XCircle size={10} /> Cancel
-                      </button>
+                      </AsyncButton>
                     )}
                     <button onClick={() => { setEditingId(c.booking_id); setNoteDraft(c.notes || ""); }}
                       className="border border-maroon text-maroon px-3 py-1.5 text-[10px] uppercase tracking-widest inline-flex items-center gap-1 hover:bg-maroon hover:text-ivory">
@@ -121,7 +126,8 @@ export default function AstroConsultations() {
                     placeholder="Private session notes — visible only to you." />
                   <div className="mt-2 flex gap-2 justify-end">
                     <button onClick={() => setEditingId(null)} className="text-xs text-ink-muted px-3 py-1.5">Cancel</button>
-                    <button onClick={() => update(c.booking_id, { notes: noteDraft })} className="brand-gradient text-ivory px-4 py-1.5 text-[10px] uppercase tracking-widest">Save notes</button>
+                    <AsyncButton onClick={() => update(c.booking_id, { notes: noteDraft })} loading={busyId === c.booking_id} loadingText="Saving…"
+                      className="brand-gradient text-ivory px-4 py-1.5 text-[10px] uppercase tracking-widest">Save notes</AsyncButton>
                   </div>
                 </div>
               )}

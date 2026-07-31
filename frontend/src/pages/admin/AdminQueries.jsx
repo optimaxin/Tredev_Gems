@@ -3,6 +3,7 @@ import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { EnvelopeSimple } from "@phosphor-icons/react";
 import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
+import AsyncButton from "@/components/gemora/AsyncButton";
 
 const STATUSES = ["open", "in_progress", "resolved", "closed"];
 
@@ -12,6 +13,7 @@ export default function AdminQueries() {
   const [query, setQuery] = useState("");
   const [openId, setOpenId] = useState(null);
   const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const refresh = () => api.get("/admin/queries", { params: filter ? { status: filter } : {} }).then((r) => setQueries(r.data));
   useEffect(() => { refresh(); }, [filter]);
@@ -19,8 +21,12 @@ export default function AdminQueries() {
   const shown = queries.filter((q) => matchesQuery(query, [q.subject, q.name, q.email, q.phone, q.message, q.category, q.order_no]));
 
   const update = async (id, patch) => {
-    await api.patch(`/admin/queries/${id}`, patch);
-    toast.success("Saved"); setNote(""); refresh();
+    setSaving(true);
+    try {
+      await api.patch(`/admin/queries/${id}`, patch);
+      toast.success("Saved"); setNote(""); setOpenId(null); refresh();
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not save"); }
+    finally { setSaving(false); }
   };
 
   return (
@@ -66,7 +72,7 @@ export default function AdminQueries() {
             {openId === q.query_id && (
               <div className="mt-2 flex gap-2">
                 <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Internal note or resolution…" className="flex-1 gold-line px-3 py-2 text-sm" />
-                <button onClick={() => { update(q.query_id, { note }); setOpenId(null); }} className="brand-gradient text-ivory text-xs px-3">Save</button>
+                <AsyncButton onClick={() => update(q.query_id, { note })} loading={saving} loadingText="Saving…" className="brand-gradient text-ivory text-xs px-3">Save</AsyncButton>
               </div>
             )}
           </div>

@@ -3,6 +3,7 @@ import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import { PlusCircle, Trash, FloppyDisk } from "@phosphor-icons/react";
+import AsyncButton from "@/components/gemora/AsyncButton";
 
 const inputCls = "w-full gold-line px-3 py-2 outline-none focus:border-maroon text-sm";
 // Legacy marketplaces were plain strings; the editor now wants { name, url } objects.
@@ -18,9 +19,9 @@ const Section = ({ title, hint, children }) => (
   </section>
 );
 const SaveBtn = ({ onClick, saving }) => (
-  <button onClick={onClick} disabled={saving} className="brand-gradient text-ivory px-5 py-2.5 text-xs uppercase tracking-widest inline-flex items-center gap-2 disabled:opacity-50">
-    <FloppyDisk size={14} weight="duotone" /> {saving ? "Saving…" : "Save"}
-  </button>
+  <AsyncButton onClick={onClick} loading={saving} loadingText="Saving…" className="brand-gradient text-ivory px-5 py-2.5 text-xs uppercase tracking-widest inline-flex items-center gap-2 disabled:opacity-50">
+    <FloppyDisk size={14} weight="duotone" /> Save
+  </AsyncButton>
 );
 
 export default function AdminWebsite() {

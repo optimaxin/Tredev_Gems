@@ -3,6 +3,7 @@ import { api, formatINR } from "@/lib/api";
 import { toast } from "sonner";
 import { PencilSimple, PlusCircle, Trash, Diamond } from "@phosphor-icons/react";
 import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
+import AsyncButton from "@/components/gemora/AsyncButton";
 
 // Designs belong to one gemstone: pick Sapphire and you see Sapphire's designs, not
 // every stone's. There's one row per metal, each carrying that mounting's full price —
@@ -21,6 +22,7 @@ export default function AdminDesigns() {
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState(null); // design | "new" | null
   const [form, setForm] = useState(EMPTY);
+  const [saving, setSaving] = useState(false);
 
   const refresh = () => api.get("/admin/designs").then((r) => setDesigns(r.data));
   useEffect(() => {
@@ -55,6 +57,7 @@ export default function AdminDesigns() {
 
   const save = async (e) => {
     e.preventDefault();
+    setSaving(true);
     try {
       if (!form.product_id) throw new Error("Pick which gemstone this design is for");
       const n = form.price === "" ? 0 : Number(form.price);
@@ -81,6 +84,7 @@ export default function AdminDesigns() {
       }
       setEditing(null); refresh();
     } catch (e) { toast.error(e.response?.data?.detail || e.message); }
+    finally { setSaving(false); }
   };
 
   const del = async (d) => {
@@ -209,7 +213,7 @@ export default function AdminDesigns() {
             <span className="text-ink-soft">Active — shown to buyers</span>
           </label>
           <div className="md:col-span-2 flex gap-3">
-            <button type="submit" data-testid="design-save" className="brand-gradient text-ivory px-5 py-3 text-xs uppercase tracking-widest">Save</button>
+            <AsyncButton type="submit" loading={saving} loadingText="Saving…" data-testid="design-save" className="brand-gradient text-ivory px-5 py-3 text-xs uppercase tracking-widest">Save</AsyncButton>
             <button type="button" onClick={() => setEditing(null)} className="border border-gold/40 text-ink-soft px-5 py-3 text-xs uppercase tracking-widest">Cancel</button>
           </div>
         </form>

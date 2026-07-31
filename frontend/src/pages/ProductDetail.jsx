@@ -6,6 +6,7 @@ import { useCart } from "@/context/CartContext";
 import { toast } from "sonner";
 import { ShieldCheck, Certificate, ShoppingBag, Heart, Plus, Minus, CaretLeft, CaretRight, Star, Truck, ArrowsClockwise, FlowerLotus, Lightning } from "@phosphor-icons/react";
 import ProductStory from "@/components/gemora/ProductStory";
+import AsyncButton from "@/components/gemora/AsyncButton";
 import { CATEGORY_LABEL } from "@/lib/productCopy";
 
 export default function ProductDetail() {
@@ -20,6 +21,7 @@ export default function ProductDetail() {
   // {group_key: choice_label} — which option the buyer picked in each selector.
   const [picked, setPicked] = useState({});
   const [saved, setSaved] = useState(false); // optimistic "already in wishlist" flag
+  const [buying, setBuying] = useState(false);
   const cart = useCart();
   const nav = useNavigate();
 
@@ -125,11 +127,13 @@ export default function ProductDetail() {
   };
 
   const buyNow = async () => {
+    setBuying(true);
     try {
       await put();
       nav("/checkout");
     } catch (e) {
       toast.error(e.response?.data?.detail || "Could not add to cart");
+      setBuying(false);
     }
   };
 
@@ -420,14 +424,16 @@ export default function ProductDetail() {
             >
               <ShoppingBag size={16} weight="duotone" /> {soldOut ? "Sold out" : "Add to cart"}
             </button>
-            <button
+            <AsyncButton
               onClick={buyNow}
+              loading={buying}
+              loadingText="Processing…"
               data-testid="buy-now-btn"
               disabled={soldOut}
               className="border border-maroon bg-maroon text-ivory px-8 py-4 text-sm uppercase tracking-widest inline-flex items-center gap-2 hover:bg-maroon-deep transition-colors disabled:opacity-40"
             >
               <Lightning size={16} weight="fill" /> Buy it now
-            </button>
+            </AsyncButton>
             <button
               onClick={saveWishlist}
               disabled={saved}
@@ -499,13 +505,15 @@ export default function ProductDetail() {
           >
             <ShoppingBag size={14} weight="duotone" /> {soldOut ? "Sold out" : "Add to cart"}
           </button>
-          <button
+          <AsyncButton
             onClick={buyNow}
+            loading={buying}
+            loadingText=""
             disabled={soldOut}
             className="bg-maroon text-ivory px-5 py-3 text-xs uppercase tracking-widest inline-flex items-center gap-2 disabled:opacity-40"
           >
             <Lightning size={14} weight="fill" /> Buy
-          </button>
+          </AsyncButton>
         </div>
       </div>
     </div>

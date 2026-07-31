@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { PlusCircle, PencilSimple, Trash, Calendar, Copy, WhatsappLogo, X, LinkSimple, ChartBar, ArrowClockwise } from "@phosphor-icons/react";
 import { copyToClipboard } from "@/lib/clipboard";
 import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
+import AsyncButton from "@/components/gemora/AsyncButton";
 
 const EMPTY = {
   name: "", devanagari: "", expertise: "", price: "1500", price_usd: "", years: 10, picture: "",
@@ -19,6 +20,10 @@ export default function AdminAstrologers() {
   const [form, setForm] = useState(EMPTY);
   const [welcomeModal, setWelcomeModal] = useState(null); // { name, email, url }
   const [detailId, setDetailId] = useState(null); // astrologer_id whose detail modal is open
+  const [saving, setSaving] = useState(false);
+  const [bookingsLoadingFor, setBookingsLoadingFor] = useState(null);
+  const [affiliateLoadingFor, setAffiliateLoadingFor] = useState(null);
+  const [welcomeLoadingFor, setWelcomeLoadingFor] = useState(null);
 
   const refresh = useCallback(async () => {
     const { data } = await api.get("/admin/astrologers");
@@ -28,17 +33,24 @@ export default function AdminAstrologers() {
 
   const loadBookings = async (astro_id) => {
     if (bookings[astro_id]) { setBookings({ ...bookings, [astro_id]: null }); return; }
-    const { data } = await api.get(`/admin/consultations?astrologer_id=${astro_id}`);
-    setBookings({ ...bookings, [astro_id]: data });
+    setBookingsLoadingFor(astro_id);
+    try {
+      const { data } = await api.get(`/admin/consultations?astrologer_id=${astro_id}`);
+      setBookings({ ...bookings, [astro_id]: data });
+    } finally { setBookingsLoadingFor((id) => (id === astro_id ? null : id)); }
   };
   const loadAffiliate = async (astro_id) => {
     if (affiliates[astro_id]) { setAffiliates({ ...affiliates, [astro_id]: null }); return; }
-    const { data } = await api.get(`/admin/astrologers/${astro_id}/affiliate`);
-    setAffiliates({ ...affiliates, [astro_id]: data });
+    setAffiliateLoadingFor(astro_id);
+    try {
+      const { data } = await api.get(`/admin/astrologers/${astro_id}/affiliate`);
+      setAffiliates({ ...affiliates, [astro_id]: data });
+    } finally { setAffiliateLoadingFor((id) => (id === astro_id ? null : id)); }
   };
 
   const save = async (e) => {
     e.preventDefault();
+    setSaving(true);
     try {
       const rupees = Number(form.price);
       // Blank means "no USD price set" (null), not "free" (0) — an astrologer with
@@ -73,6 +85,7 @@ export default function AdminAstrologers() {
         refresh();
       }
     } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
+    finally { setSaving(false); }
   };
 
   const remove = async (a) => {
@@ -89,10 +102,12 @@ export default function AdminAstrologers() {
   };
 
   const regenWelcome = async (a) => {
+    setWelcomeLoadingFor(a.astrologer_id);
     try {
       const { data } = await api.post(`/admin/astrologers/${a.astrologer_id}/welcome-link`);
       setWelcomeModal({ name: a.name, email: data.email, url: data.welcome_url, isNew: false });
     } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+    finally { setWelcomeLoadingFor((id) => (id === a.astrologer_id ? null : id)); }
   };
 
   // Login page needs no token — same URL for every astrologer, so just copy it.
@@ -170,7 +185,7 @@ export default function AdminAstrologers() {
           <label className="block md:col-span-2"><div className="text-xs text-ink-muted mb-1">Short bio</div>
             <textarea rows={3} value={form.bio} onChange={(e) => setForm({ ...form, bio: e.target.value })} className="w-full gold-line px-3 py-2 outline-none focus:border-maroon" /></label>
           <div className="md:col-span-2 flex gap-3">
-            <button type="submit" data-testid="astro-save" className="brand-gradient text-ivory px-5 py-3 text-xs uppercase tracking-widest">Save</button>
+            <AsyncButton type="submit" loading={saving} loadingText="Saving…" data-testid="astro-save" className="brand-gradient text-ivory px-5 py-3 text-xs uppercase tracking-widest">Save</AsyncButton>
             <button type="button" onClick={() => setEditing(null)} className="border border-gold/40 px-5 py-3 text-xs uppercase tracking-widest">Cancel</button>
           </div>
         </form>
@@ -200,9 +215,9 @@ export default function AdminAstrologers() {
             </div>
             <div className="mt-3 flex gap-3 text-xs flex-wrap">
               <button onClick={() => startEdit(a)} data-testid={`astro-edit-${a.astrologer_id}`} className="text-maroon inline-flex items-center gap-1"><PencilSimple size={12} /> Edit</button>
-              <button onClick={() => loadBookings(a.astrologer_id)} className="text-ink-soft inline-flex items-center gap-1"><Calendar size={12} /> {bookings[a.astrologer_id] ? "Hide" : "Bookings"}</button>
-              <button onClick={() => loadAffiliate(a.astrologer_id)} data-testid={`astro-affiliate-${a.astrologer_id}`} className="text-ink-soft inline-flex items-center gap-1"><ChartBar size={12} /> {affiliates[a.astrologer_id] ? "Hide" : "Affiliate"}</button>
-              {a.email && <button onClick={() => regenWelcome(a)} data-testid={`astro-welcome-${a.astrologer_id}`} className="text-ink-soft inline-flex items-center gap-1"><ArrowClockwise size={12} /> Welcome link</button>}
+              <AsyncButton onClick={() => loadBookings(a.astrologer_id)} loading={bookingsLoadingFor === a.astrologer_id} loadingText="" className="text-ink-soft inline-flex items-center gap-1"><Calendar size={12} /> {bookings[a.astrologer_id] ? "Hide" : "Bookings"}</AsyncButton>
+              <AsyncButton onClick={() => loadAffiliate(a.astrologer_id)} loading={affiliateLoadingFor === a.astrologer_id} loadingText="" data-testid={`astro-affiliate-${a.astrologer_id}`} className="text-ink-soft inline-flex items-center gap-1"><ChartBar size={12} /> {affiliates[a.astrologer_id] ? "Hide" : "Affiliate"}</AsyncButton>
+              {a.email && <AsyncButton onClick={() => regenWelcome(a)} loading={welcomeLoadingFor === a.astrologer_id} loadingText="Sending…" data-testid={`astro-welcome-${a.astrologer_id}`} className="text-ink-soft inline-flex items-center gap-1"><ArrowClockwise size={12} /> Welcome link</AsyncButton>}
               {a.email && <button onClick={copyLoginLink} data-testid={`astro-loginlink-${a.astrologer_id}`} className="text-ink-soft inline-flex items-center gap-1"><Copy size={12} /> Login link</button>}
               <button onClick={() => remove(a)} className="text-revoked inline-flex items-center gap-1 ml-auto"><Trash size={12} /> Remove</button>
             </div>

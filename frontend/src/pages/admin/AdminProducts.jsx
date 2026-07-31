@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { PencilSimple, PlusCircle, Trash, Stack, Prohibit, CheckCircle } from "@phosphor-icons/react";
 import SearchBar from "@/components/gemora/SearchBar";
 import ShippingChargesEditor from "@/components/gemora/ShippingChargesEditor";
+import AsyncButton from "@/components/gemora/AsyncButton";
 
 const EMPTY = {
   name: "", slug: "", category: "gemstone", subcategory_id: "", description: "", price: "", mrp: "",
@@ -32,6 +33,8 @@ export default function AdminProducts() {
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState(null); // product or "new" or null
   const [form, setForm] = useState(EMPTY);
+  const [saving, setSaving] = useState(false);
+  const [addingUnitsFor, setAddingUnitsFor] = useState(null);
 
   const refresh = () => {
     api.get("/products?limit=500").then((r) => setProducts(r.data));
@@ -45,12 +48,14 @@ export default function AdminProducts() {
   const addUnits = async (p) => {
     const qty = Math.max(0, parseInt(addQty[p.product_id], 10) || 0);
     if (!qty) { toast.error("Enter how many pieces to add"); return; }
+    setAddingUnitsFor(p.product_id);
     try {
       const { data } = await api.post("/admin/units/bulk", { product_id: p.product_id, quantity: qty });
       toast.success(`${data.count} piece${data.count === 1 ? "" : "s"} added to ${p.name}`);
       setAddQty((s) => ({ ...s, [p.product_id]: "" }));
       api.get("/admin/products/stock").then((r) => setStock(r.data)).catch(() => {});
     } catch (e) { toast.error(e.response?.data?.detail || "Could not add units"); }
+    finally { setAddingUnitsFor((id) => (id === p.product_id ? null : id)); }
   };
 
   // Manual override — works for serialized and non-serialized products alike, unlike
@@ -123,6 +128,7 @@ export default function AdminProducts() {
 
   const save = async (e) => {
     e.preventDefault();
+    setSaving(true);
     try {
       // Convert rupees → paise. Accepts "8850" or "8850.50".
       const rupeesToPaise = (v) => {
@@ -209,6 +215,7 @@ export default function AdminProducts() {
       }
       setEditing(null); refresh();
     } catch (e) { toast.error(e.response?.data?.detail || e.message); }
+    finally { setSaving(false); }
   };
 
   const del = async (p) => {
@@ -463,7 +470,7 @@ export default function AdminProducts() {
             <div className="text-[10px] text-ink-muted mt-1">Shown as bullet points on the product page.</div>
           </label>
           <div className="md:col-span-2 flex gap-3">
-            <button type="submit" className="brand-gradient text-ivory px-5 py-3 text-xs uppercase tracking-widest">Save</button>
+            <AsyncButton type="submit" loading={saving} loadingText="Saving…" className="brand-gradient text-ivory px-5 py-3 text-xs uppercase tracking-widest">Save</AsyncButton>
             <button type="button" onClick={() => setEditing(null)} className="border border-gold/40 text-ink-soft px-5 py-3 text-xs uppercase tracking-widest">Cancel</button>
           </div>
         </form>
@@ -518,13 +525,15 @@ export default function AdminProducts() {
                     data-testid={`add-units-qty-${p.product_id}`}
                     className="w-20 gold-line px-2 py-1.5 text-sm outline-none focus:border-maroon"
                   />
-                  <button
+                  <AsyncButton
                     onClick={() => addUnits(p)}
+                    loading={addingUnitsFor === p.product_id}
+                    loadingText="Adding…"
                     data-testid={`add-units-btn-${p.product_id}`}
                     className="text-xs uppercase tracking-widest border border-maroon text-maroon px-3 py-1.5 inline-flex items-center gap-1 hover:bg-maroon hover:text-ivory transition-colors"
                   >
                     <Stack size={12} weight="duotone" /> Add units
-                  </button>
+                  </AsyncButton>
                 </div>
               )}
             </div>

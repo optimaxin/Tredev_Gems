@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAstroAuth } from "@/context/AstroAuthContext";
 import { toast } from "sonner";
 import { CheckCircle, LockKey } from "@phosphor-icons/react";
+import AsyncButton from "@/components/gemora/AsyncButton";
 
 export default function AstrologerSetPassword() {
   const [params] = useSearchParams();
@@ -55,10 +56,10 @@ export default function AstrologerSetPassword() {
               </div>
             </label>
           ))}
-          <button type="submit" disabled={busy || !token} data-testid="astro-set-submit"
+          <AsyncButton type="submit" loading={busy} disabled={!token} loadingText="Setting up…" data-testid="astro-set-submit"
             className="w-full brand-gradient text-ivory py-3 text-sm uppercase tracking-widest hover-lift disabled:opacity-50">
-            {busy ? "Setting up…" : "Set password & go to dashboard"}
-          </button>
+            Set password &amp; go to dashboard
+          </AsyncButton>
         </form>
       </div>
     </div>

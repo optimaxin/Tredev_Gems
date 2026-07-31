@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { GoogleLogo, ShieldCheck, CheckCircle } from "@phosphor-icons/react";
 import PhoneVerify from "@/components/gemora/PhoneVerify";
 import AuthVisualPanel from "@/components/gemora/AuthVisualPanel";
+import AsyncButton from "@/components/gemora/AsyncButton";
 import { api } from "@/lib/api";
 
 const fieldVariants = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } };
@@ -22,6 +23,7 @@ export default function Signup() {
   const [otpToken, setOtpToken] = useState("");
   const [form, setForm] = useState({ name: "", email: "", password: "", wa_optin: true });
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [emailErr, setEmailErr] = useState("");
 
   const set = (k) => (e) => setForm((x) => ({ ...x, [k]: e.target.value }));
@@ -53,12 +55,15 @@ export default function Signup() {
   // Google sign-up == Google sign-in: Firebase popup -> ID token -> our JWT.
   // /auth/google creates the account if the email is new.
   const google = async () => {
+    setGoogleLoading(true);
     try {
       await googleLogin();
       nav(dest);
     } catch (err) {
       if (err?.code === "auth/popup-closed-by-user") return;
       toast.error(err?.response?.data?.detail || err?.message || "Google sign-in failed");
+    } finally {
+      setGoogleLoading(false);
     }
   };
 
@@ -104,14 +109,16 @@ export default function Signup() {
                     <span className="bg-ivory px-3 relative z-10">or</span>
                     <div className="absolute top-1/2 left-0 right-0 h-px bg-gold/30" />
                   </div>
-                  <button
+                  <AsyncButton
                     type="button"
                     onClick={google}
+                    loading={googleLoading}
+                    loadingText="Signing in…"
                     data-testid="signup-google"
                     className="w-full border border-maroon text-maroon py-3 text-sm uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-maroon hover:text-ivory transition-colors"
                   >
                     <GoogleLogo size={16} weight="bold" /> Continue with Google
-                  </button>
+                  </AsyncButton>
                   <p className="mt-3 text-[11px] text-ink-muted text-center">
                     Google users still need to verify a phone number after signing in.
                   </p>
@@ -170,10 +177,10 @@ export default function Signup() {
                   <motion.div variants={fieldVariants} className="relative">
                     <div className="halo-breathe absolute inset-x-4 -inset-y-1 rounded-full opacity-40 pointer-events-none"
                       style={{ background: "radial-gradient(circle, rgba(212,175,55,0.5) 0%, transparent 70%)" }} />
-                    <button data-testid="signup-submit" disabled={loading}
+                    <AsyncButton data-testid="signup-submit" loading={loading} loadingText="Creating account…"
                       className="relative w-full brand-gradient text-ivory py-3 text-sm uppercase tracking-widest hover-lift disabled:opacity-50">
-                      {loading ? "Creating…" : "Create account"}
-                    </button>
+                      Create account
+                    </AsyncButton>
                   </motion.div>
                 </motion.form>
               )}

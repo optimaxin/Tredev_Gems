@@ -7,18 +7,23 @@ import { describeOptions } from "@/lib/api";
 import { formatPrice } from "@/lib/currency";
 import { ShieldCheck, TrashSimple, ShoppingBag, LockKey } from "@phosphor-icons/react";
 import { toast } from "sonner";
+import AsyncButton from "@/components/gemora/AsyncButton";
 
 export default function CartDrawer({ open, onClose }) {
   const { cart, remove, subtotal } = useCart();
   const { user } = useAuth();
   const items = cart.items || [];
   const currency = cart.currency || "INR";
+  const [busyLine, setBusyLine] = React.useState(null);
 
   const removeLine = async (line_id) => {
+    setBusyLine(line_id);
     try {
       await remove(line_id);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Could not remove item");
+    } finally {
+      setBusyLine((b) => (b === line_id ? null : b));
     }
   };
 
@@ -62,9 +67,10 @@ export default function CartDrawer({ open, onClose }) {
                 )}
                 <div className="text-xs text-maroon-deep mt-1">{formatPrice(li.price * li.qty, currency)}</div>
               </div>
-              <button onClick={() => removeLine(li.line_id)} className="text-ink-muted hover:text-revoked">
+              <AsyncButton onClick={() => removeLine(li.line_id)} loading={busyLine === li.line_id} loadingText=""
+                aria-label="Remove item" className="text-ink-muted hover:text-revoked">
                 <TrashSimple size={16} />
-              </button>
+              </AsyncButton>
             </div>
           ))}
         </div>

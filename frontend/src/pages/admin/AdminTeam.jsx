@@ -3,6 +3,7 @@ import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { PlusCircle, Trash } from "@phosphor-icons/react";
 import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
+import AsyncButton from "@/components/gemora/AsyncButton";
 
 const EMPTY = { name: "", email: "", password: "", phone: "" };
 
@@ -13,6 +14,7 @@ export default function AdminTeam() {
   const [form, setForm] = useState(EMPTY);
   const [selPerms, setSelPerms] = useState([]);
   const [showForm, setShowForm] = useState(false);
+  const [creating, setCreating] = useState(false);
 
   const refresh = () => {
     api.get("/admin/users?role=staff").then((r) => setUsers(r.data));
@@ -23,12 +25,14 @@ export default function AdminTeam() {
 
   const create = async (e) => {
     e.preventDefault();
+    setCreating(true);
     try {
       const { data } = await api.post("/admin/staff", { ...form, password: form.password || undefined, permissions: selPerms });
       const via = data.invite_sent ? "WhatsApp" : "mock (logged)";
       toast.success(`Staff added · invite via ${via}. Temp password: ${data.temp_password}`);
       setShowForm(false); setForm(EMPTY); setSelPerms([]); refresh();
     } catch (e) { toast.error(e.response?.data?.detail); }
+    finally { setCreating(false); }
   };
 
   const updatePerms = async (uid, newPerms) => {
@@ -105,7 +109,7 @@ export default function AdminTeam() {
             </div>
           </div>
           <div className="md:col-span-2 flex gap-3">
-            <button className="brand-gradient text-ivory px-5 py-3 text-xs uppercase tracking-widest">Create staff</button>
+            <AsyncButton type="submit" loading={creating} loadingText="Creating…" className="brand-gradient text-ivory px-5 py-3 text-xs uppercase tracking-widest">Create staff</AsyncButton>
             <button type="button" onClick={() => setShowForm(false)} className="border border-gold/40 px-5 py-3 text-xs uppercase tracking-widest">Cancel</button>
           </div>
         </form>

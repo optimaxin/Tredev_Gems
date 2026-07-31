@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { UploadSimple, TrashSimple, Copy, Image as ImageIcon } from "@phosphor-icons/react";
 import { copyToClipboard } from "@/lib/clipboard";
 import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
+import AsyncButton from "@/components/gemora/AsyncButton";
 
 // Client-side resize + WebP re-encode before upload. A phone photo is often
 // 3–8MB at 4000px+; the site never displays media wider than ~1920px, so shrinking
@@ -120,14 +121,15 @@ export default function AdminMedia() {
           <h1 className="font-display text-4xl text-ink mt-1">Media library</h1>
           <p className="text-sm text-ink-muted mt-1">Upload images once, then reuse them anywhere on the site.</p>
         </div>
-        <button
+        <AsyncButton
           onClick={() => fileRef.current?.click()}
-          disabled={busy}
+          loading={busy}
+          loadingText="Uploading…"
           data-testid="admin-media-upload-btn"
           className="brand-gradient text-ivory px-5 py-2.5 text-xs uppercase tracking-widest inline-flex items-center gap-2 disabled:opacity-50"
         >
-          <UploadSimple size={14} weight="bold" /> {busy ? "Uploading…" : "Upload images"}
-        </button>
+          <UploadSimple size={14} weight="bold" /> Upload images
+        </AsyncButton>
         <input
           ref={fileRef} type="file" accept="image/*" multiple hidden
           data-testid="admin-media-upload"

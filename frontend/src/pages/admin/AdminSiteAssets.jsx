@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { PencilSimple, X, ImageSquare } from "@phosphor-icons/react";
 import MediaPicker from "@/components/gemora/MediaPicker";
 import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
+import AsyncButton from "@/components/gemora/AsyncButton";
 
 // Registry of editable slots across the site. Grouped for a friendly admin UI.
 export const SITE_SLOTS = [
@@ -51,6 +52,7 @@ export default function AdminSiteAssets() {
   const [pickerFor, setPickerFor] = useState(null); // slot key or null
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
+  const [clearingSlot, setClearingSlot] = useState(null);
   const { refresh: refreshPublic } = useSiteAssets();
 
   const load = useCallback(async () => {
@@ -111,9 +113,16 @@ export default function AdminSiteAssets() {
                           <div className="text-[10px] text-ink-muted font-mono mt-0.5">{s.key}</div>
                         </div>
                         {cur?.url && (
-                          <button onClick={() => setSlot(s.key, null)} data-testid={`slot-clear-${s.key}`} title="Clear" className="text-ink-muted hover:text-revoked">
+                          <AsyncButton
+                            onClick={async () => { setClearingSlot(s.key); try { await setSlot(s.key, null); } finally { setClearingSlot((k) => (k === s.key ? null : k)); } }}
+                            loading={clearingSlot === s.key}
+                            loadingText=""
+                            data-testid={`slot-clear-${s.key}`}
+                            aria-label="Clear"
+                            className="text-ink-muted hover:text-revoked"
+                          >
                             <X size={14} />
-                          </button>
+                          </AsyncButton>
                         )}
                       </div>
                       <div className="mt-3 aspect-video bg-cream border border-gold/30 overflow-hidden relative">

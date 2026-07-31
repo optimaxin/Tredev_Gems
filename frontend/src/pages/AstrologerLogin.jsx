@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAstroAuth } from "@/context/AstroAuthContext";
 import { toast } from "sonner";
 import { Sparkle, EnvelopeSimple, LockKey } from "@phosphor-icons/react";
+import AsyncButton from "@/components/gemora/AsyncButton";
 
 export default function AstrologerLogin() {
   const { login } = useAstroAuth();
@@ -50,10 +51,10 @@ export default function AstrologerLogin() {
                 data-testid="astro-login-password" className="flex-1 px-3 py-3 outline-none" />
             </div>
           </label>
-          <button type="submit" disabled={busy} data-testid="astro-login-submit"
+          <AsyncButton type="submit" loading={busy} loadingText="Signing in…" data-testid="astro-login-submit"
             className="w-full brand-gradient text-ivory py-3 text-sm uppercase tracking-widest inline-flex items-center justify-center gap-2 hover-lift disabled:opacity-50">
-            {busy ? "Signing in…" : "Sign in"}
-          </button>
+            Sign in
+          </AsyncButton>
           <div className="text-xs text-ink-muted text-center">
             No account yet? Contact Tredev admin — they'll send you a welcome link.
           </div>

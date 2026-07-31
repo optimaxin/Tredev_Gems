@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Plus, PencilSimple, TrashSimple, MegaphoneSimple, Image as ImageIcon, X } from "@phosphor-icons/react";
 import MediaPicker from "@/components/gemora/MediaPicker";
 import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
+import AsyncButton from "@/components/gemora/AsyncButton";
 
 const EMPTY = {
   title: "", subtitle: "", description: "", image_url: "",
@@ -32,6 +33,7 @@ export default function AdminEvents() {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
   const [showPicker, setShowPicker] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -59,6 +61,7 @@ export default function AdminEvents() {
       ends_at: localToIso(editing.ends_at),
       priority: Number(editing.priority) || 0,
     };
+    setSaving(true);
     try {
       if (editing.event_id) {
         await api.patch(`/admin/events/${editing.event_id}`, payload);
@@ -70,6 +73,7 @@ export default function AdminEvents() {
       setEditing(null);
       load();
     } catch (e) { toast.error(e?.response?.data?.detail || "Save failed"); }
+    finally { setSaving(false); }
   };
 
   const remove = async (ev) => {
@@ -237,7 +241,7 @@ export default function AdminEvents() {
             </div>
             <div className="px-6 py-4 border-t border-gold/30 flex justify-end gap-3">
               <button onClick={() => setEditing(null)} className="px-4 py-2 text-xs uppercase tracking-widest text-ink-muted hover:text-maroon">Cancel</button>
-              <button onClick={save} data-testid="event-save" className="brand-gradient text-ivory px-6 py-2 text-xs uppercase tracking-widest">Save event</button>
+              <AsyncButton onClick={save} loading={saving} loadingText="Saving…" data-testid="event-save" className="brand-gradient text-ivory px-6 py-2 text-xs uppercase tracking-widest">Save event</AsyncButton>
             </div>
           </div>
           <MediaPicker open={showPicker} onClose={() => setShowPicker(false)} onPick={onPickImage} />
