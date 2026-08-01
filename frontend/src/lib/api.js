@@ -75,6 +75,20 @@ api.interceptors.response.use((resp) => {
   return resp;
 });
 
+// FastAPI's own HTTPException(detail="...") comes back as a string, but a
+// Pydantic request-validation failure (422) comes back as an ARRAY of
+// {type,loc,msg,...} objects. Callers throughout the app do
+// `toast.error(e.response?.data?.detail || "fallback")` — handing that array
+// straight to a toast (or any JSX) crashes the page ("Objects are not valid as
+// a React child"), which is exactly what happened when the cancel-order
+// request 422'd. This always returns a plain string.
+export function apiErrorMessage(e, fallback = "Something went wrong") {
+  const d = e?.response?.data?.detail;
+  if (typeof d === "string") return d;
+  if (Array.isArray(d)) return d.map((x) => x?.msg || String(x)).join("; ") || fallback;
+  return fallback;
+}
+
 // Resolve a stored image reference to a browser-usable src. External images are
 // saved as absolute URLs (used as-is); user uploads come back as relative
 // backend paths like "/api/media/file/…" that need the backend origin prepended.

@@ -770,13 +770,13 @@ export default function ProductStory({ p, reviews = [], onReviewAdded }) {
   const copy = copyFor(p.category);
   return (
     <>
+      <Reviews reviews={reviews} productId={p.product_id} onAdded={onReviewAdded} />
       <TrustMarquee />
       <Specs p={p} />
       <Benefits p={p} copy={copy} />
       <ProvenanceBand reduce={reduce} />
       <Ritual copy={copy} />
       <CareGuide p={p} copy={copy} />
-      <Reviews reviews={reviews} productId={p.product_id} onAdded={onReviewAdded} />
       <ConsultBanner reduce={reduce} />
       <Policies />
       <Faq p={p} />

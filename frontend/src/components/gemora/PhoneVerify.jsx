@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { FIREBASE_ENABLED, fbAuth, ensureRecaptcha, clearRecaptcha, signInWithPhoneNumber } from "@/lib/firebase";
+import { detectCountry } from "@/lib/currency";
+import { COUNTRY_CODES } from "@/lib/countryCodes";
 import { X, Phone, ShieldCheck, WarningCircle } from "@phosphor-icons/react";
 import AsyncButton from "@/components/gemora/AsyncButton";
 
@@ -14,6 +16,7 @@ import AsyncButton from "@/components/gemora/AsyncButton";
  */
 export default function PhoneVerify({ open = true, onClose, onVerified, prefillPhone = "" }) {
   const [phone, setPhone] = useState(prefillPhone);
+  const [dial, setDial] = useState("91");
   const [step, setStep] = useState(1);
   const [code, setCode] = useState("");
   const [sending, setSending] = useState(false);
@@ -24,6 +27,18 @@ export default function PhoneVerify({ open = true, onClose, onVerified, prefillP
 
   useEffect(() => () => { if (cdRef.current) clearInterval(cdRef.current); clearRecaptcha(); }, []);
 
+  // Default the country picker to the visitor's actual country instead of
+  // always assuming India — the user can still change it manually.
+  useEffect(() => {
+    let cancelled = false;
+    detectCountry().then((iso) => {
+      if (cancelled) return;
+      const match = COUNTRY_CODES.find((c) => c.iso === iso);
+      if (match) setDial(match.dial);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
   const startCooldown = () => {
     setCooldown(30);
     cdRef.current = setInterval(() => setCooldown((c) => c <= 1 ? (clearInterval(cdRef.current), 0) : c - 1), 1000);
@@ -31,9 +46,8 @@ export default function PhoneVerify({ open = true, onClose, onVerified, prefillP
 
   const normalize = (raw) => {
     const digits = raw.replace(/\D/g, "");
-    if (digits.startsWith("91") && digits.length === 12) return `+${digits}`;
-    if (digits.length === 10) return `+91${digits}`;
-    return `+${digits}`;
+    if (digits.startsWith(dial) && digits.length > 10) return `+${digits}`;
+    return `+${dial}${digits}`;
   };
 
   // Human-readable messages for common Firebase auth error codes.
@@ -63,7 +77,8 @@ export default function PhoneVerify({ open = true, onClose, onVerified, prefillP
       return;
     }
     const p = normalize(phone);
-    if (p.replace(/\D/g, "").length < 12) { toast.error("Enter a valid 10-digit mobile"); return; }
+    const total = p.replace(/\D/g, "").length;
+    if (total < dial.length + 6 || total > 15) { toast.error("Enter a valid mobile number"); return; }
     setSending(true);
     try {
       const auth = fbAuth();

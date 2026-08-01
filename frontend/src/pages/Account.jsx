@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { api, formatINR, describeOptions } from "@/lib/api";
+import { api, formatINR, describeOptions, apiErrorMessage } from "@/lib/api";
 import { formatPrice } from "@/lib/currency";
 import { useAuth } from "@/context/AuthContext";
 import { ShieldCheck, Package, Heart, Certificate as CertIcon, ArrowRight, Phone, WhatsappLogo, Gear, PencilSimple, LockKey, ChatCircleDots, CaretDown, CaretUp, MapPin, Calendar, VideoCamera, Wallet, XCircle } from "@phosphor-icons/react";
@@ -53,10 +53,10 @@ export default function Account() {
     if (!window.confirm("Cancel this order? If it was paid, a refund will be initiated automatically.")) return;
     setCancellingId(o.order_id);
     try {
-      await api.post(`/orders/${o.order_id}/cancel`);
+      await api.post(`/orders/${o.order_id}/cancel`, {});
       nav(`/order-cancelled/${o.order_id}`);
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Could not cancel this order");
+      toast.error(apiErrorMessage(e, "Could not cancel this order"));
     } finally {
       setCancellingId(null);
     }
