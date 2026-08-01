@@ -8,6 +8,7 @@ import { ShieldCheck, Certificate, ShoppingBag, Heart, Plus, Minus, CaretLeft, C
 import ProductStory from "@/components/gemora/ProductStory";
 import AsyncButton from "@/components/gemora/AsyncButton";
 import { CATEGORY_LABEL } from "@/lib/productCopy";
+import { HoverCard, HoverCardTrigger, HoverCardContent } from "@/components/ui/hover-card";
 
 export default function ProductDetail() {
   const { slug } = useParams();
@@ -306,14 +307,13 @@ export default function ProductDetail() {
                     <div className="grid grid-cols-3 sm:grid-cols-5 gap-3 max-h-[26rem] overflow-y-auto pr-1">
                       {g.choices.map((c) => {
                         const on = resolved[g.key] === c.label;
-                        return (
+                        const thumb = (
                           <button
-                            key={c.label}
                             type="button"
                             onClick={() => setPicked((s) => ({ ...s, [g.key]: c.label }))}
                             aria-pressed={on}
                             data-testid={`option-${g.key}-${c.label}`}
-                            className={`text-center border p-1.5 transition-colors ${
+                            className={`text-center border p-1.5 transition-colors w-full ${
                               on ? "border-maroon bg-cream" : "border-gold/30 hover:border-maroon"
                             }`}
                           >
@@ -330,6 +330,18 @@ export default function ProductDetail() {
                               )}
                             </div>
                           </button>
+                        );
+                        // Hover expands the thumbnail into a large preview — the
+                        // grid renders these too small (a few dozen px) to judge a
+                        // design by, and the buyer is choosing it sight-unseen otherwise.
+                        if (!c.image) return <div key={c.label}>{thumb}</div>;
+                        return (
+                          <HoverCard key={c.label} openDelay={150} closeDelay={0}>
+                            <HoverCardTrigger asChild>{thumb}</HoverCardTrigger>
+                            <HoverCardContent side="top" align="center" className="w-64 h-64 p-2 bg-ivory">
+                              <img src={c.image} alt={c.label} className="w-full h-full object-contain" />
+                            </HoverCardContent>
+                          </HoverCard>
                         );
                       })}
                     </div>
