@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { api, formatINR, describeOptions, apiErrorMessage } from "@/lib/api";
+import { api, formatINR, describeOptions, apiErrorMessage, mediaSrc } from "@/lib/api";
 import { formatPrice } from "@/lib/currency";
 import { useAuth } from "@/context/AuthContext";
 import { ShieldCheck, Package, Heart, Certificate as CertIcon, ArrowRight, Phone, WhatsappLogo, Gear, PencilSimple, LockKey, ChatCircleDots, CaretDown, CaretUp, MapPin, Calendar, VideoCamera, Wallet, XCircle } from "@phosphor-icons/react";
@@ -279,11 +279,22 @@ export default function Account() {
                 </button>
 
                 {!isOpen && (
-                  <div className="mt-4 grid md:grid-cols-2 gap-2 text-sm text-ink-soft">
+                  <div className="mt-4 grid md:grid-cols-2 gap-3 text-sm text-ink-soft">
                     {o.items.map((li) => (
-                      <div key={li.line_id} className="flex justify-between">
-                        <span>{li.name}</span>
-                        <span className="font-mono">{formatPrice(li.price * li.qty, o.currency)}</span>
+                      <div key={li.line_id} className="flex items-center gap-3">
+                        {/* Fixed-size box either way, so rows stay aligned whether or
+                            not a product has artwork. */}
+                        {li.image ? (
+                          <img src={mediaSrc(li.image)} alt="" loading="lazy"
+                            className="w-11 h-11 object-cover gold-line shrink-0" />
+                        ) : (
+                          <div className="w-11 h-11 bg-cream gold-line shrink-0" />
+                        )}
+                        <span className="flex-1 min-w-0 truncate">
+                          {li.name}
+                          {li.qty > 1 && <span className="text-ink-muted"> × {li.qty}</span>}
+                        </span>
+                        <span className="font-mono shrink-0">{formatPrice(li.price * li.qty, o.currency)}</span>
                       </div>
                     ))}
                   </div>
@@ -298,7 +309,7 @@ export default function Account() {
                       <div className="space-y-3">
                         {o.items.map((li) => (
                           <div key={li.line_id} className="flex items-center gap-3 text-sm">
-                            {li.image && <img src={li.image} alt="" className="w-14 h-14 object-cover gold-line shrink-0" />}
+                            {li.image && <img src={mediaSrc(li.image)} alt="" loading="lazy" className="w-14 h-14 object-cover gold-line shrink-0" />}
                             <div className="flex-1 min-w-0">
                               <div className="truncate">{li.name} {li.qty > 1 ? <span className="text-ink-muted">× {li.qty}</span> : null}</div>
                               {describeOptions(li.options_list) && (
