@@ -149,14 +149,23 @@ export default function PhoneVerify({ open = true, onClose, onVerified, prefillP
           <label className="block mt-6">
             <div className="text-xs text-ink-muted mb-1">Mobile number</div>
             <div className="flex gold-line bg-ivory overflow-hidden focus-within:border-maroon">
-              <span className="px-3 py-3 bg-cream text-sm text-ink-soft border-r border-gold/30 font-mono">+91</span>
+              <select
+                value={dial}
+                onChange={(e) => setDial(e.target.value)}
+                data-testid="phone-verify-country"
+                className="px-2 py-3 bg-cream text-sm text-ink-soft border-r border-gold/30 font-mono outline-none max-w-[6.5rem]"
+              >
+                {COUNTRY_CODES.map((c) => (
+                  <option key={c.iso} value={c.dial}>{c.iso} +{c.dial}</option>
+                ))}
+              </select>
               <input
-                value={phone.replace(/^\+91/, "")}
-                onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
+                value={phone.replace(/\D/g, "")}
+                onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 12))}
                 data-testid="phone-verify-input"
                 inputMode="tel"
-                placeholder="10-digit mobile"
-                className="flex-1 px-3 py-3 outline-none"
+                placeholder={dial === "91" ? "10-digit mobile" : "Mobile number"}
+                className="flex-1 px-3 py-3 outline-none min-w-0"
                 autoFocus
               />
             </div>

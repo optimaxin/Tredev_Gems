@@ -3931,7 +3931,8 @@ async def cancel_order(order_id: str, body: OrderCancelIn, user_id: str = Depend
     status_db = order["status_db"]
     if status_db not in _CANCELLABLE_DB_STATUSES:
         raise HTTPException(409, "This order can no longer be cancelled.")
-    if now() - order["created_at"] > _CANCEL_WINDOW:
+    # db.fetch_one renders timestamps as ISO strings, not datetimes — parse before subtracting.
+    if now() - datetime.fromisoformat(order["created_at"]) > _CANCEL_WINDOW:
         raise HTTPException(409, "The 24-hour cancellation window for this order has passed.")
 
     payment = await db.fetch_one(

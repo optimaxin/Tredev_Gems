@@ -773,11 +773,11 @@ export default function ProductStory({ p, reviews = [], onReviewAdded }) {
       <Reviews reviews={reviews} productId={p.product_id} onAdded={onReviewAdded} />
       <TrustMarquee />
       <Specs p={p} />
-      <Benefits p={p} copy={copy} />
-      <ProvenanceBand reduce={reduce} />
       <Ritual copy={copy} />
-      <CareGuide p={p} copy={copy} />
+      <Benefits p={p} copy={copy} />
       <ConsultBanner reduce={reduce} />
+      <ProvenanceBand reduce={reduce} />
+      <CareGuide p={p} copy={copy} />
       <Policies />
       <Faq p={p} />
       <Related p={p} />
