@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
-import { FIREBASE_ENABLED, fbAuth, ensureRecaptcha, clearRecaptcha, signInWithPhoneNumber } from "@/lib/firebase";
+import { FIREBASE_ENABLED, fbAuth, ensureRecaptcha, clearRecaptcha, warmRecaptcha, signInWithPhoneNumber } from "@/lib/firebase";
 import { detectCountry } from "@/lib/currency";
 import { COUNTRY_CODES } from "@/lib/countryCodes";
 import { X, Phone, ShieldCheck, WarningCircle } from "@phosphor-icons/react";
@@ -26,6 +26,12 @@ export default function PhoneVerify({ open = true, onClose, onVerified, prefillP
   const cdRef = useRef(null);
 
   useEffect(() => () => { if (cdRef.current) clearInterval(cdRef.current); clearRecaptcha(); }, []);
+
+  // Build + solve the reCAPTCHA while the user is still typing their number, so
+  // "Send OTP" only pays for the SMS dispatch itself. See warmRecaptcha().
+  // Keyed on `open` because the container div only exists once the panel is
+  // rendered — warming before that would find no host element and no-op.
+  useEffect(() => { if (open) warmRecaptcha("gemora-recaptcha"); }, [open]);
 
   // Default the country picker to the visitor's actual country instead of
   // always assuming India — the user can still change it manually.
@@ -80,18 +86,26 @@ export default function PhoneVerify({ open = true, onClose, onVerified, prefillP
     const total = p.replace(/\D/g, "").length;
     if (total < dial.length + 6 || total > 15) { toast.error("Enter a valid mobile number"); return; }
     setSending(true);
+    const t0 = performance.now();
     try {
       const auth = fbAuth();
-      const verifier = ensureRecaptcha("gemora-recaptcha");
+      const verifier = await ensureRecaptcha("gemora-recaptcha");
+      const tCaptcha = performance.now();
       const conf = await signInWithPhoneNumber(auth, p, verifier);
+      console.info(`[PhoneVerify] send: captcha ${Math.round(tCaptcha - t0)}ms, sms ${Math.round(performance.now() - tCaptcha)}ms, total ${Math.round(performance.now() - t0)}ms`);
       setConfirmation(conf);
       setStep(2);
       startCooldown();
       toast.success(`OTP sent to ${p}`);
+      // That token is now spent. Rebuild the next one in the background so
+      // "Resend OTP" is instant too instead of paying the full chain again.
+      clearRecaptcha();
+      warmRecaptcha("gemora-recaptcha");
     } catch (e) {
       console.error("[PhoneVerify] send OTP failed:", e);
       toast.error(fbErrorMessage(e));
       clearRecaptcha();
+      warmRecaptcha("gemora-recaptcha");
     } finally { setSending(false); }
   };
 
@@ -99,10 +113,14 @@ export default function PhoneVerify({ open = true, onClose, onVerified, prefillP
     if (!code || code.length < 4) { toast.error("Enter the OTP"); return; }
     if (!confirmation) { toast.error("Please tap Send OTP first."); return; }
     setVerifying(true);
+    const t0 = performance.now();
     try {
       const cred = await confirmation.confirm(code);
+      const tConfirm = performance.now();
       const idToken = await cred.user.getIdToken();
+      const tToken = performance.now();
       const { data } = await api.post("/auth/firebase-verify", { id_token: idToken });
+      console.info(`[PhoneVerify] verify: confirm ${Math.round(tConfirm - t0)}ms, idToken ${Math.round(tToken - tConfirm)}ms, backend ${Math.round(performance.now() - tToken)}ms, total ${Math.round(performance.now() - t0)}ms`);
       toast.success("Phone verified");
       onVerified?.(data.phone, data.otp_verification_token, data.session);
     } catch (e) {

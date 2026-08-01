@@ -31,12 +31,15 @@ export function fbAuth() {
 // Verifier lifecycle:
 // A RecaptchaVerifier is single-shot in practice — once its token has been consumed
 // (or the internal iframe times out), reusing it produces `auth/captcha-check-failed`.
-// So we ALWAYS destroy the previous verifier and create a fresh one before each send.
+// So each send gets a freshly built+solved verifier — but it is built AHEAD of the
+// click, not during it (see warmRecaptcha below).
 let _verifier = null;
+let _warm = null; // in-flight/settled warm-up promise for the current verifier
 
 export function clearRecaptcha() {
   try { _verifier?.clear(); } catch (_) {}
   _verifier = null;
+  _warm = null;
   // Also wipe any leftover children Firebase injected into the container so the
   // next verifier renders into a clean host element.
   try {
@@ -45,12 +48,50 @@ export function clearRecaptcha() {
   } catch (_) {}
 }
 
-export function ensureRecaptcha(containerId = "gemora-recaptcha") {
+/**
+ * Pre-build the invisible reCAPTCHA *before* the user clicks "Send OTP".
+ *
+ * Measured on the live site, doing this lazily at click time costs ~10s of dead
+ * wait, none of which involves our own backend:
+ *     GET recaptchaParams        ~0.5s
+ *     load recaptcha script      ~2.1s
+ *     render invisible widget    ~0.1s
+ *     execute() / solve token    ~2-7s   ← the dominant term, highly variable
+ * …and only then does Firebase send the SMS.
+ *
+ * Every one of those legs can happen while the user is still typing their number.
+ * verify() caches its result inside the grecaptcha widget, so when Firebase later
+ * calls verify() itself during signInWithPhoneNumber it hits grecaptcha.getResponse()
+ * and returns the already-solved token synchronously — the click then costs only
+ * the actual sendVerificationCode round-trip.
+ *
+ * Best-effort by design: any failure here just leaves the normal lazy path to run
+ * at click time, exactly as before.
+ */
+export function warmRecaptcha(containerId = "gemora-recaptcha") {
+  if (!FIREBASE_ENABLED) return Promise.resolve(null);
+  if (_warm) return _warm;
+  _warm = (async () => {
+    if (typeof document === "undefined" || !document.getElementById(containerId)) return null;
+    _verifier = new RecaptchaVerifier(fbAuth(), containerId, { size: "invisible" });
+    await _verifier.render();          // script download + widget render
+    await _verifier.verify();          // solve the token up front; cached by grecaptcha
+    return _verifier;
+  })();
+  // A failed warm-up must not poison later attempts — reset so the click path
+  // can build a verifier from scratch.
+  _warm.catch(() => { _verifier = null; _warm = null; });
+  return _warm;
+}
+
+/** Verifier for an imminent send — uses the pre-warmed one when available. */
+export async function ensureRecaptcha(containerId = "gemora-recaptcha") {
   if (!FIREBASE_ENABLED) return null;
-  // Always start fresh — this is the fix for auth/captcha-check-failed on retries.
+  const warmed = await warmRecaptcha(containerId).catch(() => null);
+  if (warmed) return warmed;
+  // Warm-up didn't happen (or failed) — fall back to the original lazy behaviour.
   clearRecaptcha();
-  const auth = fbAuth();
-  _verifier = new RecaptchaVerifier(auth, containerId, { size: "invisible" });
+  _verifier = new RecaptchaVerifier(fbAuth(), containerId, { size: "invisible" });
   return _verifier;
 }
 
