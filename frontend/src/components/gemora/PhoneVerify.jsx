@@ -19,11 +19,16 @@ export default function PhoneVerify({ open = true, onClose, onVerified, prefillP
   const [dial, setDial] = useState("91");
   const [step, setStep] = useState(1);
   const [code, setCode] = useState("");
-  const [sending, setSending] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [cooldown, setCooldown] = useState(0);
-  const [confirmation, setConfirmation] = useState(null);
   const cdRef = useRef(null);
+  // The in-flight (or already settled) signInWithPhoneNumber promise, NOT a
+  // resolved confirmation: the OTP screen goes up the instant the user clicks,
+  // so verify() awaits this instead of a value that may not exist yet.
+  const sendTaskRef = useRef(null);
+  // Whether any send has ever succeeded — decides if a failure should bounce the
+  // user back to the number screen or just surface as a toast on the OTP screen.
+  const sentOkRef = useRef(false);
 
   useEffect(() => () => { if (cdRef.current) clearInterval(cdRef.current); clearRecaptcha(); }, []);
 
@@ -77,7 +82,16 @@ export default function PhoneVerify({ open = true, onClose, onVerified, prefillP
     return e?.message ? `${e.message}${code ? ` (${code})` : ""}` : "Something went wrong sending the OTP.";
   };
 
-  const send = async () => {
+  /**
+   * Optimistic send: the OTP entry screen appears on the click, and the SMS
+   * dispatch continues in the background with no spinner.
+   *
+   * This costs the user nothing real — the code cannot be typed before the SMS
+   * physically arrives, which is always well after the dispatch call resolves.
+   * So the round-trip is spent on a screen the user is reading anyway instead of
+   * on a blocking loader. Deliberately NOT async: it must return immediately.
+   */
+  const send = () => {
     if (!FIREBASE_ENABLED) {
       toast.error("Phone auth isn't configured. Please contact support.");
       return;
@@ -85,42 +99,66 @@ export default function PhoneVerify({ open = true, onClose, onVerified, prefillP
     const p = normalize(phone);
     const total = p.replace(/\D/g, "").length;
     if (total < dial.length + 6 || total > 15) { toast.error("Enter a valid mobile number"); return; }
-    setSending(true);
+
+    // — optimistic UI: everything the user sees happens now —
+    setStep(2);
+    setCode("");
+    startCooldown();
+
     const t0 = performance.now();
-    try {
+    const task = (async () => {
       const auth = fbAuth();
       const verifier = await ensureRecaptcha("gemora-recaptcha");
       const tCaptcha = performance.now();
       const conf = await signInWithPhoneNumber(auth, p, verifier);
       console.info(`[PhoneVerify] send: captcha ${Math.round(tCaptcha - t0)}ms, sms ${Math.round(performance.now() - tCaptcha)}ms, total ${Math.round(performance.now() - t0)}ms`);
-      setConfirmation(conf);
-      setStep(2);
-      startCooldown();
+      return conf;
+    })();
+    sendTaskRef.current = task;
+
+    task.then(() => {
+      sentOkRef.current = true;
       toast.success(`OTP sent to ${p}`);
-      // That token is now spent. Rebuild the next one in the background so
+      // That token is spent. Rebuild the next one in the background so
       // "Resend OTP" is instant too instead of paying the full chain again.
       clearRecaptcha();
       warmRecaptcha("gemora-recaptcha");
-    } catch (e) {
+    }).catch((e) => {
       console.error("[PhoneVerify] send OTP failed:", e);
-      toast.error(fbErrorMessage(e));
       clearRecaptcha();
       warmRecaptcha("gemora-recaptcha");
-    } finally { setSending(false); }
+      // A superseded attempt (user already hit Resend) must not clobber the
+      // newer one's UI state.
+      if (sendTaskRef.current !== task) return;
+      toast.error(fbErrorMessage(e));
+      // Nothing was ever sent, so the OTP screen is a dead end — walk it back.
+      // On a failed *resend* the earlier code is still valid, so stay put.
+      if (!sentOkRef.current) {
+        setStep(1);
+        if (cdRef.current) clearInterval(cdRef.current);
+        setCooldown(0);
+      }
+    });
   };
 
   const verify = async () => {
     if (!code || code.length < 4) { toast.error("Enter the OTP"); return; }
-    if (!confirmation) { toast.error("Please tap Send OTP first."); return; }
+    if (!sendTaskRef.current) { toast.error("Please tap Send OTP first."); return; }
     setVerifying(true);
     const t0 = performance.now();
     try {
+      // Settles the background send first. In practice it resolved long ago —
+      // the user had to wait for the SMS to arrive to get here — so this is a
+      // no-op await, but it makes the optimistic path correct even if someone
+      // pastes a code the instant the screen appears.
+      const confirmation = await sendTaskRef.current;
+      const tSend = performance.now();
       const cred = await confirmation.confirm(code);
       const tConfirm = performance.now();
       const idToken = await cred.user.getIdToken();
       const tToken = performance.now();
       const { data } = await api.post("/auth/firebase-verify", { id_token: idToken });
-      console.info(`[PhoneVerify] verify: confirm ${Math.round(tConfirm - t0)}ms, idToken ${Math.round(tToken - tConfirm)}ms, backend ${Math.round(performance.now() - tToken)}ms, total ${Math.round(performance.now() - t0)}ms`);
+      console.info(`[PhoneVerify] verify: awaitSend ${Math.round(tSend - t0)}ms, confirm ${Math.round(tConfirm - tSend)}ms, idToken ${Math.round(tToken - tConfirm)}ms, backend ${Math.round(performance.now() - tToken)}ms, total ${Math.round(performance.now() - t0)}ms`);
       toast.success("Phone verified");
       onVerified?.(data.phone, data.otp_verification_token, data.session);
     } catch (e) {
@@ -188,14 +226,26 @@ export default function PhoneVerify({ open = true, onClose, onVerified, prefillP
               />
             </div>
           </label>
-          <AsyncButton onClick={send} loading={sending} loadingText="Sending…" data-testid="phone-verify-send" className="mt-5 w-full brand-gradient text-ivory py-3 text-sm uppercase tracking-widest inline-flex items-center justify-center gap-2 hover-lift disabled:opacity-50">
+          {/* No loading state by design — this advances to the OTP screen
+              synchronously and the SMS dispatch runs in the background. */}
+          <AsyncButton onClick={send} data-testid="phone-verify-send" className="mt-5 w-full brand-gradient text-ivory py-3 text-sm uppercase tracking-widest inline-flex items-center justify-center gap-2 hover-lift disabled:opacity-50">
             Send OTP
           </AsyncButton>
         </>
       ) : (
         <>
           <div className="mt-6 text-sm text-ink-soft">OTP sent to <span className="font-mono">{normalize(phone)}</span>
-            <button onClick={() => { setStep(1); setConfirmation(null); clearRecaptcha(); }} className="ml-2 text-maroon underline text-xs">edit</button>
+            <button onClick={() => {
+              setStep(1);
+              sendTaskRef.current = null;
+              sentOkRef.current = false;
+              if (cdRef.current) clearInterval(cdRef.current);
+              setCooldown(0);
+              // Going back means a fresh number, so a fresh token — start
+              // building it now rather than on the next click.
+              clearRecaptcha();
+              warmRecaptcha("gemora-recaptcha");
+            }} className="ml-2 text-maroon underline text-xs">edit</button>
           </div>
           <label className="block mt-5">
             <div className="text-xs text-ink-muted mb-1">Enter the 6-digit code</div>
@@ -206,7 +256,7 @@ export default function PhoneVerify({ open = true, onClose, onVerified, prefillP
           <AsyncButton onClick={verify} loading={verifying} loadingText="Verifying…" data-testid="phone-verify-submit" className="mt-5 w-full brand-gradient text-ivory py-3 text-sm uppercase tracking-widest inline-flex items-center justify-center gap-2 hover-lift disabled:opacity-50">
             <ShieldCheck size={16} weight="duotone" /> Verify OTP
           </AsyncButton>
-          <AsyncButton onClick={send} loading={sending} loadingText="Sending…" disabled={cooldown > 0} data-testid="phone-verify-resend" className="mt-3 w-full text-xs text-ink-muted hover:text-maroon disabled:opacity-50">
+          <AsyncButton onClick={send} disabled={cooldown > 0} data-testid="phone-verify-resend" className="mt-3 w-full text-xs text-ink-muted hover:text-maroon disabled:opacity-50">
             {cooldown > 0 ? `Resend in ${cooldown}s` : "Resend OTP"}
           </AsyncButton>
         </>
