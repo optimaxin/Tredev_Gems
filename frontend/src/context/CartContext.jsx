@@ -29,17 +29,20 @@ export function CartProvider({ children }) {
   // caller renders while the real request is in flight (price/name/image known
   // client-side, but not the server-assigned line_id or merge-with-existing-line
   // behavior). It's replaced wholesale the moment the real response lands.
-  const add = async ({ product_id, unit_id, qty = 1, options, optimisticItem }) => {
+  // `pooja_details` rides along for lines that chose a video Pooja Energization —
+  // wearer/sankalp info the server validates and stores against the line. Undefined
+  // for every other line, and dropped from the JSON body when absent.
+  const add = async ({ product_id, unit_id, qty = 1, options, pooja_details, optimisticItem }) => {
     const prevCart = cart;
     if (optimisticItem) {
       const tempId = `optimistic-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       setCart((c) => ({
         ...c,
-        items: [...(c.items || []), { ...optimisticItem, line_id: tempId, product_id, unit_id, qty, _pending: true }],
+        items: [...(c.items || []), { ...optimisticItem, line_id: tempId, product_id, unit_id, qty, pooja_details, _pending: true }],
       }));
     }
     try {
-      const { data } = await api.post("/cart/add", { product_id, unit_id, qty, options });
+      const { data } = await api.post("/cart/add", { product_id, unit_id, qty, options, pooja_details });
       setCart(data);
       return data;
     } catch (e) {

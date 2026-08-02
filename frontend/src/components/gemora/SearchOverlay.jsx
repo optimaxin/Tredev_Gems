@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { MagnifyingGlass, X } from "@phosphor-icons/react";
-import { api } from "@/lib/api";
+import { api, mediaSrc } from "@/lib/api";
 
 const SUGGESTIONS = [
   { q: "pukhraj", label: "Pukhraj · Yellow Sapphire" },
@@ -77,7 +77,7 @@ export default function SearchOverlay({ open, onClose }) {
                     className="flex items-center gap-4 p-2 hover:bg-cream"
                   >
                     <div className="w-14 h-14 gold-line overflow-hidden shrink-0">
-                      {p.images?.[0] && <img src={p.images[0]} alt="" className="w-full h-full object-cover" />}
+                      {p.images?.[0] && <img src={mediaSrc(p.images[0])} alt="" className="w-full h-full object-cover" />}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="font-serifd text-base truncate">{p.name}</div>

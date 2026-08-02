@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { CheckCircle } from "@phosphor-icons/react";
 import OrderTruckButton from "@/components/gemora/OrderTruckButton";
 import PaymentFailedModal from "@/components/gemora/PaymentFailedModal";
+import PaymentGatewayOverlay from "@/components/gemora/PaymentGatewayOverlay";
 import { openCashfreeCheckout } from "@/lib/cashfree";
 import { openRazorpayCheckout } from "@/lib/razorpay";
 import { SHIPPING_COUNTRIES, regionForCountry } from "@/lib/shipping";
@@ -230,6 +231,8 @@ export default function Checkout() {
           </div>
         </aside>
       </form>
+
+      <PaymentGatewayOverlay open={phase === "loading"} />
 
       <PaymentFailedModal
         open={failed.open}

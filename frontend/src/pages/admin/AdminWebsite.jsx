@@ -34,11 +34,12 @@ export default function AdminWebsite() {
   const [home, setHome] = useState(null);
   const [purposes, setPurposes] = useState(null); // [{key,label}]
   const [rashi, setRashi] = useState(null);
+  const [poojaPurposes, setPoojaPurposes] = useState(null); // [{key,label}]
   const [saving, setSaving] = useState("");
 
   useEffect(() => {
     if (canContent) api.get("/admin/site-content").then((r) => { setAnnounce(r.data.announcement); setFooter(r.data.footer); setHome(normHome(r.data.home)); }).catch(() => {});
-    if (canTax) api.get("/admin/taxonomy").then((r) => { setPurposes(r.data.purposes); setRashi(r.data.rashi); }).catch(() => {});
+    if (canTax) api.get("/admin/taxonomy").then((r) => { setPurposes(r.data.purposes); setRashi(r.data.rashi); setPoojaPurposes(r.data.pooja_purposes); }).catch(() => {});
   }, [canContent, canTax]);
 
   const save = async (which, url, value) => {
@@ -390,6 +391,11 @@ export default function AdminWebsite() {
       {/* Taxonomy */}
       {canTax && purposes && taxEditor("Purposes", purposes, setPurposes, "/admin/taxonomy/purposes", "purposes")}
       {canTax && rashi && taxEditor("Rashi", rashi, setRashi, "/admin/taxonomy/rashi", "rashi", { mapStone: true })}
+      {canTax && poojaPurposes && taxEditor(
+        "Pooja Purposes", poojaPurposes, setPoojaPurposes,
+        "/admin/taxonomy/pooja_purposes", "pooja_purposes",
+        { hint: "The \"Primary Purpose\" choices a buyer picks when ordering a video Pooja Energization — the intention the priest names in the sankalp. Separate from Purposes above, which drives shop filtering." },
+      )}
     </div>
   );
 }

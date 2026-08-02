@@ -1,14 +1,22 @@
 import React, { useEffect, useState } from "react";
 import { useParams, Link, useNavigate, useLocation } from "react-router-dom";
-import { api } from "@/lib/api";
+import { api, mediaSrc } from "@/lib/api";
 import { formatPrice } from "@/lib/currency";
 import { useCart } from "@/context/CartContext";
 import { toast } from "sonner";
 import { ShieldCheck, Certificate, ShoppingBag, Heart, Plus, Minus, CaretLeft, CaretRight, Star, Truck, ArrowsClockwise, FlowerLotus, Lightning } from "@phosphor-icons/react";
 import ProductStory from "@/components/gemora/ProductStory";
 import AsyncButton from "@/components/gemora/AsyncButton";
+import PoojaDetailsForm, { EMPTY_POOJA_DETAILS, validatePoojaDetails } from "@/components/gemora/PoojaDetailsForm";
 import { CATEGORY_LABEL } from "@/lib/productCopy";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "@/components/ui/hover-card";
+
+// The only two Pooja Energization choices that involve a video sankalp — the
+// third (Basic Energization) is the free default and never needs wearer details.
+const POOJA_VIDEO_CHOICES = [
+  "SHUDH - Vedic Pooja with Video (Extra 2 Day)",
+  "SHUDH - Prana Pratishta Pooja with Video (Extra 2 Day)",
+];
 
 export default function ProductDetail() {
   const { slug } = useParams();
@@ -23,6 +31,8 @@ export default function ProductDetail() {
   const [picked, setPicked] = useState({});
   const [saved, setSaved] = useState(false); // optimistic "already in wishlist" flag
   const [buying, setBuying] = useState(false);
+  const [poojaDetails, setPoojaDetails] = useState(EMPTY_POOJA_DETAILS);
+  const [poojaSubmitAttempted, setPoojaSubmitAttempted] = useState(false); // reveals every field's error at once
   const cart = useCart();
   const nav = useNavigate();
 
@@ -36,6 +46,8 @@ export default function ProductDetail() {
     setActive(0); // reset gallery to the first photo for the new product
     setPicked({});
     setSaved(false);
+    setPoojaDetails(EMPTY_POOJA_DETAILS);
+    setPoojaSubmitAttempted(false);
 
     api.get(`/products/${slug}`).then(({ data }) => {
       if (cancelled) return;
@@ -102,12 +114,25 @@ export default function ProductDetail() {
     return sum + surchargeIn(c, p.currency);
   }, p.price);
 
+  // A video Pooja Energization needs the wearer's details for the temple's sankalp.
+  const poojaTrigger = POOJA_VIDEO_CHOICES.includes(resolved.pooja_energization);
+  const poojaValid = !poojaTrigger || Object.keys(validatePoojaDetails(poojaDetails)).length === 0;
+
+  // Stops an add-to-cart when the pooja form is incomplete, revealing its errors
+  // instead of silently failing. Returns whether the caller may proceed.
+  const guardPooja = () => {
+    if (poojaValid) return true;
+    setPoojaSubmitAttempted(true);
+    toast.error("Please complete the pooja details before adding to cart.");
+    return false;
+  };
+
   // Send only what's actually visible — a stale pick from a hidden group (e.g. a
   // ring size after switching back to Loose Gemstone) must not reach the cart.
   const put = async () => {
     const options = {};
     for (const g of visible) if (resolved[g.key] != null) options[g.key] = resolved[g.key];
-    await cart.add({ product_id: p.product_id, qty, options });
+    await cart.add({ product_id: p.product_id, qty, options, pooja_details: poojaTrigger ? poojaDetails : undefined });
   };
 
   // Optimistic: the cart page renders the new line immediately (CartContext seeds a
@@ -115,11 +140,13 @@ export default function ProductDetail() {
   // request fails, CartContext rolls the cart back and this toast surfaces the error
   // wherever the user has landed by then.
   const addToCart = () => {
+    if (!guardPooja()) return;
     const options = {};
     for (const g of visible) if (resolved[g.key] != null) options[g.key] = resolved[g.key];
     cart.add({
       product_id: p.product_id, qty, options,
-      optimisticItem: { name: p.name, price: unitPrice, image: (p.images || [])[0] || null },
+      pooja_details: poojaTrigger ? poojaDetails : undefined,
+      optimisticItem: { name: p.name, price: unitPrice, image: mediaSrc((p.images || [])[0]) || null },
     }).catch((e) => {
       toast.error(e.response?.data?.detail || "Could not add to cart");
     });
@@ -128,6 +155,7 @@ export default function ProductDetail() {
   };
 
   const buyNow = async () => {
+    if (!guardPooja()) return;
     setBuying(true);
     try {
       await put();
@@ -186,7 +214,7 @@ export default function ProductDetail() {
                   {images.length > 0 ? (
                     <img
                       key={idx}
-                      src={images[idx]}
+                      src={mediaSrc(images[idx])}
                       alt={`${p.name} — photo ${idx + 1}`}
                       data-testid="product-main-image"
                       className="w-full h-full object-cover img-hover fade-up"
@@ -236,7 +264,7 @@ export default function ProductDetail() {
                             : "gold-line opacity-60 hover:opacity-100"
                         }`}
                       >
-                        <img src={im} className="w-full h-full object-cover" alt="" loading="lazy" />
+                        <img src={mediaSrc(im)} className="w-full h-full object-cover" alt="" loading="lazy" />
                       </button>
                     ))}
                   </div>
@@ -319,7 +347,7 @@ export default function ProductDetail() {
                           >
                             <div className="aspect-square overflow-hidden bg-ivory">
                               {c.image
-                                ? <img src={c.image} alt={c.label} loading="lazy" className="w-full h-full object-contain" />
+                                ? <img src={mediaSrc(c.image)} alt={c.label} loading="lazy" className="w-full h-full object-contain" />
                                 : <div className="w-full h-full flex items-center justify-center text-[10px] text-ink-muted">No image</div>}
                             </div>
                             <div className="mt-1 text-[11px] leading-tight">
@@ -339,7 +367,7 @@ export default function ProductDetail() {
                           <HoverCard key={c.label} openDelay={150} closeDelay={0}>
                             <HoverCardTrigger asChild>{thumb}</HoverCardTrigger>
                             <HoverCardContent side="top" align="center" className="w-64 h-64 p-2 bg-ivory">
-                              <img src={c.image} alt={c.label} className="w-full h-full object-contain" />
+                              <img src={mediaSrc(c.image)} alt={c.label} className="w-full h-full object-contain" />
                             </HoverCardContent>
                           </HoverCard>
                         );
@@ -387,6 +415,13 @@ export default function ProductDetail() {
                     <div className="mt-2 text-xs text-ink-soft gold-line bg-cream px-3 py-2">
                       No problem — we'll contact you to confirm your ring size before we make it.
                     </div>
+                  )}
+                  {g.key === "pooja_energization" && poojaTrigger && (
+                    <PoojaDetailsForm
+                      value={poojaDetails}
+                      onChange={setPoojaDetails}
+                      showErrors={poojaSubmitAttempted}
+                    />
                   )}
                 </div>
               ))}

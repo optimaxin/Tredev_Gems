@@ -1,15 +1,16 @@
 import React, { useEffect, useState } from "react";
-import { api, formatINR } from "@/lib/api";
+import { api, formatINR, mediaSrc } from "@/lib/api";
 import { toast } from "sonner";
-import { PencilSimple, PlusCircle, Trash, Stack, Prohibit, CheckCircle } from "@phosphor-icons/react";
+import { PencilSimple, PlusCircle, Trash, Stack, Prohibit, CheckCircle, Image as ImageIcon } from "@phosphor-icons/react";
 import SearchBar from "@/components/gemora/SearchBar";
 import ShippingChargesEditor from "@/components/gemora/ShippingChargesEditor";
 import AsyncButton from "@/components/gemora/AsyncButton";
+import MediaPicker from "@/components/gemora/MediaPicker";
 
 const EMPTY = {
   name: "", slug: "", category: "gemstone", subcategory_id: "", description: "", price: "", mrp: "",
   price_usd: "", // shown/charged to visitors outside India
-  images: "", devanagari_name: "", attrs: "{}", quantity: "", care_instructions: "",
+  images: [], devanagari_name: "", attrs: "{}", quantity: "", care_instructions: "",
   groups: [], // option groups, seeded from the category template
   shipping_charges: [], // [{region, amount}] — USD, outside-India only
 };
@@ -35,6 +36,7 @@ export default function AdminProducts() {
   const [form, setForm] = useState(EMPTY);
   const [saving, setSaving] = useState(false);
   const [addingUnitsFor, setAddingUnitsFor] = useState(null);
+  const [showPicker, setShowPicker] = useState(false);
 
   const refresh = () => {
     api.get("/products?limit=500").then((r) => setProducts(r.data));
@@ -104,7 +106,7 @@ export default function AdminProducts() {
       price: p.price != null ? (p.price / 100).toString() : "",
       price_usd: p.price_usd != null ? (p.price_usd / 100).toString() : "",
       mrp: p.mrp != null ? (p.mrp / 100).toString() : "",
-      images: (p.images || []).join("\n"),
+      images: p.images || [],
       attrs: JSON.stringify(p.attrs || {}, null, 2),
       care_instructions: (p.care_instructions || []).join("\n"),
       groups: groupsToForm(p.variant_options?.groups),
@@ -177,7 +179,7 @@ export default function AdminProducts() {
               if (isNaN(n) || n < 0) throw new Error(`Enter a valid shipping charge for ${r.region}`);
               return [r.region, n];
             })),
-        images: form.images.split("\n").map((s) => s.trim()).filter(Boolean),
+        images: form.images.filter(Boolean),
         attrs: JSON.parse(form.attrs || "{}"),
         // Number of pieces in stock — backend auto-generates a serial per unit.
         quantity: form.quantity ? Math.max(0, parseInt(form.quantity, 10) || 0) : 0,
@@ -450,10 +452,29 @@ export default function AdminProducts() {
             <div className="text-xs text-ink-muted mb-1">Description</div>
             <textarea rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="w-full gold-line px-3 py-2 outline-none focus:border-maroon" />
           </label>
-          <label className="block md:col-span-2">
-            <div className="text-xs text-ink-muted mb-1">Images (one URL per line)</div>
-            <textarea rows={3} value={form.images} onChange={(e) => setForm({ ...form, images: e.target.value })} className="w-full gold-line px-3 py-2 outline-none focus:border-maroon font-mono text-xs" />
-          </label>
+          <div className="block md:col-span-2">
+            <div className="text-xs text-ink-muted mb-1">Images</div>
+            <div className="flex flex-wrap gap-3">
+              {form.images.map((url, i) => (
+                <div key={i} className="relative w-24 h-24 gold-line bg-cream overflow-hidden group shrink-0">
+                  <img src={mediaSrc(url)} alt="" className="w-full h-full object-cover" />
+                  <button type="button"
+                    onClick={() => setForm((f) => ({ ...f, images: f.images.filter((_, j) => j !== i) }))}
+                    className="absolute top-1 right-1 bg-ivory/90 hover:bg-revoked hover:text-ivory text-revoked p-1 border border-gold/40 opacity-0 group-hover:opacity-100 transition"
+                    title="Remove">
+                    <Trash size={11} weight="bold" />
+                  </button>
+                  {i === 0 && <div className="absolute bottom-0 inset-x-0 bg-maroon-deep/80 text-ivory text-[9px] text-center py-0.5">Cover</div>}
+                </div>
+              ))}
+              <button type="button" onClick={() => setShowPicker(true)} data-testid="product-add-image"
+                className="w-24 h-24 border border-dashed border-gold/50 text-ink-muted hover:border-maroon hover:text-maroon flex flex-col items-center justify-center gap-1 shrink-0">
+                <ImageIcon size={20} />
+                <span className="text-[10px] uppercase tracking-widest">Add image</span>
+              </button>
+            </div>
+            <div className="text-[10px] text-ink-muted mt-1">First image is the cover shown on product cards.</div>
+          </div>
           <label className="block md:col-span-2">
             <div className="text-xs text-ink-muted mb-1">Attributes (JSON — e.g. graha, purpose, mukhi, origin)</div>
             <textarea rows={3} value={form.attrs} onChange={(e) => setForm({ ...form, attrs: e.target.value })} className="w-full gold-line px-3 py-2 outline-none focus:border-maroon font-mono text-xs" />
@@ -484,7 +505,7 @@ export default function AdminProducts() {
       <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
         {shown.map((p) => (
           <div key={p.product_id} className="gold-line bg-ivory p-4 flex gap-4">
-            {p.images?.[0] && <div className="w-24 h-24 gold-line overflow-hidden shrink-0"><img src={p.images[0]} alt="" className="w-full h-full object-cover" /></div>}
+            {p.images?.[0] && <div className="w-24 h-24 gold-line overflow-hidden shrink-0"><img src={mediaSrc(p.images[0])} alt="" className="w-full h-full object-cover" /></div>}
             <div className="flex-1 min-w-0">
               <div className="font-serifd text-lg truncate">{p.name}</div>
               <div className="text-xs font-mono text-ink-muted">
@@ -540,6 +561,12 @@ export default function AdminProducts() {
           </div>
         ))}
       </div>
+
+      <MediaPicker
+        open={showPicker}
+        onClose={() => setShowPicker(false)}
+        onPick={(m) => { setForm((f) => ({ ...f, images: [...f.images, m.url] })); setShowPicker(false); }}
+      />
     </div>
   );
 }

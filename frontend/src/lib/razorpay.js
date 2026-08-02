@@ -2,7 +2,9 @@
 // Cashfree (see cashfree.js) still handles INR. Same dynamic-script-tag pattern.
 let sdkPromise = null;
 
-function loadRazorpay() {
+// Exported so the caller can warm this up ahead of the click (see CurrencyContext) —
+// shaves the script-fetch off the click-to-modal gap instead of paying for it after.
+export function loadRazorpay() {
   if (window.Razorpay) return Promise.resolve(window.Razorpay);
   if (!sdkPromise) {
     sdkPromise = new Promise((resolve, reject) => {

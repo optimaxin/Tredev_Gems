@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { useSiteAssets } from "@/context/SiteAssetsContext";
 import { YantraWatermark } from "@/components/gemora/Editorial";
-import { api } from "@/lib/api";
+import { api, mediaSrc } from "@/lib/api";
 import {
   bannerFor, copyFor, faqFor, CATEGORY_LABEL, CATEGORY_DEVA,
 } from "@/lib/productCopy";
@@ -117,7 +117,7 @@ export default function CategoryBanner({ category }) {
       <div className="grid lg:grid-cols-2 lg:h-[9cm] lg:max-h-[9cm]">
         <div className="relative aspect-[16/9] lg:aspect-auto lg:h-full overflow-hidden bg-cream group order-1">
           <img
-            src={image}
+            src={mediaSrc(image)}
             alt={label}
             className={`w-full h-full object-cover ${reduce ? "" : "ken-burns"}`}
           />

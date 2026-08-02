@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from "react";
-import { api } from "@/lib/api";
+import { api, mediaSrc } from "@/lib/api";
 import { toast } from "sonner";
-import { PlusCircle, Trash, PencilSimple } from "@phosphor-icons/react";
+import { PlusCircle, Trash, PencilSimple, Image as ImageIcon } from "@phosphor-icons/react";
 import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
 import AsyncButton from "@/components/gemora/AsyncButton";
+import MediaPicker from "@/components/gemora/MediaPicker";
 
 // Icons the storefront banner can render for a step (mirrors CategoryBanner's ICONS).
 const STEP_ICONS = ["sparkle", "drop", "sun", "moon", "leaf", "lotus", "hand", "shield",
@@ -37,6 +38,7 @@ export default function AdminCategories() {
   const [editing, setEditing] = useState(null); // "new" | cat | null
   const [form, setForm] = useState(EMPTY);
   const [saving, setSaving] = useState(false);
+  const [showPicker, setShowPicker] = useState(false);
 
   const refresh = () => api.get("/admin/categories").then((r) => setCats(r.data));
   useEffect(() => { refresh(); }, []);
@@ -176,10 +178,28 @@ export default function AdminCategories() {
               Shown on the shop page for this category. Leave any field blank to fall back to the built-in copy.
             </div>
           </div>
-          <label className="block">
-            <div className="text-xs text-ink-muted mb-1">Banner image URL</div>
-            <input value={form.banner.image} onChange={(e) => setB("image", e.target.value)} placeholder="https://…" className={inputCls + " font-mono text-xs"} />
-          </label>
+          <div className="block">
+            <div className="text-xs text-ink-muted mb-1">Banner image</div>
+            <div className="flex items-start gap-3">
+              <div className="w-32 h-20 bg-cream border border-gold/30 overflow-hidden shrink-0">
+                {form.banner.image ? (
+                  <img src={mediaSrc(form.banner.image)} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-ink-muted"><ImageIcon size={20} /></div>
+                )}
+              </div>
+              <div className="flex flex-col gap-2">
+                <button type="button" onClick={() => setShowPicker(true)}
+                  className="border border-maroon text-maroon px-3 py-1.5 text-[10px] uppercase tracking-widest hover:bg-maroon hover:text-ivory">
+                  Upload / pick image
+                </button>
+                {form.banner.image && (
+                  <button type="button" onClick={() => setB("image", "")}
+                    className="text-[10px] text-ink-muted hover:text-revoked underline">Clear</button>
+                )}
+              </div>
+            </div>
+          </div>
           <label className="block">
             <div className="text-xs text-ink-muted mb-1">Badge text</div>
             <input value={form.banner.badge_label} onChange={(e) => setB("badge_label", e.target.value)} placeholder="Certified collection" className={inputCls} />
@@ -263,6 +283,12 @@ export default function AdminCategories() {
           </div>
         ))}
       </div>
+
+      <MediaPicker
+        open={showPicker}
+        onClose={() => setShowPicker(false)}
+        onPick={(m) => { setB("image", m.url); setShowPicker(false); }}
+      />
     </div>
   );
 }

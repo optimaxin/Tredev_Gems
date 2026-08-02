@@ -11,6 +11,7 @@ import AsyncButton from "@/components/gemora/AsyncButton";
 import { toast } from "sonner";
 import { openCashfreeCheckout } from "@/lib/cashfree";
 import { openRazorpayCheckout } from "@/lib/razorpay";
+import PaymentGatewayOverlay from "@/components/gemora/PaymentGatewayOverlay";
 
 export default function Account() {
   const { user, loading, refresh, patchUser } = useAuth();
@@ -236,7 +237,7 @@ export default function Account() {
               <div className="mt-8 grid md:grid-cols-2 gap-6">
                 {vault.map(({ item, cert, product }) => (
                   <div key={item.unit_id} className="gold-line bg-ivory p-6 flex gap-5">
-                    {product.images?.[0] && <div className="w-28 h-28 overflow-hidden gold-line shrink-0"><img src={product.images[0]} alt="" className="w-full h-full object-cover" /></div>}
+                    {product.images?.[0] && <div className="w-28 h-28 overflow-hidden gold-line shrink-0"><img src={mediaSrc(product.images[0])} alt="" className="w-full h-full object-cover" /></div>}
                     <div className="flex-1">
                       {product.devanagari_name && <div className="font-deva text-gold-soft">{product.devanagari_name}</div>}
                       <div className="font-serifd text-xl text-ink">{product.name}</div>
@@ -320,6 +321,25 @@ export default function Account() {
                                   {li.serials.map((s) => <span key={s} className="text-[10px] font-mono bg-cream gold-line px-1 py-0.5">{s}</span>)}
                                 </div>
                               )}
+                              {li.pooja_details && (
+                                <div className="mt-1.5 pt-1.5 border-t border-gold/20 text-[11px] text-ink-soft">
+                                  <div className="text-[10px] uppercase tracking-widest text-ink-muted mb-1 flex items-center gap-1">
+                                    <VideoCamera size={11} weight="duotone" /> Pooja Details
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+                                    <div><span className="text-ink-muted">Name</span> {li.pooja_details.name}</div>
+                                    {/* stored lowercase (male/female/other) — cased for display only */}
+                                    <div><span className="text-ink-muted">Gender</span> <span className="capitalize">{li.pooja_details.gender}</span></div>
+                                    <div><span className="text-ink-muted">DOB</span> {li.pooja_details.dob}</div>
+                                    <div><span className="text-ink-muted">Time</span> {li.pooja_details.birth_time || "—"}</div>
+                                    <div className="col-span-2"><span className="text-ink-muted">Birthplace</span> {li.pooja_details.birth_place}</div>
+                                    {li.pooja_details.gotra && (
+                                      <div className="col-span-2"><span className="text-ink-muted">Gotra</span> {li.pooja_details.gotra}</div>
+                                    )}
+                                    <div className="col-span-2"><span className="text-ink-muted">Purpose</span> {li.pooja_details.purpose_label}</div>
+                                  </div>
+                                </div>
+                              )}
                             </div>
                             <span className="font-mono text-xs shrink-0">{formatPrice(li.price * li.qty, o.currency)}</span>
                           </div>
@@ -393,7 +413,7 @@ export default function Account() {
             {wish.length === 0 && <div className="gold-line p-10 text-center text-ink-muted col-span-full">Nothing saved yet.</div>}
             {wish.map((p) => (
               <Link key={p.product_id} to={`/product/${p.slug}`} className="gold-line bg-ivory p-4 hover-lift">
-                <div className="aspect-square overflow-hidden gold-line">{p.images?.[0] && <img src={p.images[0]} className="w-full h-full object-cover" alt="" />}</div>
+                <div className="aspect-square overflow-hidden gold-line">{p.images?.[0] && <img src={mediaSrc(p.images[0])} className="w-full h-full object-cover" alt="" />}</div>
                 <div className="mt-3 font-serifd text-lg">{p.name}</div>
                 <div className="text-sm text-maroon-deep">{formatINR(p.price)}</div>
               </Link>
@@ -542,6 +562,8 @@ export default function Account() {
           />
         )}
       </div>
+
+      <PaymentGatewayOverlay open={!!payingId} />
     </div>
   );
 }

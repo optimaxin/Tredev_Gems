@@ -21,6 +21,24 @@ const FlagTags = ({ flags }) => (
   </>
 );
 
+// Wearer info captured at purchase for a video Pooja Energization. Staff act on this
+// (perform the sankalp) so it's laid out label/value for quick scanning, not prose.
+const PoojaDetails = ({ d }) => (
+  <div className="mt-1.5 gold-line bg-maroon/5 px-2 py-1.5 text-[10px] leading-tight">
+    <div className="uppercase tracking-widest text-maroon-deep font-semibold mb-1">Pooja Details</div>
+    <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-ink-soft">
+      <div><span className="text-ink-muted">Name</span> {d.name}</div>
+      {/* stored lowercase (male/female/other) — cased for display only */}
+      <div><span className="text-ink-muted">Gender</span> <span className="capitalize">{d.gender}</span></div>
+      <div><span className="text-ink-muted">DOB</span> {d.dob}</div>
+      <div><span className="text-ink-muted">Time</span> {d.birth_time || "—"}</div>
+      <div className="col-span-2"><span className="text-ink-muted">Birthplace</span> {d.birth_place}</div>
+      {d.gotra && <div className="col-span-2"><span className="text-ink-muted">Gotra</span> {d.gotra}</div>}
+      <div className="col-span-2"><span className="text-ink-muted">Purpose</span> {d.purpose_label}</div>
+    </div>
+  </div>
+);
+
 // Sensible defaults so dispatch is a quick confirm, not a full data-entry form.
 const dispatchDefaults = () => ({
   lab_name: "GJEPC Lab Mumbai",
@@ -304,6 +322,7 @@ export default function AdminOrders() {
                           <div className="text-[10px] text-maroon mt-0.5">{describeOptions(li.options_list, { all: true })}</div>
                         )}
                         {li.flags?.length > 0 && <div className="mt-1 flex flex-wrap gap-1"><FlagTags flags={li.flags} /></div>}
+                        {li.pooja_details && <PoojaDetails d={li.pooja_details} />}
                         {li.serials?.length > 0 ? (
                           <div className="mt-1 flex flex-wrap gap-1">
                             {li.serials.map((s) => (
@@ -455,6 +474,7 @@ export default function AdminOrders() {
                       {li.flags?.length > 0 && (
                         <div className="mt-1 flex flex-wrap gap-1"><FlagTags flags={li.flags} /></div>
                       )}
+                      {li.pooja_details && <PoojaDetails d={li.pooja_details} />}
                       {li.serials?.length > 0 && (
                         <div className="flex flex-wrap gap-1 mt-0.5">
                           {li.serials.map((s) => <span key={s} className="text-[10px] font-mono bg-ivory gold-line px-1 py-0.5">{s}</span>)}

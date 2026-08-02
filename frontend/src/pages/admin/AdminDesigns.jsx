@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from "react";
-import { api, formatINR } from "@/lib/api";
+import { api, formatINR, mediaSrc } from "@/lib/api";
 import { toast } from "sonner";
-import { PencilSimple, PlusCircle, Trash, Diamond } from "@phosphor-icons/react";
+import { PencilSimple, PlusCircle, Trash, Diamond, Image as ImageIcon } from "@phosphor-icons/react";
 import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
 import AsyncButton from "@/components/gemora/AsyncButton";
+import MediaPicker from "@/components/gemora/MediaPicker";
 
 // Designs belong to one gemstone: pick Sapphire and you see Sapphire's designs, not
 // every stone's. There's one row per metal, each carrying that mounting's full price —
@@ -23,6 +24,7 @@ export default function AdminDesigns() {
   const [editing, setEditing] = useState(null); // design | "new" | null
   const [form, setForm] = useState(EMPTY);
   const [saving, setSaving] = useState(false);
+  const [showPicker, setShowPicker] = useState(false);
 
   const refresh = () => api.get("/admin/designs").then((r) => setDesigns(r.data));
   useEffect(() => {
@@ -189,12 +191,28 @@ export default function AdminDesigns() {
               Left blank, this design can't be added to a USD checkout — the visitor is asked to switch to India instead.
             </div>
           </label>
-          <label className="block md:col-span-2">
-            <div className="text-xs text-ink-muted mb-1">Image URL</div>
-            <input value={form.image_url} onChange={(e) => setForm({ ...form, image_url: e.target.value })}
-              placeholder="https://…" data-testid="design-image-input"
-              className="w-full gold-line px-3 py-2 outline-none focus:border-maroon font-mono text-xs" />
-          </label>
+          <div className="md:col-span-2">
+            <div className="text-xs text-ink-muted mb-1">Design image</div>
+            <div className="flex items-start gap-3">
+              <div className="w-24 h-24 bg-cream border border-gold/30 overflow-hidden shrink-0">
+                {form.image_url ? (
+                  <img src={mediaSrc(form.image_url)} alt="" className="w-full h-full object-contain" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-ink-muted"><ImageIcon size={22} /></div>
+                )}
+              </div>
+              <div className="flex flex-col gap-2">
+                <button type="button" onClick={() => setShowPicker(true)} data-testid="design-image-input"
+                  className="border border-maroon text-maroon px-3 py-1.5 text-[10px] uppercase tracking-widest hover:bg-maroon hover:text-ivory">
+                  Upload / pick image
+                </button>
+                {form.image_url && (
+                  <button type="button" onClick={() => setForm({ ...form, image_url: "" })}
+                    className="text-[10px] text-ink-muted hover:text-revoked underline">Clear</button>
+                )}
+              </div>
+            </div>
+          </div>
           <label className="block">
             <div className="text-xs text-ink-muted mb-1">Note (optional)</div>
             <input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })}
@@ -235,7 +253,7 @@ export default function AdminDesigns() {
                   className={`gold-line bg-ivory p-2 ${d.is_active ? "" : "opacity-50"}`}>
                   <div className="aspect-square overflow-hidden bg-cream">
                     {d.image_url
-                      ? <img src={d.image_url} alt={d.code} loading="lazy" className="w-full h-full object-contain" />
+                      ? <img src={mediaSrc(d.image_url)} alt={d.code} loading="lazy" className="w-full h-full object-contain" />
                       : <div className="w-full h-full flex items-center justify-center text-[10px] text-ink-muted">No image</div>}
                   </div>
                   <div className="mt-1.5 text-xs font-medium">{d.code} · {d.metal}</div>
@@ -255,6 +273,12 @@ export default function AdminDesigns() {
           )}
         </div>
       ))}
+
+      <MediaPicker
+        open={showPicker}
+        onClose={() => setShowPicker(false)}
+        onPick={(m) => { setForm((f) => ({ ...f, image_url: m.url })); setShowPicker(false); }}
+      />
     </div>
   );
 }

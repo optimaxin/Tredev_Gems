@@ -1,6 +1,6 @@
 import React from "react";
 import { Link } from "react-router-dom";
-import { api } from "@/lib/api";
+import { api, mediaSrc } from "@/lib/api";
 import { formatPrice } from "@/lib/currency";
 import { ShieldCheck, Star, CreditCard } from "@phosphor-icons/react";
 
@@ -20,7 +20,7 @@ export default function ProductCard({ p }) {
     >
       <div className="aspect-[4/5] overflow-hidden bg-cream relative">
         <img
-          src={p.images?.[0]}
+          src={mediaSrc(p.images?.[0])}
           alt={p.name}
           className="w-full h-full object-cover img-hover"
           loading="lazy"

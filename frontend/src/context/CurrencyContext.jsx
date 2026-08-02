@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { detectCurrency } from "@/lib/currency";
 import { setCurrentCurrency } from "@/lib/api";
+import { loadRazorpay } from "@/lib/razorpay";
+import { loadCashfree } from "@/lib/cashfree";
 
 const CurrencyCtx = createContext({ currency: "INR" });
 
@@ -19,6 +21,9 @@ export function CurrencyProvider({ children }) {
       setCurrentCurrency(c); // api.js reads this for every products/consultation GET
       setCurrency(c);
       setReady(true);
+      // Warm the matching gateway's checkout.js now, in the background, so a later
+      // "Pay" click doesn't also pay for this script fetch before its modal can open.
+      (c === "INR" ? loadCashfree() : loadRazorpay()).catch(() => {});
     });
     return () => { cancelled = true; };
   }, []);

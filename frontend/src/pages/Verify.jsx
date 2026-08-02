@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { api } from "@/lib/api";
+import { api, mediaSrc } from "@/lib/api";
 import { ShieldCheck, ShieldWarning, ShieldSlash, Certificate, QrCode, Fingerprint, HandHeart, Play, ArrowRight } from "@phosphor-icons/react";
 import CryptoFingerprint from "@/components/gemora/CryptoFingerprint";
 
@@ -158,7 +158,7 @@ export default function Verify() {
                       <div className="gold-line bg-ivory p-6 flex flex-col items-center justify-center text-center">
                         {result.product?.images?.[0] && (
                           <div className="aspect-square w-full overflow-hidden gold-line">
-                            <img src={result.product.images[0]} alt="" className="w-full h-full object-cover" />
+                            <img src={mediaSrc(result.product.images[0])} alt="" className="w-full h-full object-cover" />
                           </div>
                         )}
                         <Link to={`/product/${result.product?.slug}`} className="mt-4 text-sm text-maroon underline underline-offset-4 decoration-gold-soft">View product page →</Link>

@@ -717,6 +717,18 @@ class CertificateIssueIn(BaseModel):
     mantra: Optional[str] = None
 
 
+class PoojaDetailsIn(BaseModel):
+    """Wearer/sankalp details for a video Pooja Energization — everything here is
+    re-validated server-side (see _validated_pooja_details), never trusted as-is."""
+    name: str = ""
+    dob: str = ""            # YYYY-MM-DD
+    birth_place: str = ""
+    birth_time: str = ""     # HH:MM 24h, optional
+    gender: str = ""
+    gotra: str = ""          # optional
+    purpose: str = ""        # key into site_content.pooja_purposes
+
+
 class CartAddIn(BaseModel):
     product_id: str
     unit_id: Optional[str] = None  # required for serialized items
@@ -725,6 +737,10 @@ class CartAddIn(BaseModel):
     # server-side against the product's variant_options; the client never asserts a
     # price. Missing groups fall back to their (free) default choice.
     options: Dict[str, str] = {}
+    # Required only when `options["pooja_energization"]` resolves to one of
+    # _POOJA_VIDEO_LABELS — see cart_add. Ignored (and NULLed) otherwise, so a
+    # client can't attach wearer details to an arbitrary line.
+    pooja_details: Optional[PoojaDetailsIn] = None
 
 
 class CheckoutIn(BaseModel):
@@ -1890,6 +1906,48 @@ async def _site_content(key: str):
     return row if row else _CONTENT_DEFAULTS.get(key)
 
 
+_POOJA_GENDERS = {"male", "female", "other"}
+_POOJA_TEXT_MAX = 200  # sanity cap on free-text fields — this isn't a storage hole
+
+
+async def _validated_pooja_details(details: Optional[PoojaDetailsIn]) -> dict:
+    """Cross-checks buyer-submitted wearer details against the current purpose
+    taxonomy and basic sanity rules, and snapshots the purpose's label at purchase
+    time (so a later admin edit to pooja_purposes can't retroactively change what
+    was sankalp'd). Raises 400 on anything invalid."""
+    if not details:
+        raise HTTPException(400, "Wearer details are required for this Pooja Energization option")
+    name = details.name.strip()[:_POOJA_TEXT_MAX]
+    dob_raw = details.dob.strip()
+    birth_place = details.birth_place.strip()[:_POOJA_TEXT_MAX]
+    birth_time = details.birth_time.strip()[:10]
+    gender = details.gender.strip().lower()
+    gotra = details.gotra.strip()[:_POOJA_TEXT_MAX]
+    purpose_key = details.purpose.strip()
+    if not name or not dob_raw or not birth_place or not gender or not purpose_key:
+        raise HTTPException(
+            400, "Name, date of birth, birth place, gender and purpose are required")
+    try:
+        dob = date.fromisoformat(dob_raw)
+    except ValueError:
+        raise HTTPException(400, "Date of birth must be a valid date (YYYY-MM-DD)")
+    if dob >= date.today():
+        raise HTTPException(400, "Date of birth must be in the past")
+    if birth_time and not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", birth_time):
+        raise HTTPException(400, "Birth time must be HH:MM (24-hour)")
+    if gender not in _POOJA_GENDERS:
+        raise HTTPException(400, f"Gender must be one of {sorted(_POOJA_GENDERS)}")
+    purposes = await _site_content("pooja_purposes")
+    match = next((p for p in (purposes or []) if p.get("key") == purpose_key), None)
+    if not match:
+        raise HTTPException(400, "Unknown pooja purpose")
+    return {
+        "name": name, "dob": dob.isoformat(), "birth_place": birth_place,
+        "birth_time": birth_time, "gender": gender, "gotra": gotra,
+        "purpose": purpose_key, "purpose_label": match.get("label", purpose_key),
+    }
+
+
 async def _categories_body() -> dict:
     db_cats = await _list_categories()
     return {
@@ -2110,6 +2168,14 @@ _CATEGORY_OPTION_TEMPLATES: dict[str, list[dict]] = {
         {"key": "size", "label": "Size", "type": "dropdown",
          "choices": [{"label": "8mm", "surcharge": 0}, {"label": "10mm", "surcharge": 0}]},
     ],
+}
+
+# The two "video" Pooja Energization choices that require wearer/sankalp details —
+# "SHUDH - Basic Energization" is the free default on every gemstone and needs none.
+# Single source of truth: cart_add's pooja_details validation reads this, nothing else.
+_POOJA_VIDEO_LABELS = {
+    "SHUDH - Vedic Pooja with Video (Extra 2 Day)",
+    "SHUDH - Prana Pratishta Pooja with Video (Extra 2 Day)",
 }
 
 _OPTION_GROUP_TYPES = {"dropdown", "buttons", "images"}
@@ -2810,6 +2876,7 @@ async def _cart_items(cart_id: str, conn=None) -> list[dict]:
                ci.qty                            AS qty,
                ci.unit_price_snapshot            AS unit_price_snapshot,
                ci.selected_options               AS options,
+               ci.pooja_details                  AS pooja_details,
                p.variant_options                 AS variant_options,
                p.category_key::text              AS category_key,
                p.title                           AS name,
@@ -2974,21 +3041,29 @@ async def cart_add(body: CartAddIn, request: Request, response: Response,
                  f"{cart['currency']} checkout yet — switch your region to India to order it, "
                  f"or contact us.")
 
+    # Wearer/sankalp details, required only for the two video Pooja Energization
+    # choices — anything the client sent for any other choice is discarded, so a
+    # client can't attach details to a line that doesn't ask for them.
+    pooja_details = (await _validated_pooja_details(body.pooja_details)
+                     if selected.get("pooja_energization") in _POOJA_VIDEO_LABELS else None)
+
     add_qty = max(1, body.qty)
 
     # Quantity-based cart: no serial is chosen here and nothing is reserved. Adds for
-    # the same product AND the same selected options merge into one line (so the +/-
-    # stepper works on a single row); a different certification/pendant/size choice is
-    # a distinct line, since it's priced differently. Specific units are auto-assigned
-    # only when payment is captured (_mark_paid) — all option combinations of a product
-    # draw from the same physical stock pool.
+    # the same product AND the same selected options AND the same pooja_details merge
+    # into one line (so the +/- stepper works on a single row); a different
+    # certification/pendant/size choice — or a different wearer's details — is a
+    # distinct line. Specific units are auto-assigned only when payment is captured
+    # (_mark_paid) — all option combinations of a product draw from the same physical
+    # stock pool.
     async with db.transaction() as conn:
         existing = await conn.fetchrow(
             """SELECT id::text AS id, qty FROM cart_items
                 WHERE cart_id = $1::uuid AND variant_id = $2::uuid
                   AND product_unit_id IS NULL AND selected_options = $3::jsonb
+                  AND pooja_details IS NOT DISTINCT FROM $4::jsonb
                 ORDER BY created_at LIMIT 1""",
-            cart["cart_id"], product["variant_id"], selected)
+            cart["cart_id"], product["variant_id"], selected, pooja_details)
         line_new_qty = (existing["qty"] if existing else 0) + add_qty
 
         # For serialized products, never let the cart (summed across every options
@@ -3016,10 +3091,10 @@ async def cart_add(body: CartAddIn, request: Request, response: Response,
         else:
             await conn.execute(
                 """INSERT INTO cart_items (id, cart_id, variant_id, product_unit_id, qty,
-                                           unit_price_snapshot, selected_options)
-                   VALUES ($1,$2::uuid,$3::uuid,NULL,$4,$5,$6::jsonb)""",
+                                           unit_price_snapshot, selected_options, pooja_details)
+                   VALUES ($1,$2::uuid,$3::uuid,NULL,$4,$5,$6::jsonb,$7::jsonb)""",
                 uuid.uuid4(), cart["cart_id"], product["variant_id"], line_new_qty,
-                unit_price, selected)
+                unit_price, selected, pooja_details)
         await conn.execute(
             "UPDATE carts SET updated_at = now() WHERE id = $1::uuid", cart["cart_id"])
 
@@ -3156,6 +3231,7 @@ _ORDER_ITEMS_COLS = """
                oi.unit_price          AS unit_price,
                oi.title_snapshot      AS name,
                oi.selected_options    AS options,
+               oi.pooja_details       AS pooja_details,
                p.variant_options      AS variant_options,
                p.category_key::text   AS category_key,
                p.is_serialized        AS is_serialized,
@@ -3406,24 +3482,29 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
         unit_prices = [db.to_amount(li["price"]) for li in items]
         line_totals = [db.to_amount(li["price"] * li["qty"]) for li in items]
         options = [db.json_dumps(li.get("options") or {}) for li in items]
+        # None (not "null") for lines without pooja_details, so it lands as SQL NULL —
+        # not a JSON null — on order_items, same as it is on the cart_items it came from.
+        pooja_details = [db.json_dumps(li["pooja_details"]) if li.get("pooja_details") else None
+                         for li in items]
         for start in range(0, len(item_ids), _BULK_INSERT_CHUNK):
             end = start + _BULK_INSERT_CHUNK
             await conn.execute(
                 """INSERT INTO order_items (id, order_id, product_id, variant_id,
                         product_unit_id, title_snapshot, qty, unit_price, line_total,
-                        fulfillment_status, selected_options)
-                   SELECT li.id, $9::uuid, li.product_id,
+                        fulfillment_status, selected_options, pooja_details)
+                   SELECT li.id, $10::uuid, li.product_id,
                           (SELECT id FROM product_variants WHERE product_id = li.product_id
                             ORDER BY created_at LIMIT 1),
                           li.unit_id, li.title_snapshot, li.qty, li.unit_price,
-                          li.line_total, 'pending', li.selected_options::jsonb
+                          li.line_total, 'pending', li.selected_options::jsonb,
+                          li.pooja_details::jsonb
                      FROM unnest($1::uuid[], $2::uuid[], $3::uuid[], $4::text[], $5::int[],
-                                 $6::numeric[], $7::numeric[], $8::text[])
+                                 $6::numeric[], $7::numeric[], $8::text[], $9::text[])
                           AS li(id, product_id, unit_id, title_snapshot, qty, unit_price,
-                                line_total, selected_options)""",
+                                line_total, selected_options, pooja_details)""",
                 item_ids[start:end], product_ids[start:end], unit_ids[start:end],
                 names[start:end], qtys[start:end], unit_prices[start:end],
-                line_totals[start:end], options[start:end], order_id)
+                line_totals[start:end], options[start:end], pooja_details[start:end], order_id)
 
         await conn.execute(
             """INSERT INTO payments (id, order_id, gateway, gateway_ref, amount, currency,

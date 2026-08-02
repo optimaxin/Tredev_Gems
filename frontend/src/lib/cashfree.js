@@ -4,7 +4,9 @@
 // gateway everywhere.
 let sdkPromise = null;
 
-function loadCashfree() {
+// Exported so the caller can warm this up ahead of the click (see CurrencyContext) —
+// shaves the script-fetch off the click-to-modal gap instead of paying for it after.
+export function loadCashfree() {
   if (window.Cashfree) return Promise.resolve(window.Cashfree);
   if (!sdkPromise) {
     sdkPromise = new Promise((resolve, reject) => {
