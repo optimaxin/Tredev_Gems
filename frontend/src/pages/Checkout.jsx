@@ -40,7 +40,6 @@ export default function Checkout() {
   });
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const currency = cart.currency || "INR";
-  const gst = Math.round(subtotal * 0.03);
   // The buyer picks their exact country (far less error-prone than asking them to
   // self-classify into a region), which resolves to one of the admin's coarse
   // shipping regions — same resolution the backend does server-side, so the total
@@ -60,7 +59,7 @@ export default function Checkout() {
   // discount a $ order or vice versa, so it just stays available for later instead.
   const creditUsable = credit?.available && (credit.currency || "INR") === currency;
   const discount = creditUsable ? Math.min(credit.amount, subtotal) : 0;
-  const total = subtotal + gst + shippingTotal - discount;
+  const total = subtotal + shippingTotal - discount;
   const DELIVER_MS = 4200; // matches the truck animation length
 
   // Payment is confirmed by here — play the delivery truck, then leave for the
@@ -197,23 +196,22 @@ export default function Checkout() {
               </div>
             ))}
           </div>
-          <div className="mt-5 pt-4 border-t border-gold/40 flex justify-between text-sm">
-            <span>GST</span><span>{formatPrice(gst, currency)}</span>
-          </div>
-          {currency === "USD" && (
-            <div className="mt-2 flex justify-between text-sm text-ink-muted">
-              <span>Shipping</span>
-              <span>{shippingRegion ? formatPrice(shippingTotal, currency) : "Select your country above"}</span>
+          <div className="mt-5 pt-4 border-t border-gold/40 space-y-2">
+            {currency === "USD" && (
+              <div className="flex justify-between text-sm text-ink-muted">
+                <span>Shipping</span>
+                <span>{shippingRegion ? formatPrice(shippingTotal, currency) : "Select your country above"}</span>
+              </div>
+            )}
+            {discount > 0 && (
+              <div className="flex justify-between text-sm text-verified">
+                <span>Consultation credit</span><span>−{formatPrice(discount, currency)}</span>
+              </div>
+            )}
+            <div className="flex items-baseline justify-between">
+              <span>Total</span>
+              <span className="font-display text-3xl text-maroon-deep">{formatPrice(total, currency)}</span>
             </div>
-          )}
-          {discount > 0 && (
-            <div className="mt-2 flex justify-between text-sm text-verified">
-              <span>Consultation credit</span><span>−{formatPrice(discount, currency)}</span>
-            </div>
-          )}
-          <div className="mt-4 flex items-baseline justify-between">
-            <span>Total</span>
-            <span className="font-display text-3xl text-maroon-deep">{formatPrice(total, currency)}</span>
           </div>
           <div className="mt-6">
             <OrderTruckButton

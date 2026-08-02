@@ -82,7 +82,6 @@ export default function CartDrawer({ open, onClose }) {
                   <span className="text-sm">Subtotal</span>
                   <span className="font-display text-2xl text-maroon-deep">{formatPrice(subtotal, currency)}</span>
                 </div>
-                <div className="text-xs text-ink-muted mt-1">GST added at checkout</div>
                 <Link
                   to="/cart"
                   onClick={onClose}

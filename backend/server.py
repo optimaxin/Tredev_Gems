@@ -3393,7 +3393,7 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
                 shipping_total += db.to_paise(str(charge))
 
     subtotal = sum(li["price"] * li["qty"] for li in items)
-    gst = int(round(subtotal * 0.03))  # 3% GST on gemstones (illustrative)
+    gst = 0  # prices are GST-inclusive — not added on top of the listed price
 
     # A paid consultation credits its fee toward the buyer's next purchase. Reserved
     # here by reference (not yet marked redeemed — that happens in _mark_paid, once

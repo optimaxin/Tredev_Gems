@@ -109,12 +109,9 @@ export default function Cart() {
                 <div className="mt-4 flex items-baseline justify-between">
                   <span>Subtotal</span><span className="font-display text-xl">{formatPrice(subtotal, currency)}</span>
                 </div>
-                <div className="mt-2 flex items-baseline justify-between text-sm text-ink-muted">
-                  <span>GST (3%)</span><span>{formatPrice(Math.round(subtotal * 0.03), currency)}</span>
-                </div>
                 <div className="mt-4 pt-4 border-t border-gold/40 flex items-baseline justify-between">
                   <span className="text-sm">Total</span>
-                  <span className="font-display text-3xl text-maroon-deep">{formatPrice(subtotal + Math.round(subtotal * 0.03), currency)}</span>
+                  <span className="font-display text-3xl text-maroon-deep">{formatPrice(subtotal, currency)}</span>
                 </div>
                 <button
                   data-testid="cart-checkout-btn"
