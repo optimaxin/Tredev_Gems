@@ -100,7 +100,9 @@ export default function AdminWebsite() {
   const taxEditor = (label, list, setter, url, saveKey, opts = {}) => (
     <Section
       title={label}
-      hint={opts.mapStone
+      hint={opts.hint
+        ? opts.hint
+        : opts.mapStone
         ? "Buyers filter the shop by these. New entries appear as filter options; the key is auto-generated from the name. Map each to a stone and, optionally, a page to send buyers to — leave the page blank to use the shop filter."
         : "Buyers filter the shop by these. New entries appear as filter options; the key is auto-generated from the name."}
     >

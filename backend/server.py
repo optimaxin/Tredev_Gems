@@ -1857,14 +1857,31 @@ _DEFAULT_HOME = {
     ],
 }
 _DEFAULT_CONSULTATION = {"fee_paise": 39900}   # ₹399 — admin-editable via /admin/site-content/consultation
+
+# The "Primary Purpose" a buyer states for a video Pooja Energization — the intention
+# the priest names in the sankalp. Deliberately SEPARATE from _DEFAULT_PURPOSES, which
+# is the "Shop by Purpose" browsing taxonomy: those drive category links and are worded
+# for merchandising, so folding the two together would make a navigation edit silently
+# rewrite the pooja form (and vice versa).
+_DEFAULT_POOJA_PURPOSES = [
+    {"key": "career", "label": "Career & Business"},
+    {"key": "health", "label": "Health & Healing"},
+    {"key": "marriage", "label": "Marriage & Relationships"},
+    {"key": "wealth", "label": "Wealth & Prosperity"},
+    {"key": "education", "label": "Education & Focus"},
+    {"key": "protection", "label": "Protection from Negativity"},
+    {"key": "spiritual", "label": "Spiritual Growth"},
+    {"key": "other", "label": "Other"},
+]
 _CONTENT_DEFAULTS = {
     "announcement": _DEFAULT_ANNOUNCEMENT, "footer": _DEFAULT_FOOTER,
     "home": _DEFAULT_HOME,
     "purposes": _DEFAULT_PURPOSES, "rashi": _DEFAULT_RASHI,
+    "pooja_purposes": _DEFAULT_POOJA_PURPOSES,
     "consultation": _DEFAULT_CONSULTATION,
 }
 _CONTENT_KEYS = {"announcement", "footer", "home", "consultation"}   # gated by the "content" permission
-_TAXONOMY_KEYS = {"purposes", "rashi"}        # gated by the "taxonomy" permission
+_TAXONOMY_KEYS = {"purposes", "rashi", "pooja_purposes"}   # gated by the "taxonomy" permission
 
 
 async def _site_content(key: str):
