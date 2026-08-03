@@ -389,7 +389,9 @@ export default function Account() {
                 {canCancel(o) && (
                   <div className="mt-5 pt-4 border-t border-gold/30 flex flex-wrap items-center justify-between gap-3">
                     <div className="text-xs text-ink-muted">
-                      Free cancellation within 24 hours of placing an order.
+                      {o.status === "paid"
+                        ? "Free cancellation within 24 hours of placing an order."
+                        : "This order hasn't been paid yet — you can cancel it anytime within 24 hours."}
                     </div>
                     <AsyncButton
                       onClick={() => cancelOrder(o)}
