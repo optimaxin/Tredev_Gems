@@ -1,0 +1,211 @@
+import React, { useState } from "react";
+import { Link } from "react-router-dom";
+import { api, apiErrorMessage, mediaSrc } from "@/lib/api";
+import { formatPrice } from "@/lib/currency";
+import { toast } from "sonner";
+import {
+  Sparkle, MoonStars, ShieldCheck, ArrowRight, ArrowCounterClockwise, Star, ShoppingBagOpen,
+} from "@phosphor-icons/react";
+import AsyncButton from "@/components/gemora/AsyncButton";
+import { Reveal } from "@/components/gemora/Editorial";
+
+const EMPTY = { name: "", dob: "", tob: "", place_of_birth: "", phone: "", email: "" };
+
+const fieldBase = "w-full gold-line bg-ivory px-4 py-3 outline-none transition-colors focus:border-maroon focus-visible:ring-2 focus-visible:ring-gold/50";
+
+// "7 Mukhi" -> "7"; non-numeric beads (Gauri Shankar) fall back to a sparkle glyph.
+const mukhiNumber = (mukhi) => String(mukhi || "").match(/\d+/)?.[0];
+
+function MukhiMedallion({ mukhi, size = "lg" }) {
+  const n = mukhiNumber(mukhi);
+  const dim = size === "lg" ? "w-24 h-24 text-4xl" : "w-14 h-14 text-xl";
+  return (
+    <div className={`${dim} rounded-full brand-gradient text-ivory flex items-center justify-center font-display shrink-0 shadow-lg`}>
+      {n || <Sparkle size={size === "lg" ? 32 : 18} weight="duotone" />}
+    </div>
+  );
+}
+
+// A recommended bead + (if we stock that Mukhi) the real product photo/price/link.
+function BeadCard({ eyebrow, rec, featured }) {
+  if (!rec) return null;
+  const p = rec.product;
+  return (
+    <div className={`gold-line-strong bg-ivory ${featured ? "p-6 md:p-8" : "p-5"} relative overflow-hidden`}>
+      {featured && <div className="brand-gradient h-1 absolute top-0 inset-x-0" />}
+      <div className="text-[10px] uppercase tracking-[0.3em] text-gold-soft mb-4">{eyebrow}</div>
+      <div className="flex gap-5 items-start">
+        <MukhiMedallion mukhi={rec.mukhi} size={featured ? "lg" : "sm"} />
+        <div className="flex-1 min-w-0">
+          <div className={`font-display text-ink ${featured ? "text-3xl" : "text-xl"}`}>{rec.mukhi}</div>
+          {rec.ruling_planet && (
+            <div className="text-xs text-maroon mt-1 uppercase tracking-widest">Ruled by {rec.ruling_planet}{rec.deity ? ` · ${rec.deity}` : ""}</div>
+          )}
+          <p className={`text-ink-soft mt-2 leading-relaxed ${featured ? "text-sm" : "text-xs"}`}>{rec.benefits || rec.note}</p>
+        </div>
+      </div>
+
+      {p && (
+        <Link
+          to={`/product/${p.slug}`}
+          className="mt-5 flex items-center gap-4 gold-line bg-cream p-3 hover-lift group"
+          data-testid="rudraksha-result-product"
+        >
+          <div className="w-16 h-16 shrink-0 overflow-hidden gold-line bg-ivory">
+            <img src={mediaSrc(p.images?.[0])} alt={p.name} className="w-full h-full object-cover img-hover" loading="lazy" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="font-serifd text-ink text-sm truncate">{p.name}</div>
+            <div className="text-maroon-deep font-display text-lg">{formatPrice(p.price, p.currency)}</div>
+          </div>
+          <div className="text-maroon inline-flex items-center gap-1 text-xs uppercase tracking-widest shrink-0">
+            <ShoppingBagOpen size={14} weight="duotone" /> Shop <ArrowRight size={12} className="group-hover:translate-x-0.5 transition-transform" />
+          </div>
+        </Link>
+      )}
+      {!p && featured && (
+        <Link to={`/shop?category=rudraksha`} className="mt-5 inline-flex items-center gap-1.5 text-xs text-maroon underline decoration-gold-soft">
+          Browse Rudraksha in stock <ArrowRight size={12} />
+        </Link>
+      )}
+    </div>
+  );
+}
+
+export default function LuckyRudraksha() {
+  const [form, setForm] = useState(EMPTY);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null);
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const { data } = await api.post("/calculators/lucky-rudraksha", form);
+      setResult(data);
+    } catch (err) {
+      toast.error(apiErrorMessage(err, "Could not calculate your Rudraksha right now"));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const reset = () => { setResult(null); setForm(EMPTY); };
+
+  return (
+    <div className="bg-ivory">
+      <section className="relative overflow-hidden bg-cream border-b border-gold/30 py-16">
+        <div className="grain absolute inset-0 pointer-events-none" />
+        <div className="relative mx-auto max-w-3xl px-6 text-center">
+          <div className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-maroon border border-gold/50 px-3 py-1.5 bg-ivory">
+            <Sparkle size={14} weight="duotone" /> Free tool · रुद्राक्ष
+          </div>
+          <h1 className="font-display text-4xl md:text-5xl text-ink mt-6">Find Your Lucky Rudraksha</h1>
+          <p className="mt-4 text-ink-soft leading-relaxed">
+            Enter your birth details — we read your Moon sign (Rashi) and Nakshatra from your chart,
+            then recommend the Mukhi Rudraksha that aligns with your energy.
+          </p>
+        </div>
+      </section>
+
+      <div className="mx-auto max-w-3xl px-6 py-14">
+        {!result && (
+          <Reveal>
+            <form onSubmit={submit} className="gold-line-strong bg-ivory p-6 md:p-8 grid sm:grid-cols-2 gap-5">
+              <label className="block sm:col-span-2">
+                <div className="text-xs text-ink-muted mb-1">Full name</div>
+                <input required autoComplete="name" value={form.name} onChange={set("name")} className={fieldBase} data-testid="rudraksha-name-input" />
+              </label>
+              <label className="block">
+                <div className="text-xs text-ink-muted mb-1">Date of birth</div>
+                <input required type="date" value={form.dob} onChange={set("dob")} className={fieldBase} data-testid="rudraksha-dob-input" />
+              </label>
+              <label className="block">
+                <div className="text-xs text-ink-muted mb-1">Time of birth</div>
+                <input required type="time" value={form.tob} onChange={set("tob")} className={fieldBase} data-testid="rudraksha-tob-input" />
+              </label>
+              <label className="block sm:col-span-2">
+                <div className="text-xs text-ink-muted mb-1">Place of birth</div>
+                <input required placeholder="e.g. New Delhi, India" value={form.place_of_birth} onChange={set("place_of_birth")} className={fieldBase} data-testid="rudraksha-place-input" />
+              </label>
+              <label className="block">
+                <div className="text-xs text-ink-muted mb-1">Phone</div>
+                <input required type="tel" autoComplete="tel" value={form.phone} onChange={set("phone")} className={fieldBase} data-testid="rudraksha-phone-input" />
+              </label>
+              <label className="block">
+                <div className="text-xs text-ink-muted mb-1">Email</div>
+                <input required type="email" autoComplete="email" value={form.email} onChange={set("email")} className={fieldBase} data-testid="rudraksha-email-input" />
+              </label>
+              <div className="sm:col-span-2 mt-2">
+                <AsyncButton type="submit" loading={loading} loadingText="Reading your chart…" data-testid="rudraksha-submit" className="w-full brand-gradient text-ivory px-6 py-4 text-sm uppercase tracking-widest inline-flex items-center justify-center gap-2 hover-lift">
+                  <MoonStars size={16} weight="duotone" /> Reveal my Rudraksha
+                </AsyncButton>
+                <p className="text-[10px] text-ink-muted mt-3 text-center">
+                  For spiritual and informational purposes; not a substitute for professional advice.
+                </p>
+              </div>
+            </form>
+          </Reveal>
+        )}
+
+        {result && (
+          <Reveal>
+            <div data-testid="rudraksha-result">
+              {/* Chart basis strip */}
+              <div className="grid grid-cols-3 gap-3 text-center mb-8">
+                {[
+                  ["Moon Sign", `${result.chart_basis?.moon_sign || "—"}`, result.chart_basis?.moon_sign_sanskrit],
+                  ["Nakshatra", result.chart_basis?.nakshatra || "—", result.chart_basis?.nakshatra_pada ? `Pada ${result.chart_basis.nakshatra_pada}` : ""],
+                  ["Ruling Planet", result.chart_basis?.ruling_planet || "—", ""],
+                ].map(([label, value, sub]) => (
+                  <div key={label} className="gold-line bg-cream p-4">
+                    <div className="text-[10px] uppercase tracking-widest text-gold-soft">{label}</div>
+                    <div className="font-serifd text-lg text-maroon-deep mt-1">{value}</div>
+                    {sub && <div className="text-[10px] text-ink-muted mt-0.5">{sub}</div>}
+                  </div>
+                ))}
+              </div>
+
+              {/* Primary recommendation — the headline result */}
+              <BeadCard eyebrow="Your primary recommendation" rec={result.recommendation?.primary} featured />
+
+              {/* Alternative + universal safe, side by side */}
+              {(result.recommendation?.alternative || result.recommendation?.universal_safe) && (
+                <div className="grid sm:grid-cols-2 gap-4 mt-4">
+                  {result.recommendation?.alternative && (
+                    <BeadCard eyebrow="Alternative bead" rec={result.recommendation.alternative} />
+                  )}
+                  {result.recommendation?.universal_safe && (
+                    <BeadCard eyebrow="Universal safe bead" rec={result.recommendation.universal_safe} />
+                  )}
+                </div>
+              )}
+
+              {/* Interpretation */}
+              {result.interpretation && (
+                <div className="mt-8 gold-line bg-cream p-6 flex gap-3 items-start">
+                  <Star size={18} weight="duotone" className="text-gold-soft shrink-0 mt-0.5" />
+                  <p className="text-sm text-ink-soft leading-relaxed italic">{result.interpretation}</p>
+                </div>
+              )}
+
+              {result.disclaimer && (
+                <p className="text-[10px] text-ink-muted mt-4 text-center">{result.disclaimer}</p>
+              )}
+
+              <div className="mt-8 flex flex-wrap justify-center gap-3">
+                <Link to="/shop?category=rudraksha" className="brand-gradient text-ivory px-6 py-3.5 text-xs uppercase tracking-widest inline-flex items-center gap-2 hover-lift">
+                  <ShieldCheck size={14} weight="duotone" /> Shop Rudraksha
+                </Link>
+                <button onClick={reset} data-testid="rudraksha-reset" className="border border-gold/40 text-ink-soft px-6 py-3.5 text-xs uppercase tracking-widest inline-flex items-center gap-2 hover:border-maroon hover:text-maroon transition-colors">
+                  <ArrowCounterClockwise size={14} /> Calculate again
+                </button>
+              </div>
+            </div>
+          </Reveal>
+        )}
+      </div>
+    </div>
+  );
+}

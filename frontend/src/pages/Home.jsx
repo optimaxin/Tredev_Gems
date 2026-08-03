@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, formatINR, slugify } from "@/lib/api";
-import { ShieldCheck, QrCode, Certificate, Fingerprint, Sparkle, ArrowRight, Star, Truck, Package, HandHeart, CaretRight, CaretLeft, Play, ChatCircle, Calendar, Compass } from "@phosphor-icons/react";
+import { ShieldCheck, QrCode, Certificate, Fingerprint, Sparkle, ArrowRight, Star, Truck, Package, HandHeart, CaretRight, CaretLeft, Play, ChatCircle, Calendar, Compass, MoonStars } from "@phosphor-icons/react";
 import { HOME } from "@/constants/testIds";
 import ProductCard from "@/components/gemora/ProductCard";
 import CategoryRail from "@/components/gemora/CategoryRail"; // eslint-disable-line no-unused-vars
@@ -15,6 +15,7 @@ import {
 import { useSiteAssets } from "@/context/SiteAssetsContext";
 
 const HERO_IMG = "https://images.unsplash.com/photo-1669256335723-1fa03d5123c0?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NDh8MHwxfHNlYXJjaHwyfHxJbmRpYW4lMjB0ZW1wbGUlMjBhcmNoaXRlY3R1cmUlMjBnb2xkJTIwZGV0YWlsc3xlbnwwfHx8fDE3ODM3Njc4NDd8MA&ixlib=rb-4.1.0&q=85";
+const RUDRAKSHA_CALC_IMG = "https://images.unsplash.com/photo-1661915606983-cc9759b99343?w=1400";
 const CRAFT_IMG = "https://images.pexels.com/photos/6207517/pexels-photo-6207517.jpeg";
 
 // Render a homepage title string: "*...*" becomes the gold gradient highlight and
@@ -346,6 +347,29 @@ export default function Home() {
             </Reveal>
           ))}
         </div>
+      </section>
+
+      {/* LUCKY RUDRAKSHA CALCULATOR — free tool teaser */}
+      <section className="relative overflow-hidden bg-maroon-deep text-ivory" aria-label="Lucky Rudraksha calculator">
+        <div className="absolute inset-0 opacity-[0.10]" style={{ backgroundImage: `url('${RUDRAKSHA_CALC_IMG}')`, backgroundSize: "cover", backgroundPosition: "center" }} />
+        <div className="grain absolute inset-0 pointer-events-none" />
+        <div className="relative mx-auto max-w-7xl px-6 lg:px-10 py-14 flex flex-col lg:flex-row gap-8 items-center">
+          <div className="hidden lg:flex w-20 h-20 rounded-full brand-gradient text-ivory items-center justify-center shrink-0">
+            <MoonStars size={32} weight="duotone" />
+          </div>
+          <div className="flex-1 text-center lg:text-left">
+            <div className="text-xs uppercase tracking-[0.3em] text-gold">Free tool · रुद्राक्ष कैलकुलेटर</div>
+            <h3 className="font-display text-3xl md:text-4xl mt-2">Which Mukhi Rudraksha is written in your stars?</h3>
+            <p className="text-sm text-ivory/80 mt-3 max-w-xl leading-relaxed mx-auto lg:mx-0">
+              Share your birth details — we read your Moon sign and Nakshatra from your chart, then reveal
+              the exact bead suited to you, with the actual piece we stock shown right alongside.
+            </p>
+          </div>
+          <Link to="/tools/lucky-rudraksha" data-testid="home-rudraksha-calc-cta" className="brand-gradient text-ivory px-7 py-4 text-xs uppercase tracking-widest inline-flex items-center gap-2 hover-lift shrink-0">
+            Find My Rudraksha <ArrowRight size={14} />
+          </Link>
+        </div>
+        <div className="brand-gradient h-[2px] w-full relative" />
       </section>
 
       {/* CONSULT MARQUEE */}

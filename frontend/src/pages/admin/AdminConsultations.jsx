@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { api } from "@/lib/api";
-import { formatPrice } from "@/lib/currency";
+import { api, formatINR } from "@/lib/api";
 import { toast } from "sonner";
 import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
 import AsyncButton from "@/components/gemora/AsyncButton";
@@ -11,6 +10,7 @@ export default function AdminConsultations() {
   const [bookings, setBookings] = useState([]);
   const [astros, setAstros] = useState([]);
   const [filter, setFilter] = useState("");
+  const [paymentFilter, setPaymentFilter] = useState(""); // "" | "paid" | "pending"
   const [query, setQuery] = useState("");
   const [feeRupees, setFeeRupees] = useState("");
   const [assignPick, setAssignPick] = useState({}); // booking_id -> astrologer_id being chosen
@@ -53,7 +53,8 @@ export default function AdminConsultations() {
   };
 
   const shown = bookings
-    .filter((b) => matchesQuery(query, [b.astrologer_name, b.name, b.phone, b.email, b.concern]));
+    .filter((b) => matchesQuery(query, [b.astrologer_name, b.name, b.phone, b.email, b.concern]))
+    .filter((b) => !paymentFilter || b.payment_status === paymentFilter);
 
   const setStatus = async (id, status) => {
     try {
@@ -84,6 +85,14 @@ export default function AdminConsultations() {
           </button>
         ))}
       </div>
+      <div className="flex gap-2 mb-4 flex-wrap">
+        {["", "paid", "pending"].map((p) => (
+          <button key={p || "all-payment"} onClick={() => setPaymentFilter(p)}
+                  className={`text-xs px-3 py-1.5 border ${paymentFilter === p ? "bg-maroon text-ivory border-maroon" : "border-gold/40 text-ink-soft hover:border-maroon"}`}>
+            {p ? `Payment: ${p}` : "Any payment status"}
+          </button>
+        ))}
+      </div>
       <div className="space-y-3">
         {shown.length === 0 && <div className="gold-line p-10 text-center text-ink-muted">{query ? `No bookings match “${query}”.` : "No bookings."}</div>}
         {shown.map((b) => (
@@ -102,8 +111,7 @@ export default function AdminConsultations() {
                 {b.concern && <div className="mt-1 text-xs text-ink-soft italic">"{b.concern}"</div>}
               </div>
               <div className="text-right">
-                {/* bookings are priced per region too — render in the booking's own currency */}
-                <div className="font-display text-xl text-maroon-deep">{formatPrice(b.amount, b.currency)}</div>
+                <div className="font-display text-xl text-maroon-deep">{formatINR(b.amount)}</div>
                 <div className={`text-[10px] uppercase tracking-widest mt-0.5 ${b.payment_status === "paid" ? "text-verified" : "text-revoked"}`}>
                   {b.payment_status === "paid" ? "Paid" : "Payment pending"}
                 </div>

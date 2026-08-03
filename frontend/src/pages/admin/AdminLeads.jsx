@@ -1,11 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { api, formatINR } from "@/lib/api";
-import { Phone, WhatsappLogo, Fire, ShoppingBag, Heart, VideoCamera } from "@phosphor-icons/react";
+import { Phone, WhatsappLogo, Fire, ShoppingBag, Heart } from "@phosphor-icons/react";
 import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
 
 const STAGES = [
   { key: "checkout_started", label: "Checkout started", Icon: Fire, tone: "text-revoked border-revoked/40" },
-  { key: "consultation_dropped", label: "Consultation dropped", Icon: VideoCamera, tone: "text-saffron border-saffron/40" },
   { key: "cart", label: "Cart", Icon: ShoppingBag, tone: "text-maroon border-maroon/30" },
   { key: "wishlist", label: "Wishlist", Icon: Heart, tone: "text-gold-soft border-gold/40" },
 ];
@@ -28,13 +27,10 @@ const relTime = (iso) => {
 // A short, contextual opener for the pre-filled WhatsApp message — same recovery
 // pitch every time, just naming whatever they actually left behind.
 const waMessage = (lead) => {
-  const item = lead.checkout?.items?.[0] || lead.consultation?.items?.[0] || lead.cart?.items?.[0] || lead.wishlist?.items?.[0];
+  const item = lead.checkout?.items?.[0] || lead.cart?.items?.[0] || lead.wishlist?.items?.[0];
   const name = lead.name ? lead.name.split(" ")[0] : "there";
   if (lead.checkout) {
     return `Hi ${name}, this is Tredev — noticed your payment for ${item || "your order"} didn't go through. Want help completing it? Happy to guide you.`;
-  }
-  if (lead.consultation) {
-    return `Hi ${name}, this is Tredev — noticed your consultation booking wasn't paid for yet. Want help completing it?`;
   }
   if (lead.cart) {
     return `Hi ${name}, this is Tredev — you left ${item || "an item"} in your cart. Want help completing your purchase?`;
@@ -116,12 +112,6 @@ export default function AdminLeads() {
                 <div>
                   <span className="text-ink-muted">Started checkout</span> · {formatINR(l.checkout.value)} · {l.checkout.status}
                   {l.checkout.items?.length > 0 && <span> · {l.checkout.items.join(", ")}</span>}
-                </div>
-              )}
-              {l.consultation && (
-                <div>
-                  <span className="text-ink-muted">Consultation booking</span> · {formatINR(l.consultation.value)}
-                  {l.consultation.items?.length > 0 && <span> · {l.consultation.items.join(", ")}</span>}
                 </div>
               )}
               {l.cart && (

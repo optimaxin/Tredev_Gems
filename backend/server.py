@@ -1636,6 +1636,57 @@ async def get_product(slug: str, currency: str = "INR"):
     return p
 
 
+# --- Lucky Rudraksha calculator (proxy to the standalone astro-calculators service) ---
+# All chart math (Swiss Ephemeris, geocoding, timezones) lives in that service — see
+# github.com/optimaxin/astro_calculators. We only forward the request and, on success,
+# attach a real in-catalog product for whichever Mukhi it recommends, so the result
+# page can show (and sell) an actual piece instead of just text.
+ASTRO_CALCULATORS_URL = os.environ.get("ASTRO_CALCULATORS_URL", "").rstrip("/")
+
+
+class RudrakshaCalcIn(BaseModel):
+    name: str
+    dob: str
+    tob: str
+    place_of_birth: str
+    phone: str
+    email: str
+
+
+async def _attach_rudraksha_product(rec: Optional[dict]) -> None:
+    """Mutates `rec` in place, adding `product` (or None) for its `mukhi`, e.g. '7 Mukhi'."""
+    if not rec or not rec.get("mukhi"):
+        return
+    m = re.match(r"(\d+)", rec["mukhi"])
+    if not m:
+        rec["product"] = None
+        return
+    row = await db.fetch_one(
+        _PRODUCT_SELECT + " AND p.category_key = 'rudraksha'::category_key AND r.mukhi = $1"
+        " ORDER BY p.created_at DESC LIMIT 1", m.group(1))
+    rec["product"] = _shape_product(row) if row else None
+
+
+@api.post("/calculators/lucky-rudraksha")
+async def lucky_rudraksha_calculator(body: RudrakshaCalcIn):
+    if not ASTRO_CALCULATORS_URL:
+        raise HTTPException(503, "The Rudraksha calculator isn't configured yet")
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            r = await client.post(f"{ASTRO_CALCULATORS_URL}/api/v1/calculators/lucky-rudraksha",
+                                  json=body.model_dump())
+    except httpx.RequestError:
+        raise HTTPException(502, "Could not reach the calculator service")
+    data = r.json()
+    if r.status_code != 200:
+        raise HTTPException(r.status_code, (data.get("error") or {}).get("message", "Calculation failed"))
+    rec = data.get("recommendation") or {}
+    await _attach_rudraksha_product(rec.get("primary"))
+    await _attach_rudraksha_product(rec.get("alternative"))
+    await _attach_rudraksha_product(rec.get("universal_safe"))
+    return data
+
+
 # The collection banner an admin can set per category. Anything left blank falls back
 # to the frontend's built-in copy, so a bare category still renders fully.
 _BANNER_ICONS = ["drop", "sun", "moon", "leaf", "lotus", "hand", "shield", "qr",
@@ -3843,7 +3894,10 @@ async def cashfree_webhook(request: Request):
                     result["reason"] = "already paid"
                 else:
                     # No order matched — consultations reuse razorpay_order_id as a
-                    # gateway-agnostic ref column but never get a payments row.
+                    # gateway-agnostic ref column but never get a payments row, so
+                    # they're invisible to the lookup above. Check there too, or a
+                    # consultation paid via Cashfree never gets confirmed unless the
+                    # buyer's own /verify call happens to land (see consultation_verify).
                     booking_id = await db.fetch_val(
                         "SELECT id::text FROM consultations WHERE razorpay_order_id = $1"
                         " ORDER BY created_at DESC LIMIT 1", cf_order_id)
@@ -3883,7 +3937,7 @@ async def cashfree_webhook(request: Request):
                 if not oid:
                     # consultations.payment_status has no 'failed' state (CHECK only
                     # allows pending/paid) — nothing to write, this is purely so the
-                    # audit result reflects reality instead of a false "not found".
+                    # audit trail reflects reality instead of a false "not found".
                     booking_id = await db.fetch_val(
                         "SELECT id::text FROM consultations WHERE razorpay_order_id = $1"
                         " ORDER BY created_at DESC LIMIT 1", cf_order_id)
@@ -3973,8 +4027,9 @@ async def razorpay_webhook(request: Request):
                     result["marked_paid"] = False
                     result["reason"] = "already paid"
                 else:
-                    # No order matched — consultations reuse razorpay_order_id as a
-                    # gateway-agnostic ref column but never get a payments row.
+                    # No order matched — see the twin comment in cashfree_webhook:
+                    # consultations reuse razorpay_order_id as a gateway-agnostic ref
+                    # column but never get a payments row.
                     booking_id = await db.fetch_val(
                         "SELECT id::text FROM consultations WHERE razorpay_order_id = $1"
                         " ORDER BY created_at DESC LIMIT 1", rzp_order_id)
@@ -4014,7 +4069,7 @@ async def razorpay_webhook(request: Request):
                 if not oid:
                     # consultations.payment_status has no 'failed' state (CHECK only
                     # allows pending/paid) — nothing to write, this is purely so the
-                    # audit result reflects reality instead of a false "not found".
+                    # audit trail reflects reality instead of a false "not found".
                     booking_id = await db.fetch_val(
                         "SELECT id::text FROM consultations WHERE razorpay_order_id = $1"
                         " ORDER BY created_at DESC LIMIT 1", rzp_order_id)
@@ -4291,9 +4346,7 @@ async def admin_revoke(cert_id: str, user_id: str = Depends(require_admin)):
 
 @api.get("/admin/orders")
 async def admin_list_orders(user_id: str = Depends(require_admin)):
-    # Unpaid/failed attempts belong to /admin/leads for follow-up, not to the order book.
-    rows = await db.fetch_all(_ORDER_SELECT + " WHERE o.status NOT IN ('pending', 'payment_failed')"
-                              " ORDER BY o.created_at DESC LIMIT 500")
+    rows = await db.fetch_all(_ORDER_SELECT + " ORDER BY o.created_at DESC LIMIT 500")
     return await _shape_orders(rows)
 
 
@@ -4324,15 +4377,6 @@ _LEADS_SELECT = """
           FROM orders o
          WHERE o.status IN ('pending', 'payment_failed') AND o.user_id IS NOT NULL
          GROUP BY o.user_id
-    ),
-    unpaid_consult AS (
-        SELECT c.user_id, count(*) AS cnt, sum(c.amount) AS value_n,
-               max(c.created_at) AS last_at,
-               (array_agg(COALESCE(c.concern, 'Consultation booking') ORDER BY c.created_at DESC))[1:3] AS items,
-               (array_agg(c.id::text ORDER BY c.created_at DESC))[1] AS latest_booking_id
-          FROM consultations c
-         WHERE c.payment_status IS DISTINCT FROM 'paid' AND c.user_id IS NOT NULL
-         GROUP BY c.user_id
     )
     SELECT u.id::text AS user_id, u.full_name AS name, u.email::text AS email, u.phone AS phone,
            wl.cnt AS wishlist_count, wl.items[1:3] AS wishlist_items, wl.last_at AS wishlist_at,
@@ -4341,37 +4385,30 @@ _LEADS_SELECT = """
            unpaid.cnt AS unpaid_count, unpaid.value_n AS unpaid_value_n,
            unpaid.latest_status AS unpaid_status, unpaid.latest_order_id AS unpaid_order_id,
            unpaid.last_at AS unpaid_at, uoi.items AS unpaid_items,
-           unpaid_consult.cnt AS consult_count, unpaid_consult.value_n AS consult_value_n,
-           unpaid_consult.items AS consult_items, unpaid_consult.last_at AS consult_at,
-           unpaid_consult.latest_booking_id AS consult_booking_id,
-           GREATEST(wl.last_at, cart.last_at, unpaid.last_at, unpaid_consult.last_at) AS last_activity
+           GREATEST(wl.last_at, cart.last_at, unpaid.last_at) AS last_activity
       FROM users u
       LEFT JOIN wl ON wl.user_id = u.id
       LEFT JOIN cart ON cart.user_id = u.id
       LEFT JOIN unpaid ON unpaid.user_id = u.id
-      LEFT JOIN unpaid_consult ON unpaid_consult.user_id = u.id
       LEFT JOIN LATERAL (
             SELECT (array_agg(oi.title_snapshot ORDER BY oi.created_at))[1:3] AS items
               FROM order_items oi WHERE oi.order_id = unpaid.latest_order_id::uuid
       ) uoi ON unpaid.user_id IS NOT NULL
      WHERE wl.user_id IS NOT NULL OR cart.user_id IS NOT NULL OR unpaid.user_id IS NOT NULL
-        OR unpaid_consult.user_id IS NOT NULL
 """
 
 
 @api.get("/admin/leads")
 async def admin_list_leads(_: str = Depends(require_perm("orders"))):
     """Customers who showed buying intent but didn't complete it — wishlisted,
-    left items in cart, started checkout without a successful payment, or dropped
-    a consultation booking before paying — so staff can follow up by call/WhatsApp.
-    Stage is whichever signal is furthest along (checkout > consultation > cart >
-    wishlist); a customer can carry more than one.
+    left items in cart, or started checkout without a successful payment — so
+    staff can follow up by call/WhatsApp. Stage is whichever signal is furthest
+    along (checkout > cart > wishlist); a customer can carry more than one.
     Anonymous carts are excluded — nothing to call without a phone number."""
     rows = await db.fetch_all(_LEADS_SELECT + " ORDER BY last_activity DESC LIMIT 300")
     leads = []
     for r in rows:
-        stage = ("checkout_started" if r["unpaid_count"] else "consultation_dropped" if r["consult_count"]
-                 else "cart" if r["cart_count"] else "wishlist")
+        stage = "checkout_started" if r["unpaid_count"] else "cart" if r["cart_count"] else "wishlist"
         leads.append({
             "user_id": r["user_id"], "name": r["name"], "email": r["email"], "phone": r["phone"],
             "stage": stage, "last_activity": r["last_activity"],
@@ -4383,9 +4420,6 @@ async def admin_list_leads(_: str = Depends(require_perm("orders"))):
                          "status": db.ORDER_STATUS_FROM_DB.get(r["unpaid_status"], r["unpaid_status"]),
                          "order_id": r["unpaid_order_id"],
                          "items": r["unpaid_items"], "at": r["unpaid_at"]} if r["unpaid_count"] else None,
-            "consultation": {"count": r["consult_count"], "value": db.to_paise(r["consult_value_n"]),
-                             "items": r["consult_items"], "at": r["consult_at"],
-                             "booking_id": r["consult_booking_id"]} if r["consult_count"] else None,
         })
     return leads
 
@@ -4407,10 +4441,8 @@ async def admin_customer_detail(user_id: str, _: str = Depends(require_admin)):
     return {
         "profile": {k: v for k, v in profile.items() if k != "password_hash"},
         "orders": [
-            # currency travels with total — orders are placed in INR or USD, so a
-            # bare amount here would render under whatever symbol the client assumes.
             {"order_id": o["order_id"], "order_no": o.get("order_no"),
-             "status": o["status"], "total": o["total"], "currency": o.get("currency"),
+             "status": o["status"], "total": o["total"],
              "created_at": o["created_at"], "item_count": len(o["items"])}
             for o in orders
         ],
@@ -5623,61 +5655,32 @@ async def admin_sales(_: str = Depends(require_owner), days: int = 30):
     PAID = ("paid", "processing", "packed", "shipped", "out_for_delivery",
             "delivered", "completed")
 
-    # Every revenue figure below is grouped BY CURRENCY and never summed across them.
-    # Orders are placed in INR or USD, so a single total would add rupees to dollars
-    # and produce a number that means nothing. `currency` is CHAR(n), hence the btrim.
-    head = await db.fetch_all(
-        """SELECT btrim(o.currency)::text                         AS currency,
-                  count(*)                                        AS orders_total,
+    head = await db.fetch_one(
+        """SELECT count(*)                                        AS orders_total,
                   count(*) FILTER (WHERE o.status::text = ANY($2)) AS orders_paid,
                   COALESCE(sum(o.grand_total) FILTER (WHERE o.status::text = ANY($2)), 0) AS revenue_n
-             FROM orders o WHERE o.created_at >= $1
-            GROUP BY 1 ORDER BY 1""", since, list(PAID))
-    revenue, orders_total, orders_paid = [], 0, 0
-    for r in head:
-        n = r["orders_paid"]
-        paise = db.to_paise(r["revenue_n"])
-        orders_total += r["orders_total"]
-        orders_paid += n
-        revenue.append({"currency": r["currency"] or "INR", "revenue_paise": paise,
-                        "orders_paid": n, "aov_paise": int(paise / n) if n else 0})
+             FROM orders o WHERE o.created_at >= $1""", since, list(PAID))
+    revenue = db.to_paise(head["revenue_n"])
+    paid_n = head["orders_paid"]
 
-    by_day_rows = await db.fetch_all(
+    by_day = await db.fetch_all(
         """SELECT to_char(date_trunc('day', COALESCE(p.paid_at, o.created_at)), 'YYYY-MM-DD') AS day,
-                  btrim(o.currency)::text         AS currency,
                   COALESCE(sum(o.grand_total), 0) AS revenue_n,
                   count(*)                        AS orders
              FROM orders o
              LEFT JOIN LATERAL (SELECT paid_at FROM payments
                                  WHERE order_id = o.id ORDER BY created_at DESC LIMIT 1) p ON true
             WHERE o.created_at >= $1 AND o.status::text = ANY($2)
-            GROUP BY 1, 2 ORDER BY 1""", since, list(PAID))
-    # One entry per day carrying a per-currency breakdown; `orders` stays a plain
-    # count, which is the only cross-currency-safe way to size the chart's bars.
-    _days: dict[str, dict] = {}
-    for r in by_day_rows:
-        d = _days.setdefault(r["day"], {"day": r["day"], "orders": 0, "revenue": []})
-        d["orders"] += r["orders"]
-        d["revenue"].append({"currency": r["currency"] or "INR",
-                             "paise": db.to_paise(r["revenue_n"])})
-    by_day = list(_days.values())
+            GROUP BY 1 ORDER BY 1""", since, list(PAID))
 
-    by_cat_rows = await db.fetch_all(
+    by_cat = await db.fetch_all(
         """SELECT pr.category_key::text AS category,
-                  btrim(o.currency)::text AS currency,
                   COALESCE(sum(oi.line_total), 0) AS revenue_n
              FROM order_items oi
              JOIN orders o   ON o.id = oi.order_id
              JOIN products pr ON pr.id = oi.product_id
             WHERE o.created_at >= $1 AND o.status::text = ANY($2)
-            GROUP BY 1, 2""", since, list(PAID))
-    _cats: dict[str, dict] = {}
-    for r in by_cat_rows:
-        cat = db.CATEGORY_FROM_DB.get(r["category"], r["category"])
-        c = _cats.setdefault(cat, {"category": cat, "revenue": []})
-        c["revenue"].append({"currency": r["currency"] or "INR",
-                             "paise": db.to_paise(r["revenue_n"])})
-    by_cat = list(_cats.values())
+            GROUP BY 1""", since, list(PAID))
 
     stats = await db.fetch_one(
         """SELECT (SELECT count(*) FROM users u
@@ -5701,14 +5704,12 @@ async def admin_sales(_: str = Depends(require_owner), days: int = 30):
     activity = await db.fetch_all(
         """SELECT 'order' AS type, o.id::text AS ref_id, o.created_at AS at,
                   o.status::text AS status, o.grand_total AS amount_n,
-                  btrim(o.currency)::text AS currency,
                   u.full_name AS name, NULL::text AS extra
              FROM orders o LEFT JOIN users u ON u.id = o.user_id
             WHERE o.created_at >= $1
             UNION ALL
            SELECT CASE oe.to_status::text WHEN 'cancelled' THEN 'cancellation' ELSE 'refund' END,
                   oe.order_id::text, oe.created_at, oe.to_status::text, o.grand_total,
-                  btrim(o.currency)::text,
                   u.full_name, oe.reason
              FROM order_events oe
              JOIN orders o ON o.id = oe.order_id
@@ -5716,13 +5717,11 @@ async def admin_sales(_: str = Depends(require_owner), days: int = 30):
             WHERE oe.created_at >= $1 AND oe.to_status::text IN ('cancelled', 'refunded')
             UNION ALL
            SELECT 'consultation', c.id::text, c.created_at, c.status::text, c.amount,
-                  btrim(c.currency)::text,
                   c.contact_name, c.concern
              FROM consultations c
             WHERE c.created_at >= $1
             UNION ALL
            SELECT 'lead', w.product_id::text, w.created_at, 'wishlist', NULL,
-                  NULL::text,
                   u.full_name, p.title
              FROM wishlist w
              JOIN users u ON u.id = w.user_id
@@ -5731,11 +5730,10 @@ async def admin_sales(_: str = Depends(require_owner), days: int = 30):
             ORDER BY at DESC LIMIT 40""", since)
 
     return {
-        # A list, one entry per currency actually used in the window — deliberately
-        # NOT a single scalar, so nothing downstream can accidentally add INR to USD.
-        "revenue": revenue,
-        "orders_total": orders_total,
-        "orders_paid": orders_paid,
+        "revenue_paise": revenue,
+        "orders_total": head["orders_total"],
+        "orders_paid": paid_n,
+        "aov_paise": int(revenue / paid_n) if paid_n else 0,
         "customers_total": stats["customers_total"],
         "new_customers": stats["new_customers"],
         "open_queries": stats["open_queries"],
@@ -5743,11 +5741,12 @@ async def admin_sales(_: str = Depends(require_owner), days: int = 30):
         "refunded": stats["refunded"],
         "new_consultations": stats["new_consultations"],
         "new_leads": stats["new_leads"],
-        "by_day": by_day,
-        "by_category": by_cat,
+        "by_day": [{"day": d["day"], "revenue": db.to_paise(d["revenue_n"]),
+                    "orders": d["orders"]} for d in by_day],
+        "by_category": [{"category": db.CATEGORY_FROM_DB.get(c["category"], c["category"]),
+                         "revenue_paise": db.to_paise(c["revenue_n"])} for c in by_cat],
         "activity": [{"type": a["type"], "ref_id": a["ref_id"], "at": a["at"],
                       "status": a["status"], "amount_paise": db.to_paise(a["amount_n"]),
-                      "currency": a["currency"] or "INR",
                       "name": a["name"], "extra": a["extra"]} for a in activity],
         "window_days": days,
     }
@@ -5815,23 +5814,6 @@ async def admin_update_product(product_id: str, body: ProductUpdateIn, actor: st
         await db.execute(
             """UPDATE product_variants SET stock_qty = $2, updated_at = now()
                 WHERE product_id = $1::uuid""", product_id, updates["stock_qty"])
-    if "images" in sent:
-        # Full replace, same media_assets-dedup logic as admin_create_product.
-        async with db.transaction() as conn:
-            await conn.execute("DELETE FROM product_media WHERE product_id = $1::uuid", product_id)
-            for i, url in enumerate(sent["images"] or []):
-                mid = await conn.fetchval(
-                    "SELECT id FROM media_assets WHERE object_key=$1 AND bucket='external'", url)
-                if not mid:
-                    mid = uuid.uuid4()
-                    await conn.execute(
-                        """INSERT INTO media_assets (id, owner_type, storage_provider, bucket,
-                                object_key, mime_type, is_public, uploaded_by)
-                           VALUES ($1,'product','external','external',$2,'image/jpeg',true,$3::uuid)""",
-                        mid, url, actor)
-                await conn.execute(
-                    """INSERT INTO product_media (id, product_id, media_id, position, is_primary)
-                       VALUES ($1,$2,$3,$4,$5)""", uuid.uuid4(), product_id, mid, i, i == 0)
     row = await db.fetch_one(_PRODUCT_SELECT + " AND p.id = $1::uuid", product_id)
     if not row:
         raise HTTPException(404, "Product not found")
@@ -6560,8 +6542,7 @@ async def resolve_affiliate(code: str, request: Request, response: FastAPIRespon
 # --- Consultations (perm: consultations) -------------------------------------
 @api.get("/admin/consultations")
 async def admin_list_consultations(_: str = Depends(require_perm("consultations")), astrologer_id: Optional[str] = None, status: Optional[str] = None):
-    # Unpaid bookings belong to /admin/leads for follow-up, not to the booking list.
-    sql, args = _CONSULT_SELECT + " WHERE c.payment_status = 'paid'", []
+    sql, args = _CONSULT_SELECT + " WHERE true", []
     if astrologer_id:
         args.append(astrologer_id)
         sql += f" AND c.astrologer_id = ${len(args)}::uuid"

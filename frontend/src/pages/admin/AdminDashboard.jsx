@@ -1,19 +1,9 @@
 import React, { useEffect, useState } from "react";
-import { api } from "@/lib/api";
-// Revenue is reported per currency and never summed — INR and USD orders are kept
-// as separate figures throughout this page. See /admin/sales.
-import { formatPrice } from "@/lib/currency";
+import { api, formatINR } from "@/lib/api";
 import {
   CurrencyInr, ShoppingCart, UsersFour, ChatCircleDots, XCircle,
   ArrowUUpLeft, Fire, CalendarCheck, Heart,
 } from "@phosphor-icons/react";
-
-// "₹1,850 · $246" — a per-currency list rendered inline. Falls back to a dash so an
-// empty window doesn't render a bare separator.
-const money = (rows, key = "paise") =>
-  (rows || []).length
-    ? (rows || []).map((r) => formatPrice(r[key], r.currency)).join(" · ")
-    : "—";
 
 // "3h ago" — recency is what matters on a live feed; exact time is in the title.
 const relTime = (iso) => {
@@ -54,9 +44,8 @@ export default function AdminDashboard() {
   if (!data) return <div className="text-ink-muted">Loading sales…</div>;
   if (data.error) return <div className="gold-line p-10 text-center text-ink-muted">Unable to load sales.</div>;
 
-  const revenue = data.revenue || [];
-
   const cards = [
+    { Icon: CurrencyInr, label: "Revenue", value: formatINR(data.revenue_paise), sub: `AOV ${formatINR(data.aov_paise)}` },
     { Icon: ShoppingCart, label: "Orders", value: data.orders_total, sub: `${data.orders_paid} paid` },
     { Icon: UsersFour, label: "Customers", value: data.customers_total, sub: `${data.new_customers} new` },
     { Icon: ChatCircleDots, label: "Open Queries", value: data.open_queries, sub: `${days}-day window` },
@@ -66,18 +55,7 @@ export default function AdminDashboard() {
     { Icon: ArrowUUpLeft, label: "Refunded", value: data.refunded, sub: `${days}-day window` },
   ];
 
-  // Bars are sized by ORDER COUNT, not revenue: a bar can't represent ₹ and $ at
-  // once, and scaling mixed currencies against one axis would draw a false picture.
-  // The per-currency money for each day lives in the tooltip.
-  const maxOrders = Math.max(...data.by_day.map((d) => d.orders), 1);
-
-  // Category bars need ONE currency to scale against, so they use the biggest-earning
-  // one; every currency's actual amount is still printed next to the bar.
-  const primary = revenue.length
-    ? revenue.reduce((a, b) => (b.revenue_paise > a.revenue_paise ? b : a)).currency
-    : null;
-  const inPrimary = (c) => (c?.revenue || []).find((r) => r.currency === primary)?.paise || 0;
-  const byCategory = [...(data.by_category || [])].sort((a, b) => inPrimary(b) - inPrimary(a));
+  const maxRev = Math.max(...data.by_day.map((d) => d.revenue), 1);
 
   return (
     <div>
@@ -94,33 +72,6 @@ export default function AdminDashboard() {
       </div>
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Revenue gets its own wider card: one column per currency, side by side,
-            because these are separate totals that must never be added together. */}
-        <div className="gold-line bg-ivory p-5 sm:col-span-2">
-          <div className="flex items-center gap-2 text-gold-soft">
-            <CurrencyInr size={18} weight="duotone" />
-            <span className="text-[10px] uppercase tracking-widest">Revenue</span>
-          </div>
-          {revenue.length === 0 ? (
-            <>
-              <div className="font-display text-3xl text-maroon-deep mt-2">—</div>
-              <div className="text-xs text-ink-muted mt-1">No paid orders yet</div>
-            </>
-          ) : (
-            <div className="mt-2 flex flex-wrap gap-x-8 gap-y-3">
-              {revenue.map((r) => (
-                <div key={r.currency}>
-                  <div className="font-display text-3xl text-maroon-deep">
-                    {formatPrice(r.revenue_paise, r.currency)}
-                  </div>
-                  <div className="text-xs text-ink-muted mt-1">
-                    {r.orders_paid} paid · AOV {formatPrice(r.aov_paise, r.currency)}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
         {cards.map((c, i) => (
           <div key={i} className="gold-line bg-ivory p-5">
             <div className="flex items-center gap-2 text-gold-soft"><c.Icon size={18} weight="duotone" /><span className="text-[10px] uppercase tracking-widest">{c.label}</span></div>
@@ -132,13 +83,11 @@ export default function AdminDashboard() {
 
       <div className="mt-8 grid lg:grid-cols-[1.6fr_1fr] gap-6">
         <div className="gold-line bg-ivory p-6">
-          <div className="font-serifd text-xl text-maroon-deep">Orders · by day</div>
-          <div className="text-xs text-ink-muted mt-1">Bar height is order count; hover for revenue per currency.</div>
+          <div className="font-serifd text-xl text-maroon-deep">Revenue · by day</div>
           <div className="mt-6 flex items-end gap-2 h-56">
             {data.by_day.length === 0 ? <div className="text-ink-muted text-sm w-full text-center">No paid orders yet.</div> : data.by_day.map((d) => (
               <div key={d.day} className="flex-1 flex flex-col items-center gap-1 min-w-0">
-                <div className="w-full brand-gradient" style={{ height: `${(d.orders / maxOrders) * 100}%`, minHeight: "4px" }}
-                     title={`${d.day}: ${d.orders} order${d.orders === 1 ? "" : "s"} · ${money(d.revenue)}`} />
+                <div className="w-full brand-gradient" style={{ height: `${(d.revenue / maxRev) * 100}%`, minHeight: "4px" }} title={`${d.day}: ${formatINR(d.revenue)}`} />
                 <div className="text-[9px] font-mono text-ink-muted truncate w-full text-center">{d.day.slice(5)}</div>
               </div>
             ))}
@@ -146,17 +95,16 @@ export default function AdminDashboard() {
         </div>
         <div className="gold-line bg-ivory p-6">
           <div className="font-serifd text-xl text-maroon-deep">Revenue · by category</div>
-          {primary && <div className="text-xs text-ink-muted mt-1">Bars scaled to {primary} only; other currencies listed alongside.</div>}
           <div className="mt-4 space-y-3">
-            {byCategory.length === 0 && <div className="text-ink-muted text-sm">Nothing yet.</div>}
-            {byCategory.map((c) => (
+            {data.by_category.length === 0 && <div className="text-ink-muted text-sm">Nothing yet.</div>}
+            {data.by_category.sort((a, b) => b.revenue_paise - a.revenue_paise).map((c) => (
               <div key={c.category}>
-                <div className="flex items-baseline justify-between gap-3 text-sm">
-                  <span className="capitalize shrink-0">{c.category.replace("_", " ")}</span>
-                  <span className="font-mono text-right">{money(c.revenue)}</span>
+                <div className="flex items-baseline justify-between text-sm">
+                  <span className="capitalize">{c.category.replace("_", " ")}</span>
+                  <span className="font-mono">{formatINR(c.revenue_paise)}</span>
                 </div>
                 <div className="h-1 bg-cream mt-1">
-                  <div className="h-1 brand-gradient" style={{ width: `${(inPrimary(c) / (inPrimary(byCategory[0]) || 1)) * 100}%` }} />
+                  <div className="h-1 brand-gradient" style={{ width: `${(c.revenue_paise / (data.by_category[0]?.revenue_paise || 1)) * 100}%` }} />
                 </div>
               </div>
             ))}
@@ -185,7 +133,7 @@ export default function AdminDashboard() {
                     </div>
                     {a.extra && <div className="text-xs text-ink-muted truncate">{a.extra}</div>}
                   </div>
-                  {a.amount_paise != null && <div className="text-sm font-mono shrink-0">{formatPrice(a.amount_paise, a.currency)}</div>}
+                  {a.amount_paise != null && <div className="text-sm font-mono shrink-0">{formatINR(a.amount_paise)}</div>}
                   <div className="text-[11px] text-ink-muted shrink-0 w-14 text-right" title={a.at}>{relTime(a.at)}</div>
                 </div>
               );

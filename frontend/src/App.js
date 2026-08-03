@@ -26,6 +26,7 @@ import OrderConfirmed from "@/pages/OrderConfirmed";
 import OrderCancelled from "@/pages/OrderCancelled";
 import Admin from "@/pages/Admin";
 import CaratRatti from "@/pages/CaratRatti";
+import LuckyRudraksha from "@/pages/LuckyRudraksha";
 import ShopByPlanet from "@/pages/ShopByPlanet";
 import ShopByPurpose from "@/pages/ShopByPurpose";
 import Consultation from "@/pages/Consultation";
@@ -79,6 +80,7 @@ function AuthRouter() {
         <Route path="/order-cancelled/:orderId" element={<OrderCancelled />} />
         <Route path="/admin/*" element={<Admin />} />
         <Route path="/tools/carat-ratti" element={<CaratRatti />} />
+        <Route path="/tools/lucky-rudraksha" element={<LuckyRudraksha />} />
         <Route path="/consultation" element={<Consultation />} />
         <Route path="/dashboard" element={<Navigate to="/account" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
