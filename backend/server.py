@@ -2074,6 +2074,14 @@ async def geo_pincode(pincode: str, country: str = "IND",
                                       should_cache=lambda v: v.get("found"))
 
 
+@api.get("/admin/geo/diagnose")
+async def geo_diagnose(_: str = Depends(require_owner)):
+    """Why is place lookup returning nothing? Owner-only, and it reports a key
+    fingerprint rather than the key — enough to catch a truncated paste or a region
+    mismatch without needing shell access to the server."""
+    return await geo.diagnose()
+
+
 @api.get("/geo/places")
 async def geo_places(q: str, country: Optional[str] = None, limit: int = 5,
                      _rl: None = Depends(rate_limit(90, 60))):

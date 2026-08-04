@@ -49,6 +49,42 @@ def configured() -> bool:
     return bool(API_KEY)
 
 
+async def diagnose() -> dict:
+    """Owner-only self-check. Reports a *fingerprint* of the key (length + first/last
+    few chars) rather than the key itself, which is enough to spot the usual failure:
+    a value truncated when pasted into a hosting dashboard. Also makes one live call
+    so the real upstream status code is visible without shell access to the server."""
+    fp: dict[str, Any] = {
+        "configured": configured(),
+        "region": REGION,
+        "base_url": _BASE,
+        "key_length": len(API_KEY),
+        "key_starts": API_KEY[:12] if API_KEY else "",
+        "key_ends": API_KEY[-8:] if API_KEY else "",
+        # A full key is `v1.public.<payload>.<id>` — three dots, ~460 chars. The usual
+        # failure is a paste truncated by a hosting dashboard, which this catches.
+        "key_looks_wellformed": API_KEY.startswith("v1.public.") and API_KEY.count(".") >= 3,
+    }
+    if not configured():
+        fp["probe"] = "skipped — no key set"
+        return fp
+    # Bypasses _call so the status code is reported instead of swallowed.
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.post(f"{_BASE}/geocode", params={"key": API_KEY},
+                                     json={"QueryText": "Varanasi", "MaxResults": 1})
+        fp["probe_status"] = resp.status_code
+        if resp.status_code == 200:
+            fp["probe"] = f"ok — {len((resp.json() or {}).get('ResultItems') or [])} result(s)"
+        else:
+            # Body carries AWS's reason (InvalidSignature, AccessDenied, …). Truncated,
+            # and it never echoes the key back.
+            fp["probe"] = f"HTTP {resp.status_code}: {resp.text[:200]}"
+    except Exception as e:  # noqa: BLE001
+        fp["probe"] = f"{type(e).__name__}: {str(e)[:150]}"
+    return fp
+
+
 async def _post(path: str, body: dict) -> dict:
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         resp = await client.post(f"{_BASE}/{path}", params={"key": API_KEY}, json=body)
