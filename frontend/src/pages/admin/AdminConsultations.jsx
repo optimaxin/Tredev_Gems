@@ -18,6 +18,7 @@ export default function AdminConsultations() {
   const [assignLink, setAssignLink] = useState({}); // booking_id -> meeting link being entered
   const [savingFee, setSavingFee] = useState(false);
   const [assigningId, setAssigningId] = useState(null);
+  const [verifyingId, setVerifyingId] = useState(null);
   const refresh = () => api.get("/admin/consultations", { params: filter ? { status: filter } : {} }).then((r) => setBookings(r.data));
   useEffect(() => { refresh(); }, [filter]);
   useEffect(() => {
@@ -61,6 +62,27 @@ export default function AdminConsultations() {
       await api.patch(`/admin/consultations/${id}`, { status });
       toast.success(`Marked ${status}`); refresh();
     } catch (e) { toast.error(e.response?.data?.detail || "Could not update status"); }
+  };
+
+  // Re-checks a "Payment pending" booking directly against the gateway — the same
+  // endpoint the buyer's own browser calls right after paying. Needed because that
+  // browser call is the ONLY thing that used to confirm a consultation payment: if
+  // it raced or dropped (flaky network, tab closed), the booking was stuck pending
+  // forever with no way to recover it from here. Works without any extra input for
+  // an INR/Cashfree booking (it just asks Cashfree); a USD/Razorpay booking needs
+  // the buyer's own signed confirmation, so this correctly reports back "not yet
+  // confirmable" rather than silently doing nothing for those.
+  const reverifyPayment = async (id) => {
+    setVerifyingId(id);
+    try {
+      await api.post(`/consultation/${id}/verify`);
+      toast.success("Payment confirmed");
+      refresh();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Could not confirm this payment with the gateway yet");
+    } finally {
+      setVerifyingId((cur) => (cur === id ? null : cur));
+    }
   };
 
   return (
@@ -115,6 +137,13 @@ export default function AdminConsultations() {
                 <div className={`text-[10px] uppercase tracking-widest mt-0.5 ${b.payment_status === "paid" ? "text-verified" : "text-revoked"}`}>
                   {b.payment_status === "paid" ? "Paid" : "Payment pending"}
                 </div>
+                {b.payment_status !== "paid" && (
+                  <AsyncButton onClick={() => reverifyPayment(b.booking_id)} loading={verifyingId === b.booking_id}
+                    loadingText="Checking…" data-testid={`consult-reverify-${b.booking_id}`}
+                    className="mt-1 text-[10px] uppercase tracking-widest border border-maroon text-maroon px-2 py-1 hover:bg-maroon hover:text-ivory">
+                    Re-check with gateway
+                  </AsyncButton>
+                )}
                 <select value={b.status} onChange={(e) => setStatus(b.booking_id, e.target.value)} className="mt-1 gold-line text-xs bg-ivory px-2 py-1 uppercase tracking-widest">
                   {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
                 </select>
