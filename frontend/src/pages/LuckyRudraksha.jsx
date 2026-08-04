@@ -84,6 +84,10 @@ export default function LuckyRudraksha() {
 
   const submit = async (e) => {
     e.preventDefault();
+    if (form.birth_lat == null || form.birth_lon == null) {
+      toast.error("Please pick your birth place from the suggestions list");
+      return;
+    }
     setLoading(true);
     try {
       const { data } = await api.post("/calculators/lucky-rudraksha", form);

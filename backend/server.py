@@ -45,6 +45,7 @@ from decimal import Decimal
 
 import db  # Postgres/Supabase access layer — see backend/MIGRATION.md
 import storage_sb  # Supabase Storage — replaces the Emergent object store
+import rudraksha_calc  # Lucky Rudraksha calculator — Swiss Ephemeris + moon-sign matrix
 from circuit import CircuitOpenError, get_circuit
 import respcache
 from pydantic import BaseModel, EmailStr, Field, field_validator
@@ -1642,19 +1643,20 @@ async def get_product(slug: str, currency: str = "INR"):
     return p
 
 
-# --- Lucky Rudraksha calculator (proxy to the standalone astro-calculators service) ---
-# All chart math (Swiss Ephemeris, geocoding, timezones) lives in that service — see
-# github.com/optimaxin/astro_calculators. We only forward the request and, on success,
-# attach a real in-catalog product for whichever Mukhi it recommends, so the result
-# page can show (and sell) an actual piece instead of just text.
-ASTRO_CALCULATORS_URL = os.environ.get("ASTRO_CALCULATORS_URL", "").rstrip("/")
-
-
+# --- Lucky Rudraksha calculator (embedded — no external service) ---
+# Moon-sign astronomy (Swiss Ephemeris, Lahiri ayanamsa) + the Moon-sign -> Mukhi
+# matrix both live in rudraksha_calc.py, ported in from the standalone
+# astro_calculators service so this no longer depends on it being deployed/reachable.
+# Geocoding stays where it already lived — the buyer picks a place via
+# PlaceAutocomplete, which resolves lat/lon server-side through geo.py/AWS Location
+# — so this endpoint only needs the chart math, not a second geocoder.
 class RudrakshaCalcIn(BaseModel):
     name: str
     dob: str
     tob: str
     place_of_birth: str
+    birth_lat: float
+    birth_lon: float
     phone: str
     email: str
 
@@ -1675,18 +1677,21 @@ async def _attach_rudraksha_product(rec: Optional[dict]) -> None:
 
 @api.post("/calculators/lucky-rudraksha")
 async def lucky_rudraksha_calculator(body: RudrakshaCalcIn):
-    if not ASTRO_CALCULATORS_URL:
-        raise HTTPException(503, "The Rudraksha calculator isn't configured yet")
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            r = await client.post(f"{ASTRO_CALCULATORS_URL}/api/v1/calculators/lucky-rudraksha",
-                                  json=body.model_dump())
-    except httpx.RequestError:
-        raise HTTPException(502, "Could not reach the calculator service")
-    data = r.json()
-    if r.status_code != 200:
-        raise HTTPException(r.status_code, (data.get("error") or {}).get("message", "Calculation failed"))
-    rec = data.get("recommendation") or {}
+        moon = rudraksha_calc.moon_position(body.dob, body.tob, body.birth_lat, body.birth_lon)
+    except rudraksha_calc.ChartError as e:
+        raise HTTPException(400, str(e))
+    recommendation = rudraksha_calc.recommend(moon["sign"])
+    data = {
+        "input": {"name": body.name, "dob": body.dob, "tob": body.tob, "place_of_birth": body.place_of_birth},
+        "chart_basis": {"moon_sign": moon["sign"], "moon_sign_sanskrit": moon["sign_sanskrit"],
+                        "nakshatra": moon["nakshatra"], "nakshatra_pada": moon["nakshatra_pada"],
+                        "ruling_planet": recommendation["ruling_planet"]},
+        "recommendation": recommendation["recommendation"],
+        "interpretation": recommendation["interpretation"],
+        "disclaimer": recommendation["disclaimer"],
+    }
+    rec = data["recommendation"]
     await _attach_rudraksha_product(rec.get("primary"))
     await _attach_rudraksha_product(rec.get("alternative"))
     await _attach_rudraksha_product(rec.get("universal_safe"))
