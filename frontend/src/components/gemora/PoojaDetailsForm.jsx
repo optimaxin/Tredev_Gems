@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { FlowerLotus } from "@phosphor-icons/react";
+import PlaceAutocomplete from "@/components/gemora/PlaceAutocomplete";
 
 const GENDERS = [
   { value: "male", label: "Male" },
@@ -88,13 +89,19 @@ export default function PoojaDetailsForm({ value, onChange, showErrors }) {
             className={inputClass}
           />
         ))}
+        {/* Coordinates ride along when a suggestion is picked — the priest's sankalp
+            is cast against the birthplace, and "Jaipur" alone is ambiguous. */}
         {field("Place of Birth*", "birth_place", (
-          <input
+          <PlaceAutocomplete
             value={value.birth_place}
-            onChange={set("birth_place")}
-            onBlur={() => blur("birth_place")}
-            data-testid="pooja-birth-place"
+            onChange={(label, coords) => onChange({
+              ...value, birth_place: label,
+              birth_lat: coords?.lat ?? null, birth_lon: coords?.lon ?? null,
+            })}
+            placeholder="Start typing a city…"
             className={inputClass}
+            testId="pooja-birth-place"
+            inputProps={{ onBlur: () => blur("birth_place") }}
           />
         ))}
         <label className="block">

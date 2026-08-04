@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { api, formatINR } from "@/lib/api";
+import { api } from "@/lib/api";
+import { formatPrice } from "@/lib/currency";
 import { toast } from "sonner";
 import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
 import AsyncButton from "@/components/gemora/AsyncButton";
@@ -133,7 +134,7 @@ export default function AdminConsultations() {
                 {b.concern && <div className="mt-1 text-xs text-ink-soft italic">"{b.concern}"</div>}
               </div>
               <div className="text-right">
-                <div className="font-display text-xl text-maroon-deep">{formatINR(b.amount)}</div>
+                <div className="font-display text-xl text-maroon-deep">{formatPrice(b.amount, b.currency)}</div>
                 <div className={`text-[10px] uppercase tracking-widest mt-0.5 ${b.payment_status === "paid" ? "text-verified" : "text-revoked"}`}>
                   {b.payment_status === "paid" ? "Paid" : "Payment pending"}
                 </div>

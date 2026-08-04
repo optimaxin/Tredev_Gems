@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { api, formatINR } from "@/lib/api";
+import { api } from "@/lib/api";
+import { formatPrice } from "@/lib/currency";
 import { Phone, WhatsappLogo, Fire, ShoppingBag, Heart } from "@phosphor-icons/react";
 import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
 
@@ -110,13 +111,13 @@ export default function AdminLeads() {
             <div className="mt-3 text-sm text-ink-soft space-y-1">
               {l.checkout && (
                 <div>
-                  <span className="text-ink-muted">Started checkout</span> · {formatINR(l.checkout.value)} · {l.checkout.status}
+                  <span className="text-ink-muted">Started checkout</span> · {formatPrice(l.checkout.value, l.checkout.currency)} · {l.checkout.status}
                   {l.checkout.items?.length > 0 && <span> · {l.checkout.items.join(", ")}</span>}
                 </div>
               )}
               {l.cart && (
                 <div>
-                  <span className="text-ink-muted">In cart</span> · {formatINR(l.cart.value)} · {l.cart.items?.join(", ")}
+                  <span className="text-ink-muted">In cart</span> · {formatPrice(l.cart.value, l.cart.currency)} · {l.cart.items?.join(", ")}
                 </div>
               )}
               {l.wishlist && (

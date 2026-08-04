@@ -1,5 +1,8 @@
 import React, { useEffect, useState } from "react";
-import { api, formatINR, describeOptions } from "@/lib/api";
+import { api, describeOptions } from "@/lib/api";
+// Orders are placed in INR or USD, so every amount here renders against the
+// currency stored on its own order — never a hardcoded ₹.
+import { formatPrice } from "@/lib/currency";
 import { toast } from "sonner";
 import { PaperPlaneTilt, X, User, ClockCounterClockwise, MapPin, Package, Phone, CaretRight, Truck, Certificate, Receipt } from "@phosphor-icons/react";
 import SearchBar, { matchesQuery } from "@/components/gemora/SearchBar";
@@ -211,7 +214,7 @@ export default function AdminOrders() {
                 <div className="flex items-center gap-3 shrink-0">
                   {/* controls: don't let these open the detail view */}
                   <div className="text-right" onClick={(e) => e.stopPropagation()}>
-                    <div className="font-display text-2xl text-maroon-deep">{formatINR(o.total)}</div>
+                    <div className="font-display text-2xl text-maroon-deep">{formatPrice(o.total, o.currency)}</div>
                     <select
                       value={o.status}
                       onChange={(e) => setStatus(o.order_id, e.target.value)}
@@ -289,7 +292,7 @@ export default function AdminOrders() {
                           </span>
                           <span className="flex items-center gap-2">
                             <span className="uppercase text-[10px] text-ink-muted">{ho.status}</span>
-                            <span className="font-mono">{formatINR(ho.total)}</span>
+                            <span className="font-mono">{formatPrice(ho.total, ho.currency)}</span>
                           </span>
                         </div>
                       ))}
@@ -335,7 +338,7 @@ export default function AdminOrders() {
                           <div className="text-[10px] font-mono text-ink-muted mt-1">{li.is_serialized ? "units assigned at payment" : "non-serialized"}</div>
                         )}
                       </div>
-                      <div className="font-mono text-xs text-ink-soft shrink-0">{formatINR(li.price * li.qty)}</div>
+                      <div className="font-mono text-xs text-ink-soft shrink-0">{formatPrice(li.price * li.qty, detail.currency)}</div>
                     </div>
                   ))}
                 </div>
@@ -346,14 +349,14 @@ export default function AdminOrders() {
                 <div className="text-xs uppercase tracking-widest text-ink-muted flex items-center gap-1.5 mb-3"><Receipt size={14} weight="duotone" /> Payment</div>
                 <div className="space-y-1.5 text-sm max-w-xs">
                   {detail.subtotal != null && (
-                    <div className="flex justify-between"><span className="text-ink-soft">Subtotal</span><span className="font-mono">{formatINR(detail.subtotal)}</span></div>
+                    <div className="flex justify-between"><span className="text-ink-soft">Subtotal</span><span className="font-mono">{formatPrice(detail.subtotal, detail.currency)}</span></div>
                   )}
                   {detail.gst != null && (
-                    <div className="flex justify-between"><span className="text-ink-soft">GST</span><span className="font-mono">{formatINR(detail.gst)}</span></div>
+                    <div className="flex justify-between"><span className="text-ink-soft">GST</span><span className="font-mono">{formatPrice(detail.gst, detail.currency)}</span></div>
                   )}
                   <div className="flex justify-between items-baseline pt-2 mt-1 border-t border-gold/30">
                     <span className="text-sm">Total</span>
-                    <span className="font-display text-2xl text-maroon-deep">{formatINR(detail.total)}</span>
+                    <span className="font-display text-2xl text-maroon-deep">{formatPrice(detail.total, detail.currency)}</span>
                   </div>
                 </div>
               </div>
@@ -435,7 +438,7 @@ export default function AdminOrders() {
                         </span>
                         <span className="flex items-center gap-2">
                           <span className="uppercase text-[10px] text-ink-muted">{ho.status}</span>
-                          <span className="font-mono">{formatINR(ho.total)}</span>
+                          <span className="font-mono">{formatPrice(ho.total, ho.currency)}</span>
                         </span>
                       </div>
                     ))}
@@ -481,7 +484,7 @@ export default function AdminOrders() {
                         </div>
                       )}
                     </div>
-                    <span className="font-mono text-xs shrink-0">{formatINR(li.price * li.qty)}</span>
+                    <span className="font-mono text-xs shrink-0">{formatPrice(li.price * li.qty, dispatchFor.currency)}</span>
                   </div>
                 ))}
               </div>

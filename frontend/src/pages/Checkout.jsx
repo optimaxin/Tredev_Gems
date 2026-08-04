@@ -39,7 +39,40 @@ export default function Checkout() {
     shipping_country: "", // required for a USD (outside-India) checkout only
   });
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const [pinLookup, setPinLookup] = useState("");  // "", "loading", "ok", "notfound"
   const currency = cart.currency || "INR";
+
+  // A full postal code fills City/State for the buyer. Wrong city/state on an
+  // otherwise valid PIN is a common cause of failed deliveries, so this is about
+  // accuracy as much as convenience. Resolved server-side (see backend/geo.py) —
+  // the Amazon Location key is never exposed to the browser.
+  const pincode = form.shipping_pincode;
+  const pinCountry = currency === "INR" ? "IND" : (form.shipping_country || "");
+  useEffect(() => {
+    const code = (pincode || "").trim();
+    // India is always 6 digits; elsewhere postal codes vary, so just require enough
+    // characters to be plausible rather than encoding every country's format.
+    const ready = pinCountry === "IND" ? /^\d{6}$/.test(code) : code.length >= 3;
+    if (!ready) { setPinLookup(""); return undefined; }
+    let cancelled = false;
+    setPinLookup("loading");
+    // Debounced: the field fires per keystroke and each miss costs a paid AWS call.
+    const t = setTimeout(() => {
+      api.get(`/geo/pincode/${encodeURIComponent(code)}`, { params: pinCountry ? { country: pinCountry } : {} })
+        .then(({ data }) => {
+          if (cancelled) return;
+          if (!data?.found) { setPinLookup("notfound"); return; }
+          setPinLookup("ok");
+          setForm((f) => ({
+            ...f,
+            shipping_city: data.city || f.shipping_city,
+            shipping_state: data.state || f.shipping_state,
+          }));
+        })
+        .catch(() => { if (!cancelled) setPinLookup(""); });  // silent: manual entry still works
+    }, 400);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [pincode, pinCountry]);
   // The buyer picks their exact country (far less error-prone than asking them to
   // self-classify into a region), which resolves to one of the admin's coarse
   // shipping regions — same resolution the backend does server-side, so the total
@@ -153,18 +186,26 @@ export default function Checkout() {
             ["email", "Email"],
             ["shipping_phone", "Phone"],
             ["shipping_address", "Address"],
+            // PIN before City/State: entering it fills those two, so it has to come
+            // first for the autofill to feel like part of the flow.
+            ["shipping_pincode", "PIN code"],
             ["shipping_city", "City"],
             ["shipping_state", "State"],
-            ["shipping_pincode", "PIN code"],
           ].map(([k, l]) => (
             <label key={k} className="block">
-              <div className="text-xs text-ink-muted mb-1">{l}</div>
+              <div className="text-xs text-ink-muted mb-1 flex items-center gap-2">
+                {l}
+                {k === "shipping_pincode" && pinLookup === "loading" && <span className="text-[10px] text-ink-muted">looking up…</span>}
+                {k === "shipping_pincode" && pinLookup === "notfound" && <span className="text-[10px] text-revoked">not found — enter city &amp; state manually</span>}
+                {k === "shipping_pincode" && pinLookup === "ok" && <span className="text-[10px] text-verified inline-flex items-center gap-1"><CheckCircle size={11} weight="fill" /> city &amp; state filled</span>}
+              </div>
               <input
                 required
                 data-testid={`checkout-${k}`}
                 value={form[k]}
                 onChange={set(k)}
                 type={k === "email" ? "email" : "text"}
+                inputMode={k === "shipping_pincode" ? "numeric" : undefined}
                 className="w-full gold-line bg-ivory px-4 py-3 outline-none focus:border-maroon"
               />
             </label>

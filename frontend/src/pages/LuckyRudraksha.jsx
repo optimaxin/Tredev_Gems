@@ -7,9 +7,13 @@ import {
   Sparkle, MoonStars, ShieldCheck, ArrowRight, ArrowCounterClockwise, Star, ShoppingBagOpen,
 } from "@phosphor-icons/react";
 import AsyncButton from "@/components/gemora/AsyncButton";
+import PlaceAutocomplete from "@/components/gemora/PlaceAutocomplete";
 import { Reveal } from "@/components/gemora/Editorial";
 
-const EMPTY = { name: "", dob: "", tob: "", place_of_birth: "", phone: "", email: "" };
+// birth_lat/birth_lon are filled only when the buyer picks a suggested place. The
+// reading is computed from the chart, and a chart needs real coordinates — a typed
+// city name alone can't be resolved to a rising sign.
+const EMPTY = { name: "", dob: "", tob: "", place_of_birth: "", birth_lat: null, birth_lon: null, phone: "", email: "" };
 
 const fieldBase = "w-full gold-line bg-ivory px-4 py-3 outline-none transition-colors focus:border-maroon focus-visible:ring-2 focus-visible:ring-gold/50";
 
@@ -127,7 +131,17 @@ export default function LuckyRudraksha() {
               </label>
               <label className="block sm:col-span-2">
                 <div className="text-xs text-ink-muted mb-1">Place of birth</div>
-                <input required placeholder="e.g. New Delhi, India" value={form.place_of_birth} onChange={set("place_of_birth")} className={fieldBase} data-testid="rudraksha-place-input" />
+                <PlaceAutocomplete
+                  value={form.place_of_birth}
+                  onChange={(label, coords) => setForm((f) => ({
+                    ...f, place_of_birth: label,
+                    birth_lat: coords?.lat ?? null, birth_lon: coords?.lon ?? null,
+                  }))}
+                  placeholder="e.g. New Delhi, India"
+                  className={fieldBase}
+                  testId="rudraksha-place-input"
+                  inputProps={{ required: true }}
+                />
               </label>
               <label className="block">
                 <div className="text-xs text-ink-muted mb-1">Phone</div>

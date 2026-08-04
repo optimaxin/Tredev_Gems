@@ -60,6 +60,7 @@ load_dotenv(ROOT_DIR / ".env")
 # importing it earlier (as a normal top-of-file import would) silently bakes in
 # empty values no matter what backend/.env actually contains.
 import wa_openwa  # noqa: E402  (OpenWA gateway — two-way WhatsApp send/receive/campaigns)
+import geo        # noqa: E402  (Amazon Location — same import-after-load_dotenv rule)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("gemora")
@@ -727,6 +728,11 @@ class PoojaDetailsIn(BaseModel):
     gender: str = ""
     gotra: str = ""          # optional
     purpose: str = ""        # key into site_content.pooja_purposes
+    # Set only when the buyer picked a suggested place (Amazon Location, proxied via
+    # /geo/places). Null when they typed freely — the sankalp wants real coordinates,
+    # so staff need to be able to tell a resolved birthplace from raw text.
+    birth_lat: Optional[float] = None
+    birth_lon: Optional[float] = None
 
 
 class CartAddIn(BaseModel):
@@ -1992,8 +1998,16 @@ async def _validated_pooja_details(details: Optional[PoojaDetailsIn]) -> dict:
     match = next((p for p in (purposes or []) if p.get("key") == purpose_key), None)
     if not match:
         raise HTTPException(400, "Unknown pooja purpose")
+    # Coordinates are kept only when BOTH are present and in range — a half-set or
+    # out-of-range pair is worse than none, since it would silently cast the chart
+    # against the wrong point on earth.
+    lat, lon = details.birth_lat, details.birth_lon
+    coords_ok = (lat is not None and lon is not None
+                 and -90 <= lat <= 90 and -180 <= lon <= 180)
     return {
         "name": name, "dob": dob.isoformat(), "birth_place": birth_place,
+        "birth_lat": lat if coords_ok else None,
+        "birth_lon": lon if coords_ok else None,
         "birth_time": birth_time, "gender": gender, "gotra": gotra,
         "purpose": purpose_key, "purpose_label": match.get("label", purpose_key),
     }
@@ -2028,6 +2042,49 @@ async def site_content_public():
     """All buyer-facing editable content in one call — the frontend fetches this once."""
     return await respcache.get_or_set("site_content", ttl=300, tag="site_content",
                                       compute=_site_content_body)
+
+
+# ── Geo lookup (Amazon Location, proxied) ─────────────────────────────────────
+# These proxy Amazon Location so the API key never reaches the browser (see geo.py).
+# Both are cached hard: a pincode's city/state is effectively immutable, and repeat
+# typeahead queries are common, so caching cuts both latency and AWS spend.
+# Rate-limited because they're unauthenticated and each miss costs a paid AWS call.
+
+@api.get("/geo/pincode/{pincode}")
+async def geo_pincode(pincode: str, country: str = "IND",
+                      _rl: None = Depends(rate_limit(60, 60))):
+    """Postal code -> {city, state, country, lat, lon}. `found: false` (not a 404)
+    when the code doesn't resolve, so the form can just leave the fields for manual
+    entry instead of treating it as an error."""
+    code = re.sub(r"[^A-Za-z0-9\- ]", "", (pincode or "").strip())[:12]
+    if not code:
+        raise HTTPException(400, "Enter a postal code")
+    cc = re.sub(r"[^A-Za-z]", "", country or "IND").upper()[:3] or "IND"
+
+    async def _compute():
+        hit = await geo.lookup_postal_code(code, cc)
+        return {"found": bool(hit), **(hit or {})}
+
+    return await respcache.get_or_set(f"geo:pin:{cc}:{code.upper()}", ttl=86400,
+                                      tag="geo", compute=_compute)
+
+
+@api.get("/geo/places")
+async def geo_places(q: str, country: Optional[str] = None, limit: int = 5,
+                     _rl: None = Depends(rate_limit(90, 60))):
+    """Place search for 'place of birth' fields. Each result carries lat/lon, which
+    is what makes a birth chart computable — a bare city name is ambiguous."""
+    query = (q or "").strip()[:120]
+    if len(query) < 3:
+        return {"results": []}          # too short to be meaningful; don't spend a call
+    cc = re.sub(r"[^A-Za-z]", "", country or "").upper()[:3] or None
+    n = max(1, min(limit, 10))
+
+    async def _compute():
+        return {"results": await geo.suggest_places(query, n, cc)}
+
+    return await respcache.get_or_set(f"geo:q:{cc or '*'}:{n}:{query.lower()}",
+                                      ttl=86400, tag="geo", compute=_compute)
 
 
 class SiteContentIn(BaseModel):
@@ -4360,6 +4417,8 @@ _LEADS_SELECT = """
     cart AS (
         SELECT c.user_id, count(ci.id) AS cnt,
                sum(ci.qty * ci.unit_price_snapshot) AS value_n,
+               -- a cart is priced in exactly one currency, so this needs no grouping
+               (array_agg(btrim(c.currency)::text))[1] AS currency,
                max(ci.updated_at) AS last_at,
                array_agg(p.title ORDER BY ci.updated_at DESC) AS items
           FROM carts c
@@ -4369,20 +4428,36 @@ _LEADS_SELECT = """
          WHERE c.user_id IS NOT NULL
          GROUP BY c.user_id
     ),
+    -- Grouped by currency first, then collapsed to the buyer's MOST RECENT currency.
+    -- Summing straight across would add rupees to dollars; this way the figure and
+    -- the symbol shown next to it always describe the same money.
     unpaid AS (
-        SELECT o.user_id, count(*) AS cnt, sum(o.grand_total) AS value_n,
-               max(o.created_at) AS last_at,
-               (array_agg(o.status::text ORDER BY o.created_at DESC))[1] AS latest_status,
-               (array_agg(o.id::text ORDER BY o.created_at DESC))[1] AS latest_order_id
-          FROM orders o
-         WHERE o.status IN ('pending', 'payment_failed') AND o.user_id IS NOT NULL
-         GROUP BY o.user_id
+        SELECT user_id,
+               (array_agg(currency        ORDER BY last_at DESC))[1] AS currency,
+               (array_agg(cnt             ORDER BY last_at DESC))[1] AS cnt,
+               (array_agg(value_n         ORDER BY last_at DESC))[1] AS value_n,
+               max(last_at) AS last_at,
+               (array_agg(latest_status   ORDER BY last_at DESC))[1] AS latest_status,
+               (array_agg(latest_order_id ORDER BY last_at DESC))[1] AS latest_order_id
+          FROM (
+            SELECT o.user_id, btrim(o.currency)::text AS currency,
+                   count(*) AS cnt, sum(o.grand_total) AS value_n,
+                   max(o.created_at) AS last_at,
+                   (array_agg(o.status::text ORDER BY o.created_at DESC))[1] AS latest_status,
+                   (array_agg(o.id::text     ORDER BY o.created_at DESC))[1] AS latest_order_id
+              FROM orders o
+             WHERE o.status IN ('pending', 'payment_failed') AND o.user_id IS NOT NULL
+             GROUP BY o.user_id, btrim(o.currency)::text
+          ) per_ccy
+         GROUP BY user_id
     )
     SELECT u.id::text AS user_id, u.full_name AS name, u.email::text AS email, u.phone AS phone,
            wl.cnt AS wishlist_count, wl.items[1:3] AS wishlist_items, wl.last_at AS wishlist_at,
            cart.cnt AS cart_count, cart.value_n AS cart_value_n, cart.items[1:3] AS cart_items,
+           cart.currency AS cart_currency,
            cart.last_at AS cart_at,
            unpaid.cnt AS unpaid_count, unpaid.value_n AS unpaid_value_n,
+           unpaid.currency AS unpaid_currency,
            unpaid.latest_status AS unpaid_status, unpaid.latest_order_id AS unpaid_order_id,
            unpaid.last_at AS unpaid_at, uoi.items AS unpaid_items,
            GREATEST(wl.last_at, cart.last_at, unpaid.last_at) AS last_activity
@@ -4415,8 +4490,10 @@ async def admin_list_leads(_: str = Depends(require_perm("orders"))):
             "wishlist": {"count": r["wishlist_count"], "items": r["wishlist_items"],
                          "at": r["wishlist_at"]} if r["wishlist_count"] else None,
             "cart": {"count": r["cart_count"], "value": db.to_paise(r["cart_value_n"]),
+                     "currency": r["cart_currency"] or "INR",
                      "items": r["cart_items"], "at": r["cart_at"]} if r["cart_count"] else None,
             "checkout": {"count": r["unpaid_count"], "value": db.to_paise(r["unpaid_value_n"]),
+                         "currency": r["unpaid_currency"] or "INR",
                          "status": db.ORDER_STATUS_FROM_DB.get(r["unpaid_status"], r["unpaid_status"]),
                          "order_id": r["unpaid_order_id"],
                          "items": r["unpaid_items"], "at": r["unpaid_at"]} if r["unpaid_count"] else None,
@@ -4442,7 +4519,9 @@ async def admin_customer_detail(user_id: str, _: str = Depends(require_admin)):
         "profile": {k: v for k, v in profile.items() if k != "password_hash"},
         "orders": [
             {"order_id": o["order_id"], "order_no": o.get("order_no"),
-             "status": o["status"], "total": o["total"],
+             # currency travels with total — orders are placed in INR or USD, so a
+             # bare amount here renders under whatever symbol the client assumes.
+             "status": o["status"], "total": o["total"], "currency": o.get("currency"),
              "created_at": o["created_at"], "item_count": len(o["items"])}
             for o in orders
         ],
@@ -5655,32 +5734,61 @@ async def admin_sales(_: str = Depends(require_owner), days: int = 30):
     PAID = ("paid", "processing", "packed", "shipped", "out_for_delivery",
             "delivered", "completed")
 
-    head = await db.fetch_one(
-        """SELECT count(*)                                        AS orders_total,
+    # Revenue is grouped BY CURRENCY and never summed across them: orders are placed
+    # in INR or USD, so one combined total would add rupees to dollars and produce a
+    # figure that means nothing. `currency` is CHAR(n), hence the btrim.
+    head = await db.fetch_all(
+        """SELECT btrim(o.currency)::text                         AS currency,
+                  count(*)                                        AS orders_total,
                   count(*) FILTER (WHERE o.status::text = ANY($2)) AS orders_paid,
                   COALESCE(sum(o.grand_total) FILTER (WHERE o.status::text = ANY($2)), 0) AS revenue_n
-             FROM orders o WHERE o.created_at >= $1""", since, list(PAID))
-    revenue = db.to_paise(head["revenue_n"])
-    paid_n = head["orders_paid"]
+             FROM orders o WHERE o.created_at >= $1
+            GROUP BY 1 ORDER BY 1""", since, list(PAID))
+    revenue, orders_total, orders_paid = [], 0, 0
+    for r in head:
+        n = r["orders_paid"]
+        paise = db.to_paise(r["revenue_n"])
+        orders_total += r["orders_total"]
+        orders_paid += n
+        revenue.append({"currency": r["currency"] or "INR", "revenue_paise": paise,
+                        "orders_paid": n, "aov_paise": int(paise / n) if n else 0})
 
-    by_day = await db.fetch_all(
+    by_day_rows = await db.fetch_all(
         """SELECT to_char(date_trunc('day', COALESCE(p.paid_at, o.created_at)), 'YYYY-MM-DD') AS day,
+                  btrim(o.currency)::text         AS currency,
                   COALESCE(sum(o.grand_total), 0) AS revenue_n,
                   count(*)                        AS orders
              FROM orders o
              LEFT JOIN LATERAL (SELECT paid_at FROM payments
                                  WHERE order_id = o.id ORDER BY created_at DESC LIMIT 1) p ON true
             WHERE o.created_at >= $1 AND o.status::text = ANY($2)
-            GROUP BY 1 ORDER BY 1""", since, list(PAID))
+            GROUP BY 1, 2 ORDER BY 1""", since, list(PAID))
+    # One entry per day carrying a per-currency breakdown. `orders` stays a plain
+    # count — the only cross-currency-safe way to size the chart's bars.
+    _days: dict[str, dict] = {}
+    for r in by_day_rows:
+        d = _days.setdefault(r["day"], {"day": r["day"], "orders": 0, "revenue": []})
+        d["orders"] += r["orders"]
+        d["revenue"].append({"currency": r["currency"] or "INR",
+                             "paise": db.to_paise(r["revenue_n"])})
+    by_day = list(_days.values())
 
-    by_cat = await db.fetch_all(
-        """SELECT pr.category_key::text AS category,
+    by_cat_rows = await db.fetch_all(
+        """SELECT pr.category_key::text   AS category,
+                  btrim(o.currency)::text AS currency,
                   COALESCE(sum(oi.line_total), 0) AS revenue_n
              FROM order_items oi
              JOIN orders o   ON o.id = oi.order_id
              JOIN products pr ON pr.id = oi.product_id
             WHERE o.created_at >= $1 AND o.status::text = ANY($2)
-            GROUP BY 1""", since, list(PAID))
+            GROUP BY 1, 2""", since, list(PAID))
+    _cats: dict[str, dict] = {}
+    for r in by_cat_rows:
+        cat = db.CATEGORY_FROM_DB.get(r["category"], r["category"])
+        c = _cats.setdefault(cat, {"category": cat, "revenue": []})
+        c["revenue"].append({"currency": r["currency"] or "INR",
+                             "paise": db.to_paise(r["revenue_n"])})
+    by_cat = list(_cats.values())
 
     stats = await db.fetch_one(
         """SELECT (SELECT count(*) FROM users u
@@ -5704,12 +5812,14 @@ async def admin_sales(_: str = Depends(require_owner), days: int = 30):
     activity = await db.fetch_all(
         """SELECT 'order' AS type, o.id::text AS ref_id, o.created_at AS at,
                   o.status::text AS status, o.grand_total AS amount_n,
+                  btrim(o.currency)::text AS currency,
                   u.full_name AS name, NULL::text AS extra
              FROM orders o LEFT JOIN users u ON u.id = o.user_id
             WHERE o.created_at >= $1
             UNION ALL
            SELECT CASE oe.to_status::text WHEN 'cancelled' THEN 'cancellation' ELSE 'refund' END,
                   oe.order_id::text, oe.created_at, oe.to_status::text, o.grand_total,
+                  btrim(o.currency)::text,
                   u.full_name, oe.reason
              FROM order_events oe
              JOIN orders o ON o.id = oe.order_id
@@ -5717,11 +5827,13 @@ async def admin_sales(_: str = Depends(require_owner), days: int = 30):
             WHERE oe.created_at >= $1 AND oe.to_status::text IN ('cancelled', 'refunded')
             UNION ALL
            SELECT 'consultation', c.id::text, c.created_at, c.status::text, c.amount,
+                  btrim(c.currency)::text,
                   c.contact_name, c.concern
              FROM consultations c
             WHERE c.created_at >= $1
             UNION ALL
            SELECT 'lead', w.product_id::text, w.created_at, 'wishlist', NULL,
+                  NULL::text,
                   u.full_name, p.title
              FROM wishlist w
              JOIN users u ON u.id = w.user_id
@@ -5730,10 +5842,11 @@ async def admin_sales(_: str = Depends(require_owner), days: int = 30):
             ORDER BY at DESC LIMIT 40""", since)
 
     return {
-        "revenue_paise": revenue,
-        "orders_total": head["orders_total"],
-        "orders_paid": paid_n,
-        "aov_paise": int(revenue / paid_n) if paid_n else 0,
+        # A list, one entry per currency used in the window — deliberately NOT a
+        # scalar, so nothing downstream can accidentally add INR to USD again.
+        "revenue": revenue,
+        "orders_total": orders_total,
+        "orders_paid": orders_paid,
         "customers_total": stats["customers_total"],
         "new_customers": stats["new_customers"],
         "open_queries": stats["open_queries"],
@@ -5741,12 +5854,11 @@ async def admin_sales(_: str = Depends(require_owner), days: int = 30):
         "refunded": stats["refunded"],
         "new_consultations": stats["new_consultations"],
         "new_leads": stats["new_leads"],
-        "by_day": [{"day": d["day"], "revenue": db.to_paise(d["revenue_n"]),
-                    "orders": d["orders"]} for d in by_day],
-        "by_category": [{"category": db.CATEGORY_FROM_DB.get(c["category"], c["category"]),
-                         "revenue_paise": db.to_paise(c["revenue_n"])} for c in by_cat],
+        "by_day": by_day,
+        "by_category": by_cat,
         "activity": [{"type": a["type"], "ref_id": a["ref_id"], "at": a["at"],
                       "status": a["status"], "amount_paise": db.to_paise(a["amount_n"]),
+                      "currency": a["currency"] or "INR",
                       "name": a["name"], "extra": a["extra"]} for a in activity],
         "window_days": days,
     }
