@@ -2063,10 +2063,15 @@ async def geo_pincode(pincode: str, country: str = "IND",
 
     async def _compute():
         hit = await geo.lookup_postal_code(code, cc)
-        return {"found": bool(hit), **(hit or {})}
+        # `configured` lets the caller tell "this PIN doesn't exist" apart from
+        # "the server has no Amazon Location key", which look identical otherwise.
+        return {"found": bool(hit), "configured": geo.configured(), **(hit or {})}
 
+    # Only cache real hits: caching a miss for a day would keep serving it long
+    # after a missing key or a transient AWS failure was fixed.
     return await respcache.get_or_set(f"geo:pin:{cc}:{code.upper()}", ttl=86400,
-                                      tag="geo", compute=_compute)
+                                      tag="geo", compute=_compute,
+                                      should_cache=lambda v: v.get("found"))
 
 
 @api.get("/geo/places")
@@ -2077,14 +2082,20 @@ async def geo_places(q: str, country: Optional[str] = None, limit: int = 5,
     query = (q or "").strip()[:120]
     if len(query) < 3:
         return {"results": []}          # too short to be meaningful; don't spend a call
-    cc = re.sub(r"[^A-Za-z]", "", country or "").upper()[:3] or None
+    # Default to India rather than searching the whole planet: an unbiased "kosi"
+    # matches a village in Cyprus ahead of Kosi Kalan, UP. Callers can pass
+    # country="" explicitly to search worldwide.
+    cc = re.sub(r"[^A-Za-z]", "", "IND" if country is None else country).upper()[:3] or None
     n = max(1, min(limit, 10))
 
     async def _compute():
-        return {"results": await geo.suggest_places(query, n, cc)}
+        results = await geo.suggest_places(query, n, cc)
+        return {"results": results, "configured": geo.configured()}
 
+    # Only cache non-empty results — see the pincode route above.
     return await respcache.get_or_set(f"geo:q:{cc or '*'}:{n}:{query.lower()}",
-                                      ttl=86400, tag="geo", compute=_compute)
+                                      ttl=86400, tag="geo", compute=_compute,
+                                      should_cache=lambda v: bool(v.get("results")))
 
 
 class SiteContentIn(BaseModel):

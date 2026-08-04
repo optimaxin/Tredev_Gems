@@ -34,13 +34,21 @@ _store: dict[str, tuple[float, Any]] = {}  # key -> (expires_at_monotonic, value
 _tags: dict[str, set[str]] = {}  # tag -> keys sharing it, for invalidate()
 
 
-async def get_or_set(key: str, ttl: float, tag: str, compute: Callable[[], Awaitable[Any]]) -> Any:
+async def get_or_set(key: str, ttl: float, tag: str, compute: Callable[[], Awaitable[Any]],
+                     should_cache: Callable[[Any], bool] | None = None) -> Any:
+    """`should_cache` gates whether the computed value is stored at all.
+
+    Without it, a failed or empty upstream result gets cached for the full TTL —
+    so a transient outage (or a missing API key) keeps being served long after the
+    dependency recovered. Callers wrapping a third-party lookup should pass a
+    predicate that only caches genuine hits."""
     hit = _store.get(key)
     if hit is not None and hit[0] > time.monotonic():
         return hit[1]
     value = await compute()
-    _store[key] = (time.monotonic() + ttl, value)
-    _tags.setdefault(tag, set()).add(key)
+    if should_cache is None or should_cache(value):
+        _store[key] = (time.monotonic() + ttl, value)
+        _tags.setdefault(tag, set()).add(key)
     return value
 
 
