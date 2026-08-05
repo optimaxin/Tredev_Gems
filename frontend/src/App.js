@@ -33,6 +33,8 @@ import Consultation from "@/pages/Consultation";
 import Astrologer from "@/pages/Astrologer";
 import AstrologerLogin from "@/pages/AstrologerLogin";
 import AstrologerSetPassword from "@/pages/AstrologerSetPassword";
+import PrivacyPolicy from "@/pages/PrivacyPolicy";
+import TermsConditions from "@/pages/TermsConditions";
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -82,6 +84,8 @@ function AuthRouter() {
         <Route path="/tools/carat-ratti" element={<CaratRatti />} />
         <Route path="/tools/lucky-rudraksha" element={<LuckyRudraksha />} />
         <Route path="/consultation" element={<Consultation />} />
+        <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+        <Route path="/terms-and-conditions" element={<TermsConditions />} />
         <Route path="/dashboard" element={<Navigate to="/account" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

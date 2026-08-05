@@ -44,6 +44,7 @@ import asyncpg
 from decimal import Decimal
 
 import db  # Postgres/Supabase access layer — see backend/MIGRATION.md
+import coupons as coupon_rules  # Coupon rules engine — see .claude/promo_code_feature.md
 import storage_sb  # Supabase Storage — replaces the Emergent object store
 import rudraksha_calc  # Lucky Rudraksha calculator — Swiss Ephemeris + moon-sign matrix
 from circuit import CircuitOpenError, get_circuit
@@ -538,6 +539,9 @@ ALL_PERMISSIONS = [
     "products", "inventory", "certificates", "orders",
     "categories", "astrologers", "consultations", "queries",
     "content", "taxonomy",
+    # Coupons hand out money, and the employee/VIP lists attached to them are staff
+    # and customer records — its own permission, not folded into "products".
+    "coupons",
     # Reading the support inbox exposes customer conversations, so it is its own
     # permission rather than being folded into a broader one.
     "whatsapp",
@@ -759,6 +763,9 @@ class CheckoutIn(BaseModel):
     shipping_pincode: str
     email: EmailStr
     affiliate_ref: Optional[str] = None  # astrologer's affiliate code, if any
+    # The one coupon the buyer typed. Auto-apply coupons are NOT accepted from the
+    # client — the server finds them itself, so a forged list can't grant a discount.
+    coupon_code: Optional[str] = None
     # Required for a USD (outside-India) checkout — the buyer's exact country, an
     # ISO-3166-1 alpha-2 code from SHIPPING_COUNTRIES. Resolved server-side to a
     # shipping region (_shipping_region_for_country) to look up each product's
@@ -1573,6 +1580,12 @@ def _apply_product_currency(products: list[dict], currency: str) -> list[dict]:
     return products
 
 
+
+# Budget buckets for the "Not sure where to start?" finder (min inclusive, max
+# exclusive, in rupees — base_price is stored in rupees, not paise).
+_PRICE_BUCKETS = {"lo": (None, 10_000), "md": (10_000, 100_000), "hi": (100_000, None)}
+
+
 @api.get("/products")
 async def list_products(
     category: Optional[str] = None,
@@ -1581,6 +1594,7 @@ async def list_products(
     purpose: Optional[str] = None,
     mukhi: Optional[str] = None,
     q: Optional[str] = None,
+    price: Optional[str] = None,
     limit: int = 60,
     currency: str = "INR",
 ):
@@ -1600,7 +1614,17 @@ async def list_products(
     if rashi:
         where.append(f"p.attributes ->> 'rashi' = {_arg(rashi)}")
     if purpose:
-        where.append(f"p.attributes ->> 'purpose' = {_arg(purpose)}")
+        # `purpose` is admin-entered free text (e.g. "career, discipline, protection
+        # from Shani dosha"), not a clean taxonomy key — match it as a substring so a
+        # buyer picking "Career" still finds a product whose purpose text mentions it,
+        # instead of requiring an exact string match that almost never holds.
+        where.append(f"p.attributes ->> 'purpose' ILIKE {_arg('%' + purpose + '%')}")
+    if price in _PRICE_BUCKETS:
+        lo, hi = _PRICE_BUCKETS[price]
+        if lo is not None:
+            where.append(f"p.base_price >= {_arg(lo)}")
+        if hi is not None:
+            where.append(f"p.base_price < {_arg(hi)}")
     if mukhi:
         where.append(f"r.mukhi = {_arg(str(mukhi))}")
     if q:
@@ -3412,6 +3436,53 @@ async def cart_set_qty(body: SetQtyIn, request: Request, user_id: Optional[str] 
     return await _get_or_create_cart(user_id, anon_key)
 
 
+# ── Coupons (buyer-facing) ────────────────────────────────────────────────────
+# Both endpoints read the cart from the DB rather than from query params. The spec
+# sketches passing cartSubtotal/productIds from the browser; we own the cart
+# server-side, so taking them from the request would only add a way to forge a
+# discount. The single thing accepted from the client is the code the buyer typed.
+
+class CouponApplyIn(BaseModel):
+    code: str = Field(min_length=1, max_length=64)
+
+
+async def _resolve_cart_coupons(request: Request, user_id: Optional[str],
+                                manual: Optional[list[str]] = None) -> dict:
+    if not user_id:
+        # Coupons are per-buyer (first purchase, staff, VIP lists), so there is
+        # nothing to evaluate for a guest. Empty rather than 401: the cart page is
+        # browsable logged-out and should not spew auth errors.
+        return {"applied": [], "rejected": [], "total_discount": 0, "free_shipping": False}
+    cart = await _get_or_create_cart(user_id, request.cookies.get("gemora_anon"))
+    # Shipping is unknown until a country is chosen at checkout, so the preview
+    # values a free_shipping coupon at 0; /checkout recomputes it with the real
+    # figure. Every other coupon type is already exact here.
+    return await coupon_rules.resolve(user_id, cart, manual or [])
+
+
+@api.get("/coupons/auto-apply")
+async def coupons_auto_apply(request: Request,
+                             user_id: Optional[str] = Depends(get_user_id_optional)):
+    """Coupons the buyer qualifies for without typing anything. Called when the cart
+    or checkout page loads and again whenever the cart changes — a coupon that no
+    longer qualifies (min order no longer met) simply drops out of `applied`."""
+    return await _resolve_cart_coupons(request, user_id)
+
+
+@api.post("/coupons/validate")
+async def coupons_validate(body: CouponApplyIn, request: Request,
+                           user_id: str = Depends(require_user)):
+    """Preview a typed code against the current cart, alongside any auto-apply ones.
+
+    A 400 here is the buyer-facing reason the code was refused; /checkout runs the
+    exact same resolution again, so a code that passes here can still be refused
+    there if the cart changed in between."""
+    result = await _resolve_cart_coupons(request, user_id, [body.code])
+    if result["rejected"]:
+        raise HTTPException(400, result["rejected"][0]["error"])
+    return result
+
+
 # ── Checkout & Orders ─────────────────────────────────────────────────────────
 # An order is normalised across orders + order_items + addresses + payments; these
 # rebuild the flat Mongo-shaped dict the frontend still expects.
@@ -3425,6 +3496,7 @@ _ORDER_SELECT = """
            o.shipping_total              AS shipping_n,
            o.grand_total                 AS total_n,
            o.discount_total              AS discount_n,
+           o.coupon_breakdown            AS coupon_breakdown,
            o.consultation_credit_id::text AS consultation_credit_id,
            o.currency                    AS currency,
            o.status::text                AS status_db,
@@ -3574,6 +3646,9 @@ async def _shape_order(row: Optional[dict], conn=None, items: Optional[list] = N
             "shipping_total": db.to_paise(r["shipping_n"]),
             "total": db.to_paise(r["total_n"]),
             "discount": db.to_paise(r["discount_n"]),
+            # Every coupon on the order as its own line, so the summary can itemise
+            # savings instead of showing one lumped "discount".
+            "coupon_codes": [c["code"] for c in (r.get("coupon_breakdown") or [])],
             "status": db.ORDER_STATUS_FROM_DB.get(r["status_db"], r["status_db"]),
             "shipping": shipping}
 
@@ -3644,8 +3719,25 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
     # discount a $130 order, or vice versa; it just stays available for later.
     credit = await _find_eligible_credit(user_id)
     credit_usable = bool(credit) and (credit.get("currency") or "INR").strip() == cart["currency"]
-    discount = min(db.to_paise(credit["amount"]), subtotal) if credit_usable else 0
+    credit_discount = min(db.to_paise(credit["amount"]), subtotal) if credit_usable else 0
+
+    # Coupons are resolved AGAIN here, from this server's own copy of the cart — the
+    # list the browser is showing is a preview, never an input. Only the typed code
+    # comes from the client; auto-apply coupons the server finds for itself. Passing
+    # shipping_total lets a free_shipping coupon waive the real amount charged.
+    coupon_result = await coupon_rules.resolve(
+        user_id, cart, [body.coupon_code] if body.coupon_code else [], shipping_total)
+    if body.coupon_code and coupon_result["rejected"]:
+        raise HTTPException(400, coupon_result["rejected"][0]["error"])
+    coupon_breakdown = coupon_result["applied"]
+    # Clamped as a whole: a consultation credit stacked on top of coupons must never
+    # drive the payable amount below zero.
+    discount = min(credit_discount + coupon_result["total_discount"], subtotal + shipping_total)
     total = subtotal + gst + shipping_total - discount
+    # orders.coupon_id keeps pointing at the single largest discount, so reporting
+    # built before stacking existed still reads something sensible.
+    primary_coupon_id = (max(coupon_breakdown, key=lambda c: c["amount"])["coupon_id"]
+                         if coupon_breakdown else None)
 
     order_id = uuid.uuid4()
     # Attribute affiliate — either explicit in body, or fall back to cart's tracked ref
@@ -3709,12 +3801,19 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
             """INSERT INTO orders (id, user_id, guest_session_token, status, currency,
                     subtotal, discount_total, tax_total, shipping_total, grand_total,
                     shipping_address_id, billing_address_id, affiliate_code,
-                    affiliate_astrologer_id, placed_at, consultation_credit_id)
-               VALUES ($1,$2::uuid,$3,'pending',$12,$4,$5,$6,$13,$7,$8,$8,$9::citext,$10::uuid, now(),$11::uuid)""",
+                    affiliate_astrologer_id, placed_at, consultation_credit_id,
+                    coupon_id, coupon_breakdown)
+               VALUES ($1,$2::uuid,$3,'pending',$12,$4,$5,$6,$13,$7,$8,$8,$9::citext,$10::uuid, now(),$11::uuid,
+                       $14::uuid,$15::jsonb)""",
             order_id, buyer_id, None,
             db.to_amount(subtotal), db.to_amount(discount), db.to_amount(gst), db.to_amount(total),
             addr_id, aff_ref if aff_astro_id else None, aff_astro_id,
-            credit["id"] if credit_usable else None, cart["currency"], db.to_amount(shipping_total))
+            credit["id"] if credit_usable else None, cart["currency"], db.to_amount(shipping_total),
+            # Passed as a Python list, NOT json_dumps'd: db.py registers a jsonb
+            # codec whose encoder is json.dumps, so pre-serialising here would store
+            # a JSON *string* and record_redemptions would iterate its characters.
+            # (The json_dumps calls elsewhere feed jsonb[] params, which differ.)
+            primary_coupon_id, coupon_breakdown)
 
         item_ids = [uuid.uuid4() for _ in items]
         product_ids = [li["product_id"] for li in items]
@@ -3857,6 +3956,11 @@ async def _mark_paid(order: dict, payment_id: str) -> dict:
                 """UPDATE consultation_credits SET status='redeemed', redeemed_order_id=$1
                     WHERE id=$2::uuid AND status='available'""",
                 order_id, order["consultation_credit_id"])
+
+        # Same reasoning as the credit above: coupons are only *spent* once the
+        # payment actually captures, so an abandoned checkout never burns a
+        # single-use code or counts against a per-user limit.
+        await coupon_rules.record_redemptions(conn, order)
     result = await _load_order(order_id)
 
     # WhatsApp "order confirmed" — fired after the transaction commits so a WA outage
@@ -7380,6 +7484,276 @@ async def admin_events_delete(event_id: str, actor: str = Depends(require_admin)
     await audit_log(actor, "event.delete", event_id, {"title": title})
     respcache.invalidate("events")
     return {"ok": True}
+
+
+# ── Admin: coupons ────────────────────────────────────────────────────────────
+# The rules live in backend/coupons.py; this is only CRUD over them plus the two
+# access-control lists (employees / specific users).
+
+_DISCOUNT_TYPES = {"percentage", "fixed_amount", "free_shipping"}
+_SCOPES = {"all_products", "specific_products", "specific_categories"}
+_AUDIENCES = {"all_users", "first_purchase", "employees", "specific_users"}
+_TRIGGERS = {"manual", "auto_apply"}
+
+
+class CouponIn(BaseModel):
+    code: str = Field(min_length=2, max_length=64)
+    name: str = Field(min_length=1, max_length=120)
+    description: Optional[str] = None
+    discount_type: str
+    # Percent (5 = 5% off) when discount_type is 'percentage'; minor units (paise /
+    # cents) when it is 'fixed_amount'; ignored for 'free_shipping'. One column, two
+    # meanings — inherited from the spec's schema, so it is spelled out everywhere.
+    discount_value: Optional[float] = None
+    max_discount_amount: Optional[int] = None   # minor units; percentage cap
+    min_order_amount: Optional[int] = None      # minor units
+    min_quantity: int = 1
+    # NULL = any currency. Required for fixed_amount — see the DB constraint.
+    currency: Optional[str] = None
+    scope: str = "all_products"
+    applies_to_product_ids: List[str] = []
+    applies_to_categories: List[str] = []
+    audience: str = "all_users"
+    trigger_type: str = "manual"
+    auto_apply_priority: int = 0
+    is_stackable: bool = False
+    starts_at: Optional[str] = None
+    ends_at: Optional[str] = None
+    usage_limit: Optional[int] = None           # None = unlimited overall
+    usage_limit_per_user: Optional[int] = 1     # None = unlimited per buyer
+    is_active: bool = True
+
+
+def _coupon_args(body: CouponIn) -> list:
+    """CouponIn -> INSERT/UPDATE args, with the boundary validation the DB CHECKs
+    would otherwise surface as a 500."""
+    if body.discount_type not in _DISCOUNT_TYPES:
+        raise HTTPException(400, f"discount_type must be one of {sorted(_DISCOUNT_TYPES)}")
+    if body.scope not in _SCOPES:
+        raise HTTPException(400, f"scope must be one of {sorted(_SCOPES)}")
+    if body.audience not in _AUDIENCES:
+        raise HTTPException(400, f"audience must be one of {sorted(_AUDIENCES)}")
+    if body.trigger_type not in _TRIGGERS:
+        raise HTTPException(400, f"trigger_type must be one of {sorted(_TRIGGERS)}")
+
+    currency = (body.currency or "").strip().upper() or None
+    if currency and currency not in ("INR", "USD"):
+        raise HTTPException(400, "currency must be INR, USD, or empty for any")
+
+    value: Optional[Decimal] = None
+    if body.discount_type == "percentage":
+        if not body.discount_value or not (0 < body.discount_value <= 100):
+            raise HTTPException(400, "A percentage coupon needs a value between 0 and 100")
+        value = Decimal(str(body.discount_value))
+    elif body.discount_type == "fixed_amount":
+        if not body.discount_value or body.discount_value <= 0:
+            raise HTTPException(400, "A flat coupon needs an amount above zero")
+        if not currency:
+            # A flat "100 off" is ₹100 or $100 — never both. This store sells in two
+            # currencies, so leaving it unset would hand USD buyers an 88x discount.
+            raise HTTPException(400, "A flat-amount coupon must specify a currency")
+        value = db.to_amount(int(body.discount_value))
+
+    if body.scope == "specific_products" and not body.applies_to_product_ids:
+        raise HTTPException(400, "Select at least one product for this scope")
+    if body.scope == "specific_categories" and not body.applies_to_categories:
+        raise HTTPException(400, "Select at least one category for this scope")
+
+    # GET /categories exposes the API-facing names ("bracelet", "prashad"); the
+    # column is compared against products.category_key, which uses the enum's own
+    # spelling ("gem_bracelet", "temple_prashad"). Translate here so a coupon
+    # scoped to a category actually matches the products in it.
+    categories = [db.CATEGORY_TO_DB.get(c, c) for c in body.applies_to_categories]
+    unknown = [c for c in categories if c not in db.CATEGORY_FROM_DB]
+    if unknown:
+        raise HTTPException(400, f"Unknown categor{'y' if len(unknown) == 1 else 'ies'}: {', '.join(unknown)}")
+
+    def _dt(v):
+        if not v:
+            return None
+        d = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+        return d.replace(tzinfo=timezone.utc) if d.tzinfo is None else d
+
+    return [body.code.strip().upper(), body.name.strip(), body.description or None,
+            body.discount_type, value,
+            db.to_amount(body.max_discount_amount) if body.max_discount_amount else None,
+            db.to_amount(body.min_order_amount) if body.min_order_amount else None,
+            max(1, body.min_quantity), currency,
+            body.scope,
+            body.applies_to_product_ids if body.scope == "specific_products" else None,
+            categories if body.scope == "specific_categories" else None,
+            body.audience, body.trigger_type, body.auto_apply_priority, body.is_stackable,
+            _dt(body.starts_at), _dt(body.ends_at),
+            body.usage_limit, body.usage_limit_per_user, body.is_active]
+
+
+_ADMIN_COUPON_SELECT = f"""
+    SELECT {coupon_rules.COUPON_COLS},
+           (SELECT count(*) FROM employee_coupons ec WHERE ec.coupon_id = c.id)      AS employee_count,
+           (SELECT count(*) FROM coupon_user_whitelist w WHERE w.coupon_id = c.id)   AS whitelist_count
+      FROM coupons c
+"""
+
+
+def _shape_coupon(r: Optional[dict]) -> Optional[dict]:
+    """Money back to minor units, matching every other amount this API returns."""
+    if not r:
+        return None
+    out = dict(r)
+    is_flat = out["discount_type"] == "fixed_amount"
+    out["discount_value"] = (db.to_paise(out["discount_value"]) if is_flat
+                             else (float(out["discount_value"]) if out["discount_value"] is not None else None))
+    out["max_discount_amount"] = db.to_paise(out["max_discount_amount"])
+    out["min_order_amount"] = db.to_paise(out["min_order_amount"]) or 0
+    out["applies_to_categories"] = [db.CATEGORY_FROM_DB.get(c, c)
+                                    for c in (out["applies_to_categories"] or [])]
+    out["applies_to_product_ids"] = [str(p) for p in (out["applies_to_product_ids"] or [])]
+    return out
+
+
+@api.get("/admin/coupons")
+async def admin_coupons_list(_: str = Depends(require_perm("coupons"))):
+    rows = await db.fetch_all(_ADMIN_COUPON_SELECT + " ORDER BY c.is_active DESC, c.created_at DESC LIMIT 500")
+    return [_shape_coupon(r) for r in rows]
+
+
+@api.post("/admin/coupons")
+async def admin_coupons_create(body: CouponIn, user_id: str = Depends(require_perm("coupons"))):
+    cid = uuid.uuid4()
+    try:
+        await db.execute(
+            """INSERT INTO coupons (id, code, name, description, discount_type, discount_value,
+                    max_discount_amount, min_order_amount, min_quantity, currency, scope,
+                    applies_to_product_ids, applies_to_categories, audience, trigger_type,
+                    auto_apply_priority, is_stackable, starts_at, ends_at, usage_limit,
+                    usage_limit_per_user, is_active, created_by)
+               VALUES ($1,$2::citext,$3,$4,$5::coupon_discount_type,$6,$7,$8,$9,$10,$11::coupon_scope,
+                       $12::uuid[],$13::text[],$14::coupon_audience,$15::coupon_trigger,
+                       $16,$17,$18,$19,$20,$21,$22,$23::uuid)""",
+            cid, *_coupon_args(body), user_id)
+    except asyncpg.UniqueViolationError:
+        raise HTTPException(409, f"A coupon with the code {body.code.upper()} already exists")
+    await audit_log(user_id, "coupon.create", str(cid),
+                    {"code": body.code.upper(), "type": body.discount_type,
+                     "audience": body.audience, "trigger": body.trigger_type})
+    return _shape_coupon(await db.fetch_one(_ADMIN_COUPON_SELECT + " WHERE c.id = $1::uuid", str(cid)))
+
+
+@api.patch("/admin/coupons/{coupon_id}")
+async def admin_coupons_update(coupon_id: str, body: CouponIn,
+                               user_id: str = Depends(require_perm("coupons"))):
+    # Full-body replace, same as /admin/events — omitted fields revert to defaults.
+    try:
+        got = await db.fetch_val(
+            """UPDATE coupons SET code=$2::citext, name=$3, description=$4,
+                    discount_type=$5::coupon_discount_type, discount_value=$6,
+                    max_discount_amount=$7, min_order_amount=$8, min_quantity=$9,
+                    currency=$10, scope=$11::coupon_scope, applies_to_product_ids=$12::uuid[],
+                    applies_to_categories=$13::text[], audience=$14::coupon_audience,
+                    trigger_type=$15::coupon_trigger, auto_apply_priority=$16, is_stackable=$17,
+                    starts_at=$18, ends_at=$19, usage_limit=$20, usage_limit_per_user=$21,
+                    is_active=$22, updated_at=now()
+                WHERE id=$1::uuid RETURNING id::text""",
+            coupon_id, *_coupon_args(body))
+    except asyncpg.UniqueViolationError:
+        raise HTTPException(409, f"A coupon with the code {body.code.upper()} already exists")
+    if not got:
+        raise HTTPException(404, "Coupon not found")
+    await audit_log(user_id, "coupon.update", coupon_id,
+                    {"code": body.code.upper(), "active": body.is_active})
+    return _shape_coupon(await db.fetch_one(_ADMIN_COUPON_SELECT + " WHERE c.id = $1::uuid", coupon_id))
+
+
+@api.delete("/admin/coupons/{coupon_id}")
+async def admin_coupons_delete(coupon_id: str, actor: str = Depends(require_perm("coupons"))):
+    # A redeemed coupon is referenced by coupon_redemptions (order history), so it is
+    # deactivated rather than deleted — deleting it would orphan those rows.
+    used = await db.fetch_val(
+        "SELECT count(*) FROM coupon_redemptions WHERE coupon_id = $1::uuid", coupon_id)
+    if used:
+        await db.execute("UPDATE coupons SET is_active=false, updated_at=now() WHERE id=$1::uuid",
+                         coupon_id)
+        await audit_log(actor, "coupon.deactivate", coupon_id, {"redemptions": used})
+        return {"ok": True, "deactivated": True,
+                "detail": f"Used on {used} order(s) — deactivated instead of deleted."}
+    got = await db.fetch_val("DELETE FROM coupons WHERE id=$1::uuid RETURNING code::text", coupon_id)
+    if not got:
+        raise HTTPException(404, "Coupon not found")
+    await audit_log(actor, "coupon.delete", coupon_id, {"code": got})
+    return {"ok": True, "deactivated": False}
+
+
+# ── Coupon membership (employees / specific users) ────────────────────────────
+# Removing a row revokes access on the buyer's very next request — validation reads
+# these tables live, nothing is cached. That is the whole "when an employee leaves"
+# story: no code change, no new coupon.
+_MEMBER_TABLES = {"employees": "employee_coupons", "specific_users": "coupon_user_whitelist"}
+
+
+async def _member_table(coupon_id: str) -> str:
+    audience = await db.fetch_val(
+        "SELECT audience::text FROM coupons WHERE id = $1::uuid", coupon_id)
+    if audience is None:
+        raise HTTPException(404, "Coupon not found")
+    if audience not in _MEMBER_TABLES:
+        raise HTTPException(400, "This coupon's audience has no member list "
+                                 "— set it to Employees or Specific Users first.")
+    return _MEMBER_TABLES[audience]
+
+
+class CouponMemberIn(BaseModel):
+    user_id: str
+
+
+@api.get("/admin/coupons/{coupon_id}/members")
+async def admin_coupon_members(coupon_id: str, _: str = Depends(require_perm("coupons"))):
+    table = await _member_table(coupon_id)
+    return await db.fetch_all(
+        f"""SELECT m.user_id::text AS user_id, u.full_name AS name, u.email::text AS email,
+                   u.phone AS phone, m.added_at AS added_at
+              FROM {table} m JOIN users u ON u.id = m.user_id
+             WHERE m.coupon_id = $1::uuid ORDER BY m.added_at DESC""", coupon_id)
+
+
+@api.post("/admin/coupons/{coupon_id}/members")
+async def admin_coupon_member_add(coupon_id: str, body: CouponMemberIn,
+                                  actor: str = Depends(require_perm("coupons"))):
+    table = await _member_table(coupon_id)
+    try:
+        await db.execute(
+            f"""INSERT INTO {table} (id, coupon_id, user_id, added_by)
+                VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3::uuid)
+                ON CONFLICT (coupon_id, user_id) DO NOTHING""", coupon_id, body.user_id, actor)
+    except asyncpg.ForeignKeyViolationError:
+        raise HTTPException(404, "User not found")
+    await audit_log(actor, "coupon.member.add", coupon_id, {"user_id": body.user_id})
+    return {"ok": True}
+
+
+@api.delete("/admin/coupons/{coupon_id}/members/{member_user_id}")
+async def admin_coupon_member_remove(coupon_id: str, member_user_id: str,
+                                     actor: str = Depends(require_perm("coupons"))):
+    table = await _member_table(coupon_id)
+    await db.execute(
+        f"DELETE FROM {table} WHERE coupon_id = $1::uuid AND user_id = $2::uuid",
+        coupon_id, member_user_id)
+    await audit_log(actor, "coupon.member.remove", coupon_id, {"user_id": member_user_id})
+    return {"ok": True}
+
+
+@api.get("/admin/coupons/user-search")
+async def admin_coupon_user_search(q: str = "", _: str = Depends(require_perm("coupons"))):
+    """Name/email lookup for the "add employee" picker. Deliberately narrower than
+    /admin/users (owner-only): it returns identity only, no roles or order history."""
+    term = (q or "").strip()
+    if len(term) < 2:
+        return []
+    return await db.fetch_all(
+        """SELECT id::text AS user_id, full_name AS name, email::text AS email, phone AS phone
+             FROM users
+            WHERE deleted_at IS NULL
+              AND (full_name ILIKE $1 OR email::text ILIKE $1 OR phone ILIKE $1)
+            ORDER BY full_name LIMIT 20""", f"%{term}%")
 
 
 # ── OpenWA gateway: two-way WhatsApp ─────────────────────────────────────────

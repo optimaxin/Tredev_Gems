@@ -20,6 +20,7 @@ export default function Shop() {
   const purpose = sp.get("purpose") || "";
   const rashi = sp.get("rashi") || "";
   const q = sp.get("q") || "";
+  const price = sp.get("price") || "";
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [purposes, setPurposes] = useState(DEFAULT_PURPOSES);
@@ -40,8 +41,9 @@ export default function Shop() {
     if (purpose) p.set("purpose", purpose);
     if (rashi) p.set("rashi", rashi);
     if (q) p.set("q", q);
+    if (price) p.set("price", price);
     return p.toString();
-  }, [category, graha, purpose, rashi, q]);
+  }, [category, graha, purpose, rashi, q, price]);
 
   useEffect(() => {
     setLoading(true);

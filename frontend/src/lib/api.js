@@ -41,7 +41,7 @@ const _cache = new Map(); // key -> { t: epoch_ms, response }
 
 // Endpoints that must always be fresh — auth/session/payment flows.
 const _noCache = (url = "") =>
-  /(\/auth|\/otp|\/logout|\/checkout|\/mock-pay|\/cashfree|\/webhook|\/cart)/.test(url);
+  /(\/auth|\/otp|\/logout|\/checkout|\/mock-pay|\/cashfree|\/webhook|\/cart|\/coupons)/.test(url);
 
 const _keyOf = (config) => {
   const params = config.params ? JSON.stringify(config.params) : "";

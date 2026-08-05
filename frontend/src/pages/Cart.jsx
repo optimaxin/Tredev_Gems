@@ -7,9 +7,10 @@ import { formatPrice } from "@/lib/currency";
 import { TrashSimple, ShieldCheck, ShoppingBag, Plus, Minus, LockKey } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import AsyncButton from "@/components/gemora/AsyncButton";
+import CouponBox, { CouponLines } from "@/components/gemora/CouponBox";
 
 export default function Cart() {
-  const { cart, remove, setQty, subtotal } = useCart();
+  const { cart, remove, setQty, subtotal, discount } = useCart();
   const { user } = useAuth();
   const nav = useNavigate();
   const items = cart.items || [];
@@ -109,9 +110,15 @@ export default function Cart() {
                 <div className="mt-4 flex items-baseline justify-between">
                   <span>Subtotal</span><span className="font-display text-xl">{formatPrice(subtotal, currency)}</span>
                 </div>
+                <div className="mt-4"><CouponBox currency={currency} /></div>
+                <div className="mt-4 space-y-2"><CouponLines currency={currency} /></div>
                 <div className="mt-4 pt-4 border-t border-gold/40 flex items-baseline justify-between">
                   <span className="text-sm">Total</span>
-                  <span className="font-display text-3xl text-maroon-deep">{formatPrice(subtotal, currency)}</span>
+                  {/* Shipping is added at checkout (free within India), so this is
+                      the goods total only — same as it was before coupons. */}
+                  <span className="font-display text-3xl text-maroon-deep">
+                    {formatPrice(Math.max(0, subtotal - discount), currency)}
+                  </span>
                 </div>
                 <button
                   data-testid="cart-checkout-btn"

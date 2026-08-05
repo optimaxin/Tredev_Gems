@@ -221,6 +221,7 @@ export default function Home() {
     const p = new URLSearchParams();
     if (finder.category) p.set("category", finder.category);
     if (finder.type) p.set("purpose", finder.type);
+    if (finder.price) p.set("price", finder.price);
     nav(`/shop?${p.toString()}`);
   };
 

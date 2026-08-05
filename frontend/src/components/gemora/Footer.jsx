@@ -31,6 +31,8 @@ const DEFAULT_FOOTER = {
       { label: "Kolkata · Mumbai · Varanasi", href: "" },
       { label: "hello@gemora.in", href: "mailto:hello@gemora.in" },
       { label: "+91 90-000-000-00", href: "" },
+      { label: "Privacy Policy", href: "/privacy-policy" },
+      { label: "Terms & Conditions", href: "/terms-and-conditions" },
     ]},
   ],
   copyright: "An honest house for sacred things · Made with care in India",

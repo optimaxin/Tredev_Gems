@@ -25,6 +25,7 @@ export default function Signup() {
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [emailErr, setEmailErr] = useState("");
+  const [agreed, setAgreed] = useState(false);
 
   const set = (k) => (e) => setForm((x) => ({ ...x, [k]: e.target.value }));
   const checkEmail = (v) => setEmailErr(v && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) ? "Enter a valid email address" : "");
@@ -35,6 +36,7 @@ export default function Signup() {
 
   const submit = async (e) => {
     e.preventDefault();
+    if (!agreed) { toast.error("Please agree to the Terms & Conditions and Privacy Policy to continue"); return; }
     setLoading(true);
     try {
       const { data } = await api.post("/auth/signup", {
@@ -55,6 +57,7 @@ export default function Signup() {
   // Google sign-up == Google sign-in: Firebase popup -> ID token -> our JWT.
   // /auth/google creates the account if the email is new.
   const google = async () => {
+    if (!agreed) { toast.error("Please agree to the Terms & Conditions and Privacy Policy to continue"); return; }
     setGoogleLoading(true);
     try {
       await googleLogin();
@@ -80,6 +83,24 @@ export default function Signup() {
           <div>
             <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">Join the vault</div>
             <h1 className="font-display text-4xl text-ink mt-1">Create your account</h1>
+          </div>
+
+          <div className="mt-6 gold-line bg-cream p-4">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={agreed}
+                onChange={(e) => setAgreed(e.target.checked)}
+                data-testid="signup-agree-terms"
+                className="mt-0.5 w-4 h-4 accent-maroon shrink-0"
+              />
+              <span className="text-xs text-ink-soft leading-relaxed">
+                I agree to Tredev's{" "}
+                <Link to="/terms-and-conditions" target="_blank" rel="noreferrer" className="text-maroon underline decoration-gold-soft">Terms &amp; Conditions</Link>
+                {" "}and{" "}
+                <Link to="/privacy-policy" target="_blank" rel="noreferrer" className="text-maroon underline decoration-gold-soft">Privacy Policy</Link>.
+              </span>
+            </label>
           </div>
 
           {/* Stepper */}
@@ -115,6 +136,7 @@ export default function Signup() {
                     loading={googleLoading}
                     loadingText="Signing in…"
                     data-testid="signup-google"
+                    disabled={!agreed}
                     className="w-full border border-maroon text-maroon py-3 text-sm uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-maroon hover:text-ivory transition-colors"
                   >
                     <GoogleLogo size={16} weight="bold" /> Continue with Google
@@ -177,7 +199,7 @@ export default function Signup() {
                   <motion.div variants={fieldVariants} className="relative">
                     <div className="halo-breathe absolute inset-x-4 -inset-y-1 rounded-full opacity-40 pointer-events-none"
                       style={{ background: "radial-gradient(circle, rgba(212,175,55,0.5) 0%, transparent 70%)" }} />
-                    <AsyncButton data-testid="signup-submit" loading={loading} loadingText="Creating account…"
+                    <AsyncButton data-testid="signup-submit" disabled={!agreed} loading={loading} loadingText="Creating account…"
                       className="relative w-full brand-gradient text-ivory py-3 text-sm uppercase tracking-widest hover-lift disabled:opacity-50">
                       Create account
                     </AsyncButton>

@@ -13,9 +13,10 @@ import PaymentGatewayOverlay from "@/components/gemora/PaymentGatewayOverlay";
 import { openCashfreeCheckout } from "@/lib/cashfree";
 import { openRazorpayCheckout } from "@/lib/razorpay";
 import { SHIPPING_COUNTRIES, regionForCountry } from "@/lib/shipping";
+import CouponBox, { CouponLines } from "@/components/gemora/CouponBox";
 
 export default function Checkout() {
-  const { cart, refresh, subtotal } = useCart();
+  const { cart, refresh, subtotal, coupons, manualCode } = useCart();
   const { user, loading: authLoading } = useAuth();
   const nav = useNavigate();
   // idle → loading (collecting payment) → delivering (truck plays, then we navigate)
@@ -92,7 +93,14 @@ export default function Checkout() {
   // discount a $ order or vice versa, so it just stays available for later instead.
   const creditUsable = credit?.available && (credit.currency || "INR") === currency;
   const discount = creditUsable ? Math.min(credit.amount, subtotal) : 0;
-  const total = subtotal + shippingTotal - discount;
+  // Coupon totals come from the server (GET /coupons/auto-apply · POST
+  // /coupons/validate). A free_shipping coupon is valued at 0 in that preview —
+  // shipping isn't known until a country is picked — so the waiver is applied to
+  // the shipping line here instead. /checkout recomputes all of this server-side
+  // and that figure, not this one, is what the gateway is asked to charge.
+  const couponDiscount = coupons.total_discount || 0;
+  const effectiveShipping = coupons.free_shipping ? 0 : shippingTotal;
+  const total = Math.max(0, subtotal + effectiveShipping - discount - couponDiscount);
   const DELIVER_MS = 4200; // matches the truck animation length
 
   // Payment is confirmed by here — play the delivery truck, then leave for the
@@ -109,7 +117,9 @@ export default function Checkout() {
     setPhase("loading"); // "Processing…" while we collect payment — no truck yet
     try {
       const affiliate_ref = getAffiliateRef();
-      const { data } = await api.post("/checkout", { ...form, affiliate_ref });
+      // Only the typed code is sent. Auto-applied coupons are deliberately NOT —
+      // the server finds those itself, so a tampered list can't buy a discount.
+      const { data } = await api.post("/checkout", { ...form, affiliate_ref, coupon_code: manualCode || null });
 
       // Test mode (no live keys configured on the server): complete server-side.
       if (data.order.mock_payment || (!data.payment_session_id && !data.razorpay)) {
@@ -237,13 +247,22 @@ export default function Checkout() {
               </div>
             ))}
           </div>
+          <div className="mt-5 pt-4 border-t border-gold/40">
+            <CouponBox currency={currency} />
+          </div>
+
           <div className="mt-5 pt-4 border-t border-gold/40 space-y-2">
             {currency === "USD" && (
               <div className="flex justify-between text-sm text-ink-muted">
                 <span>Shipping</span>
-                <span>{shippingRegion ? formatPrice(shippingTotal, currency) : "Select your country above"}</span>
+                <span>
+                  {!shippingRegion ? "Select your country above"
+                    : coupons.free_shipping ? <span className="text-verified">Free</span>
+                    : formatPrice(shippingTotal, currency)}
+                </span>
               </div>
             )}
+            <CouponLines currency={currency} />
             {discount > 0 && (
               <div className="flex justify-between text-sm text-verified">
                 <span>Consultation credit</span><span>−{formatPrice(discount, currency)}</span>
