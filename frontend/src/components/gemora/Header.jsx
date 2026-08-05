@@ -3,33 +3,44 @@ import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { MagnifyingGlass, ShoppingBagOpen, User, List, X, ShieldCheck, CaretDown } from "@phosphor-icons/react";
 import { useAuth } from "@/context/AuthContext";
 import { useCart } from "@/context/CartContext";
+import { api } from "@/lib/api";
 import { NAV } from "@/constants/testIds";
 import AnnouncementBar from "@/components/gemora/AnnouncementBar";
 import SearchOverlay from "@/components/gemora/SearchOverlay";
 import CartDrawer from "@/components/gemora/CartDrawer";
 import logo from "@/assets/logo.png";
 
-const MEGA = [
+// Verify-CTA style presets an admin can pick between (Admin → Website → Header) —
+// bounded to the button looks already used elsewhere on the site, not free-form CSS.
+const VERIFY_CTA_STYLES = {
+  text: "hidden md:flex items-center gap-1.5 text-sm text-verified font-semibold",
+  outline: "hidden md:flex items-center gap-1.5 text-sm border border-maroon text-maroon px-4 py-2 hover:bg-maroon hover:text-ivory transition-colors",
+  solid: "hidden md:flex items-center gap-1.5 text-sm brand-gradient text-ivory px-4 py-2",
+};
+
+// Fallback nav/promo/CTA — used until /site-content's `header` block loads (and as
+// the shape an admin edit is merged over), so the header never renders empty.
+const DEFAULT_MEGA = [
   {
     key: "rudraksha", label: "Rudraksha", hindi: "रुद्राक्ष",
     columns: [
       { title: "Shop by Mukhi", items: [
-        ["1 Mukhi (Ganesh)", "/shop?category=rudraksha"],
-        ["5 Mukhi", "/shop?category=rudraksha&mukhi=5"],
-        ["7 Mukhi (Lakshmi)", "/shop?category=rudraksha&mukhi=7"],
-        ["8 Mukhi (Ketu)", "/shop?category=rudraksha&mukhi=8"],
-        ["Gauri Shankar", "/shop?category=rudraksha"],
+        { label: "1 Mukhi (Ganesh)", href: "/shop?category=rudraksha" },
+        { label: "5 Mukhi", href: "/shop?category=rudraksha&mukhi=5" },
+        { label: "7 Mukhi (Lakshmi)", href: "/shop?category=rudraksha&mukhi=7" },
+        { label: "8 Mukhi (Ketu)", href: "/shop?category=rudraksha&mukhi=8" },
+        { label: "Gauri Shankar", href: "/shop?category=rudraksha" },
       ]},
       { title: "By Purpose", items: [
-        ["Wealth", "/shop?category=rudraksha&purpose=wealth"],
-        ["Health", "/shop?category=rudraksha&purpose=health"],
-        ["Protection", "/shop?category=rudraksha&purpose=protection"],
-        ["Career", "/shop?category=rudraksha&purpose=career"],
+        { label: "Wealth", href: "/shop?category=rudraksha&purpose=wealth" },
+        { label: "Health", href: "/shop?category=rudraksha&purpose=health" },
+        { label: "Protection", href: "/shop?category=rudraksha&purpose=protection" },
+        { label: "Career", href: "/shop?category=rudraksha&purpose=career" },
       ]},
       { title: "Origin & Kavach", items: [
-        ["Nepal (Original)", "/shop?category=rudraksha"],
-        ["Indonesian", "/shop?category=rudraksha"],
-        ["Kavach Combos", "/shop?category=rudraksha"],
+        { label: "Nepal (Original)", href: "/shop?category=rudraksha" },
+        { label: "Indonesian", href: "/shop?category=rudraksha" },
+        { label: "Kavach Combos", href: "/shop?category=rudraksha" },
       ]},
     ],
   },
@@ -37,24 +48,26 @@ const MEGA = [
     key: "gemstone", label: "Gemstones", hindi: "रत्न",
     columns: [
       { title: "Navratna (nine)", items: [
-        ["Yellow Sapphire (Pukhraj)", "/shop?graha=Jupiter"],
-        ["Blue Sapphire (Neelam)", "/shop?graha=Saturn"],
-        ["Ruby (Manik)", "/shop?graha=Sun"],
-        ["Emerald (Panna)", "/shop?graha=Mercury"],
-        ["Pearl (Moti)", "/shop?graha=Moon"],
-        ["Red Coral (Moonga)", "/shop?graha=Mars"],
-        ["Diamond (Heera)", "/shop?graha=Venus"],
-        ["Hessonite (Gomed)", "/shop?graha=Rahu"],
-        ["Cat's Eye (Lehsuniya)", "/shop?graha=Ketu"],
+        { label: "Yellow Sapphire (Pukhraj)", href: "/shop?graha=Jupiter" },
+        { label: "Blue Sapphire (Neelam)", href: "/shop?graha=Saturn" },
+        { label: "Ruby (Manik)", href: "/shop?graha=Sun" },
+        { label: "Emerald (Panna)", href: "/shop?graha=Mercury" },
+        { label: "Pearl (Moti)", href: "/shop?graha=Moon" },
+        { label: "Red Coral (Moonga)", href: "/shop?graha=Mars" },
+        { label: "Diamond (Heera)", href: "/shop?graha=Venus" },
+        { label: "Hessonite (Gomed)", href: "/shop?graha=Rahu" },
+        { label: "Cat's Eye (Lehsuniya)", href: "/shop?graha=Ketu" },
       ]},
       { title: "By Origin", items: [
-        ["Ceylon", "/shop?category=gemstone"],
-        ["Kashmir", "/shop?category=gemstone"],
-        ["Burma", "/shop?category=gemstone"],
-        ["Zambian", "/shop?category=gemstone"],
+        { label: "Ceylon", href: "/shop?category=gemstone" },
+        { label: "Kashmir", href: "/shop?category=gemstone" },
+        { label: "Burma", href: "/shop?category=gemstone" },
+        { label: "Zambian", href: "/shop?category=gemstone" },
       ]},
       { title: "By Rashi", items: [
-        ["Sagittarius / धनु", "/shop"], ["Capricorn / मकर", "/shop"], ["Leo / सिंह", "/shop"],
+        { label: "Sagittarius / धनु", href: "/shop" },
+        { label: "Capricorn / मकर", href: "/shop" },
+        { label: "Leo / सिंह", href: "/shop" },
       ]},
     ],
   },
@@ -62,14 +75,14 @@ const MEGA = [
     key: "bracelet", label: "Bracelets & Mala", hindi: "कड़ा · माला",
     columns: [
       { title: "Bracelets", items: [
-        ["Rudraksha Bracelets", "/shop?category=bracelet"],
-        ["Zodiac Bracelets", "/shop?category=bracelet"],
-        ["Crystal Bracelets", "/shop?category=bracelet"],
+        { label: "Rudraksha Bracelets", href: "/shop?category=bracelet" },
+        { label: "Zodiac Bracelets", href: "/shop?category=bracelet" },
+        { label: "Crystal Bracelets", href: "/shop?category=bracelet" },
       ]},
       { title: "Malas", items: [
-        ["Rudraksha Mala (108)", "/shop?category=bracelet"],
-        ["Tulsi Mala", "/shop?category=bracelet"],
-        ["Sphatik Mala", "/shop?category=bracelet"],
+        { label: "Rudraksha Mala (108)", href: "/shop?category=bracelet" },
+        { label: "Tulsi Mala", href: "/shop?category=bracelet" },
+        { label: "Sphatik Mala", href: "/shop?category=bracelet" },
       ]},
     ],
   },
@@ -77,18 +90,18 @@ const MEGA = [
     key: "yantra", label: "Yantras & Pooja", hindi: "यंत्र · पूजा",
     columns: [
       { title: "Yantras", items: [
-        ["Sri Yantra", "/shop?category=yantra"],
-        ["Kuber Yantra", "/shop?category=yantra"],
-        ["Navagraha Yantra", "/shop?category=yantra"],
+        { label: "Sri Yantra", href: "/shop?category=yantra" },
+        { label: "Kuber Yantra", href: "/shop?category=yantra" },
+        { label: "Navagraha Yantra", href: "/shop?category=yantra" },
       ]},
       { title: "Idols · मूर्ति", items: [
-        ["Ganesha", "/shop?category=idol"],
-        ["Krishna", "/shop?category=idol"],
-        ["Devi", "/shop?category=idol"],
+        { label: "Ganesha", href: "/shop?category=idol" },
+        { label: "Krishna", href: "/shop?category=idol" },
+        { label: "Devi", href: "/shop?category=idol" },
       ]},
       { title: "Prashad · प्रसाद", items: [
-        ["Tirupati Laddu", "/shop?category=prashad"],
-        ["Ayodhya Prashad", "/shop?category=prashad"],
+        { label: "Tirupati Laddu", href: "/shop?category=prashad" },
+        { label: "Ayodhya Prashad", href: "/shop?category=prashad" },
       ]},
     ],
   },
@@ -96,11 +109,11 @@ const MEGA = [
     key: "purpose", label: "Shop by Purpose", hindi: "उद्देश्य",
     columns: [
       { title: "Life goals", items: [
-        ["Wealth · धन", "/shop-by-purpose"],
-        ["Protection · रक्षा", "/shop-by-purpose"],
-        ["Love · प्रेम", "/shop-by-purpose"],
-        ["Career · करियर", "/shop-by-purpose"],
-        ["Health · स्वास्थ्य", "/shop-by-purpose"],
+        { label: "Wealth · धन", href: "/shop-by-purpose" },
+        { label: "Protection · रक्षा", href: "/shop-by-purpose" },
+        { label: "Love · प्रेम", href: "/shop-by-purpose" },
+        { label: "Career · करियर", href: "/shop-by-purpose" },
+        { label: "Health · स्वास्थ्य", href: "/shop-by-purpose" },
       ]},
     ],
   },
@@ -108,18 +121,26 @@ const MEGA = [
     key: "consult", label: "Consult & Tools", hindi: "परामर्श",
     columns: [
       { title: "Free tools", items: [
-        ["Carat ↔ Ratti", "/tools/carat-ratti"],
+        { label: "Carat ↔ Ratti", href: "/tools/carat-ratti" },
+        { label: "Lucky Rudraksha Finder", href: "/tools/lucky-rudraksha" },
       ]},
       { title: "Consult", items: [
-        ["Book an Astrologer", "/consultation"],
+        { label: "Book an Astrologer", href: "/consultation" },
       ]},
       { title: "Trust", items: [
-        ["Verify a QR", "/verify"],
-        ["The provenance chain", "/verify"],
+        { label: "Verify a QR", href: "/verify" },
+        { label: "The provenance chain", href: "/verify" },
       ]},
     ],
   },
 ];
+
+const DEFAULT_PROMO = {
+  eyebrow: "The Tredev promise", title: "Every item, provably real.",
+  body: "Serialised. Certified. Ed25519 signed. Scan the QR — verify anywhere.",
+  cta_label: "Verify a stone", cta_href: "/verify",
+};
+const DEFAULT_VERIFY_CTA = { label: "Verify", href: "/verify", style: "text" };
 
 export default function Header() {
   const { user, logout } = useAuth();
@@ -131,6 +152,20 @@ export default function Header() {
   const [scrolled, setScrolled] = useState(false);
   const nav = useNavigate();
   const location = useLocation();
+
+  // Admin-edited nav/promo/CTA (Admin → Website → Header); merged over the
+  // built-in defaults so the header is never empty before this resolves.
+  const [megaNav, setMegaNav] = useState(DEFAULT_MEGA);
+  const [promo, setPromo] = useState(DEFAULT_PROMO);
+  const [verifyCta, setVerifyCta] = useState(DEFAULT_VERIFY_CTA);
+  useEffect(() => {
+    api.get("/site-content").then(({ data }) => {
+      const h = data?.header;
+      if (h?.nav?.length) setMegaNav(h.nav);
+      if (h?.promo) setPromo(h.promo);
+      if (h?.verify_cta) setVerifyCta(h.verify_cta);
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     const on = () => setScrolled(window.scrollY > 30);
@@ -167,7 +202,7 @@ export default function Header() {
           </Link>
 
           <nav className="hidden lg:flex items-center gap-4 xl:gap-6 ml-3">
-            {MEGA.map((m) => (
+            {megaNav.map((m) => (
               <button
                 key={m.key}
                 onMouseEnter={() => setMega(m.key)}
@@ -184,8 +219,8 @@ export default function Header() {
             <button onClick={() => setShowSearch(true)} data-testid="header-search-btn" className="text-ink-soft hover:text-maroon">
               <MagnifyingGlass size={20} />
             </button>
-            <Link to="/verify" className="hidden md:flex items-center gap-1.5 text-sm text-verified font-semibold" data-testid={NAV.verify}>
-              <ShieldCheck size={18} weight="duotone" /> Verify
+            <Link to={verifyCta.href || "/verify"} className={VERIFY_CTA_STYLES[verifyCta.style] || VERIFY_CTA_STYLES.text} data-testid={NAV.verify}>
+              <ShieldCheck size={18} weight="duotone" /> {verifyCta.label || "Verify"}
             </Link>
             {user ? (
               <>
@@ -231,13 +266,13 @@ export default function Header() {
           >
             <div className="mx-auto max-w-7xl px-10 py-10 grid grid-cols-[1fr_360px] gap-10">
               <div className="grid grid-cols-3 gap-10">
-                {(MEGA.find((x) => x.key === mega)?.columns || []).map((col) => (
+                {(megaNav.find((x) => x.key === mega)?.columns || []).map((col) => (
                   <div key={col.title}>
                     <div className="text-[10px] uppercase tracking-[0.3em] text-gold-soft mb-4">{col.title}</div>
                     <ul className="space-y-2.5">
-                      {col.items.map(([label, to]) => (
-                        <li key={label}>
-                          <Link to={to} className="text-sm text-ink-soft hover:text-maroon" onClick={() => setMega(null)}>{label}</Link>
+                      {col.items.map((it) => (
+                        <li key={it.label}>
+                          <Link to={it.href} className="text-sm text-ink-soft hover:text-maroon" onClick={() => setMega(null)}>{it.label}</Link>
                         </li>
                       ))}
                     </ul>
@@ -245,15 +280,15 @@ export default function Header() {
                 ))}
               </div>
               <div className="relative gold-line-strong bg-cream p-6">
-                <div className="text-[10px] uppercase tracking-[0.3em] text-gold-soft">The Tredev promise</div>
-                <div className="font-display text-2xl text-maroon-deep mt-2 leading-tight">Every item, provably real.</div>
-                <p className="text-sm text-ink-soft mt-3">Serialised. Certified. Ed25519 signed. Scan the QR — verify anywhere.</p>
+                <div className="text-[10px] uppercase tracking-[0.3em] text-gold-soft">{promo.eyebrow}</div>
+                <div className="font-display text-2xl text-maroon-deep mt-2 leading-tight">{promo.title}</div>
+                <p className="text-sm text-ink-soft mt-3">{promo.body}</p>
                 <Link
-                  to="/verify"
+                  to={promo.cta_href || "/verify"}
                   onClick={() => setMega(null)}
                   className="mt-5 inline-flex items-center gap-2 text-sm brand-gradient text-ivory px-4 py-2"
                 >
-                  <ShieldCheck size={14} weight="duotone" /> Verify a stone
+                  <ShieldCheck size={14} weight="duotone" /> {promo.cta_label}
                 </Link>
               </div>
             </div>
@@ -264,20 +299,20 @@ export default function Header() {
         {open && (
           <div className="lg:hidden border-t border-gold/30 bg-ivory">
             <div className="max-h-[75vh] overflow-y-auto px-6 py-4 flex flex-col gap-2">
-              {MEGA.map((m) => (
+              {megaNav.map((m) => (
                 <details key={m.key} className="border-b border-gold/20 py-2">
                   <summary className="flex items-center justify-between cursor-pointer">
                     <span className="text-ink font-medium">{m.label}</span>
                     <span className="font-deva text-gold-soft text-xs">{m.hindi}</span>
                   </summary>
                   <ul className="mt-2 space-y-2 pl-1">
-                    {m.columns.flatMap((c) => c.items).map(([label, to]) => (
-                      <li key={label}><Link to={to} onClick={() => setOpen(false)} className="text-sm text-ink-soft">{label}</Link></li>
+                    {m.columns.flatMap((c) => c.items).map((it) => (
+                      <li key={it.label}><Link to={it.href} onClick={() => setOpen(false)} className="text-sm text-ink-soft">{it.label}</Link></li>
                     ))}
                   </ul>
                 </details>
               ))}
-              <Link to="/verify" onClick={() => setOpen(false)} className="mt-3 text-verified font-medium">Verify a QR →</Link>
+              <Link to={verifyCta.href || "/verify"} onClick={() => setOpen(false)} className="mt-3 text-verified font-medium">Verify a QR →</Link>
             </div>
           </div>
         )}

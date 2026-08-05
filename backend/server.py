@@ -1951,14 +1951,124 @@ _DEFAULT_POOJA_PURPOSES = [
     {"key": "spiritual", "label": "Spiritual Growth"},
     {"key": "other", "label": "Other"},
 ]
+
+# The top nav's mega-menu tree + the promo card and Verify CTA shown inside it.
+# `items` used to be a hardcoded [label, href] tuple in Header.jsx; here they're
+# {label, href} objects so the shape matches footer.columns[].links (same admin
+# editor pattern, one nesting level deeper for the extra mega-menu layer).
+_DEFAULT_HEADER = {
+    "nav": [
+        {"key": "rudraksha", "label": "Rudraksha", "hindi": "रुद्राक्ष", "columns": [
+            {"title": "Shop by Mukhi", "items": [
+                {"label": "1 Mukhi (Ganesh)", "href": "/shop?category=rudraksha"},
+                {"label": "5 Mukhi", "href": "/shop?category=rudraksha&mukhi=5"},
+                {"label": "7 Mukhi (Lakshmi)", "href": "/shop?category=rudraksha&mukhi=7"},
+                {"label": "8 Mukhi (Ketu)", "href": "/shop?category=rudraksha&mukhi=8"},
+                {"label": "Gauri Shankar", "href": "/shop?category=rudraksha"},
+            ]},
+            {"title": "By Purpose", "items": [
+                {"label": "Wealth", "href": "/shop?category=rudraksha&purpose=wealth"},
+                {"label": "Health", "href": "/shop?category=rudraksha&purpose=health"},
+                {"label": "Protection", "href": "/shop?category=rudraksha&purpose=protection"},
+                {"label": "Career", "href": "/shop?category=rudraksha&purpose=career"},
+            ]},
+            {"title": "Origin & Kavach", "items": [
+                {"label": "Nepal (Original)", "href": "/shop?category=rudraksha"},
+                {"label": "Indonesian", "href": "/shop?category=rudraksha"},
+                {"label": "Kavach Combos", "href": "/shop?category=rudraksha"},
+            ]},
+        ]},
+        {"key": "gemstone", "label": "Gemstones", "hindi": "रत्न", "columns": [
+            {"title": "Navratna (nine)", "items": [
+                {"label": "Yellow Sapphire (Pukhraj)", "href": "/shop?graha=Jupiter"},
+                {"label": "Blue Sapphire (Neelam)", "href": "/shop?graha=Saturn"},
+                {"label": "Ruby (Manik)", "href": "/shop?graha=Sun"},
+                {"label": "Emerald (Panna)", "href": "/shop?graha=Mercury"},
+                {"label": "Pearl (Moti)", "href": "/shop?graha=Moon"},
+                {"label": "Red Coral (Moonga)", "href": "/shop?graha=Mars"},
+                {"label": "Diamond (Heera)", "href": "/shop?graha=Venus"},
+                {"label": "Hessonite (Gomed)", "href": "/shop?graha=Rahu"},
+                {"label": "Cat's Eye (Lehsuniya)", "href": "/shop?graha=Ketu"},
+            ]},
+            {"title": "By Origin", "items": [
+                {"label": "Ceylon", "href": "/shop?category=gemstone"},
+                {"label": "Kashmir", "href": "/shop?category=gemstone"},
+                {"label": "Burma", "href": "/shop?category=gemstone"},
+                {"label": "Zambian", "href": "/shop?category=gemstone"},
+            ]},
+            {"title": "By Rashi", "items": [
+                {"label": "Sagittarius / धनु", "href": "/shop"},
+                {"label": "Capricorn / मकर", "href": "/shop"},
+                {"label": "Leo / सिंह", "href": "/shop"},
+            ]},
+        ]},
+        {"key": "bracelet", "label": "Bracelets & Mala", "hindi": "कड़ा · माला", "columns": [
+            {"title": "Bracelets", "items": [
+                {"label": "Rudraksha Bracelets", "href": "/shop?category=bracelet"},
+                {"label": "Zodiac Bracelets", "href": "/shop?category=bracelet"},
+                {"label": "Crystal Bracelets", "href": "/shop?category=bracelet"},
+            ]},
+            {"title": "Malas", "items": [
+                {"label": "Rudraksha Mala (108)", "href": "/shop?category=bracelet"},
+                {"label": "Tulsi Mala", "href": "/shop?category=bracelet"},
+                {"label": "Sphatik Mala", "href": "/shop?category=bracelet"},
+            ]},
+        ]},
+        {"key": "yantra", "label": "Yantras & Pooja", "hindi": "यंत्र · पूजा", "columns": [
+            {"title": "Yantras", "items": [
+                {"label": "Sri Yantra", "href": "/shop?category=yantra"},
+                {"label": "Kuber Yantra", "href": "/shop?category=yantra"},
+                {"label": "Navagraha Yantra", "href": "/shop?category=yantra"},
+            ]},
+            {"title": "Idols · मूर्ति", "items": [
+                {"label": "Ganesha", "href": "/shop?category=idol"},
+                {"label": "Krishna", "href": "/shop?category=idol"},
+                {"label": "Devi", "href": "/shop?category=idol"},
+            ]},
+            {"title": "Prashad · प्रसाद", "items": [
+                {"label": "Tirupati Laddu", "href": "/shop?category=prashad"},
+                {"label": "Ayodhya Prashad", "href": "/shop?category=prashad"},
+            ]},
+        ]},
+        {"key": "purpose", "label": "Shop by Purpose", "hindi": "उद्देश्य", "columns": [
+            {"title": "Life goals", "items": [
+                {"label": "Wealth · धन", "href": "/shop-by-purpose"},
+                {"label": "Protection · रक्षा", "href": "/shop-by-purpose"},
+                {"label": "Love · प्रेम", "href": "/shop-by-purpose"},
+                {"label": "Career · करियर", "href": "/shop-by-purpose"},
+                {"label": "Health · स्वास्थ्य", "href": "/shop-by-purpose"},
+            ]},
+        ]},
+        {"key": "consult", "label": "Consult & Tools", "hindi": "परामर्श", "columns": [
+            {"title": "Free tools", "items": [
+                {"label": "Carat ↔ Ratti", "href": "/tools/carat-ratti"},
+                {"label": "Lucky Rudraksha Finder", "href": "/tools/lucky-rudraksha"},
+            ]},
+            {"title": "Consult", "items": [
+                {"label": "Book an Astrologer", "href": "/consultation"},
+            ]},
+            {"title": "Trust", "items": [
+                {"label": "Verify a QR", "href": "/verify"},
+                {"label": "The provenance chain", "href": "/verify"},
+            ]},
+        ]},
+    ],
+    "promo": {
+        "eyebrow": "The Tredev promise", "title": "Every item, provably real.",
+        "body": "Serialised. Certified. Ed25519 signed. Scan the QR — verify anywhere.",
+        "cta_label": "Verify a stone", "cta_href": "/verify",
+    },
+    "verify_cta": {"label": "Verify", "href": "/verify", "style": "text"},
+}
+
 _CONTENT_DEFAULTS = {
     "announcement": _DEFAULT_ANNOUNCEMENT, "footer": _DEFAULT_FOOTER,
-    "home": _DEFAULT_HOME,
+    "home": _DEFAULT_HOME, "header": _DEFAULT_HEADER,
     "purposes": _DEFAULT_PURPOSES, "rashi": _DEFAULT_RASHI,
     "pooja_purposes": _DEFAULT_POOJA_PURPOSES,
     "consultation": _DEFAULT_CONSULTATION,
 }
-_CONTENT_KEYS = {"announcement", "footer", "home", "consultation"}   # gated by the "content" permission
+_CONTENT_KEYS = {"announcement", "footer", "home", "header", "consultation"}   # gated by "content" perm
 _TAXONOMY_KEYS = {"purposes", "rashi", "pooja_purposes"}   # gated by the "taxonomy" permission
 
 

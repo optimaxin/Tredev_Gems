@@ -1,14 +1,24 @@
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
+import { useReducedMotion } from "framer-motion";
 import { api, apiErrorMessage, mediaSrc } from "@/lib/api";
 import { formatPrice } from "@/lib/currency";
 import { toast } from "sonner";
 import {
-  Sparkle, MoonStars, ShieldCheck, ArrowRight, ArrowCounterClockwise, Star, ShoppingBagOpen,
+  Sparkle, MoonStars, ShieldCheck, ArrowRight, ArrowCounterClockwise, Star, ShoppingBagOpen, Compass,
 } from "@phosphor-icons/react";
 import AsyncButton from "@/components/gemora/AsyncButton";
 import PlaceAutocomplete from "@/components/gemora/PlaceAutocomplete";
-import { Reveal } from "@/components/gemora/Editorial";
+import { Reveal, YantraWatermark } from "@/components/gemora/Editorial";
+
+// Static positions for the featured card's rising embers — plain data, no need
+// for randomization since the card layout itself is fixed.
+const EMBERS = [
+  { left: "12%", delay: "0s", dur: "6s", size: 3 },
+  { left: "34%", delay: "1.4s", dur: "7s", size: 2.5 },
+  { left: "58%", delay: "0.6s", dur: "6.5s", size: 3 },
+  { left: "80%", delay: "2s", dur: "7.5s", size: 2.5 },
+];
 
 // birth_lat/birth_lon are filled only when the buyer picks a suggested place. The
 // reading is computed from the chart, and a chart needs real coordinates — a typed
@@ -20,28 +30,46 @@ const fieldBase = "w-full gold-line bg-ivory px-4 py-3 outline-none transition-c
 // "7 Mukhi" -> "7"; non-numeric beads (Gauri Shankar) fall back to a sparkle glyph.
 const mukhiNumber = (mukhi) => String(mukhi || "").match(/\d+/)?.[0];
 
-function MukhiMedallion({ mukhi, size = "lg" }) {
+function MukhiMedallion({ mukhi, size = "lg", featured = false }) {
   const n = mukhiNumber(mukhi);
   const dim = size === "lg" ? "w-24 h-24 text-4xl" : "w-14 h-14 text-xl";
   return (
-    <div className={`${dim} rounded-full brand-gradient text-ivory flex items-center justify-center font-display shrink-0 shadow-lg`}>
-      {n || <Sparkle size={size === "lg" ? 32 : 18} weight="duotone" />}
+    <div className="relative shrink-0">
+      {featured && (
+        <div
+          className="halo-breathe absolute -inset-3 rounded-full pointer-events-none"
+          style={{ background: "radial-gradient(circle, rgba(212,175,55,0.4) 0%, rgba(242,140,40,0.12) 45%, transparent 70%)" }}
+        />
+      )}
+      <div className={`${dim} rounded-full brand-gradient text-ivory flex items-center justify-center font-display relative shadow-lg`}>
+        {n || <Sparkle size={size === "lg" ? 32 : 18} weight="duotone" />}
+      </div>
     </div>
   );
 }
 
 // A recommended bead + (if we stock that Mukhi) the real product photo/price/link.
+// When we don't stock a matching piece, `p` is null — never link to a product
+// that isn't actually listed; fall back to the in-stock rudraksha shelf instead.
 function BeadCard({ eyebrow, rec, featured }) {
+  const reduce = useReducedMotion();
   if (!rec) return null;
   const p = rec.product;
   return (
     <div className={`gold-line-strong bg-ivory ${featured ? "p-6 md:p-8" : "p-5"} relative overflow-hidden`}>
       {featured && <div className="brand-gradient h-1 absolute top-0 inset-x-0" />}
-      <div className="text-[10px] uppercase tracking-[0.3em] text-gold-soft mb-4">{eyebrow}</div>
-      <div className="flex gap-5 items-start">
-        <MukhiMedallion mukhi={rec.mukhi} size={featured ? "lg" : "sm"} />
+      {featured && !reduce && EMBERS.map((e, i) => (
+        <span
+          key={i}
+          className="ember absolute rounded-full bg-gold pointer-events-none"
+          style={{ left: e.left, bottom: "2%", width: e.size, height: e.size, animationDelay: e.delay, animationDuration: e.dur, boxShadow: "0 0 6px rgba(212,175,55,0.8)" }}
+        />
+      ))}
+      <div className="text-[10px] uppercase tracking-[0.3em] text-gold-soft mb-4 relative">{eyebrow}</div>
+      <div className="flex gap-5 items-start relative">
+        <MukhiMedallion mukhi={rec.mukhi} size={featured ? "lg" : "sm"} featured={featured} />
         <div className="flex-1 min-w-0">
-          <div className={`font-display text-ink ${featured ? "text-3xl" : "text-xl"}`}>{rec.mukhi}</div>
+          <div className={`font-display text-ink ${featured ? "text-3xl shimmer-text" : "text-xl"}`}>{rec.mukhi}</div>
           {rec.ruling_planet && (
             <div className="text-xs text-maroon mt-1 uppercase tracking-widest">Ruled by {rec.ruling_planet}{rec.deity ? ` · ${rec.deity}` : ""}</div>
           )}
@@ -49,10 +77,10 @@ function BeadCard({ eyebrow, rec, featured }) {
         </div>
       </div>
 
-      {p && (
+      {p ? (
         <Link
           to={`/product/${p.slug}`}
-          className="mt-5 flex items-center gap-4 gold-line bg-cream p-3 hover-lift group"
+          className="mt-5 flex items-center gap-4 gold-line bg-cream p-3 hover-lift group relative"
           data-testid="rudraksha-result-product"
         >
           <div className="w-16 h-16 shrink-0 overflow-hidden gold-line bg-ivory">
@@ -66,10 +94,15 @@ function BeadCard({ eyebrow, rec, featured }) {
             <ShoppingBagOpen size={14} weight="duotone" /> Shop <ArrowRight size={12} className="group-hover:translate-x-0.5 transition-transform" />
           </div>
         </Link>
-      )}
-      {!p && featured && (
-        <Link to={`/shop?category=rudraksha`} className="mt-5 inline-flex items-center gap-1.5 text-xs text-maroon underline decoration-gold-soft">
-          Browse Rudraksha in stock <ArrowRight size={12} />
+      ) : (
+        <Link
+          to="/shop?category=rudraksha"
+          className="mt-5 flex items-center gap-3 gold-line bg-cream p-3 hover-lift group relative text-xs text-maroon"
+          data-testid="rudraksha-result-fallback"
+        >
+          <ShoppingBagOpen size={16} weight="duotone" className="shrink-0" />
+          <span className="flex-1">This exact piece isn't in stock right now — browse the Rudraksha shelf instead.</span>
+          <ArrowRight size={12} className="shrink-0 group-hover:translate-x-0.5 transition-transform" />
         </Link>
       )}
     </div>
@@ -105,6 +138,7 @@ export default function LuckyRudraksha() {
     <div className="bg-ivory">
       <section className="relative overflow-hidden bg-cream border-b border-gold/30 py-16">
         <div className="grain absolute inset-0 pointer-events-none" />
+        <YantraWatermark className="pointer-events-none absolute -right-24 -top-24 w-[380px] h-[380px] text-gold/[0.08] hidden md:block" />
         <div className="relative mx-auto max-w-3xl px-6 text-center">
           <div className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-maroon border border-gold/50 px-3 py-1.5 bg-ivory">
             <Sparkle size={14} weight="duotone" /> Free tool · रुद्राक्ष
@@ -169,19 +203,24 @@ export default function LuckyRudraksha() {
 
         {result && (
           <Reveal>
-            <div data-testid="rudraksha-result">
+            <div data-testid="rudraksha-result" className="relative">
+              <YantraWatermark className="pointer-events-none absolute -left-28 top-0 w-[340px] h-[340px] text-gold/[0.06] hidden lg:block -z-10" />
+
               {/* Chart basis strip */}
               <div className="grid grid-cols-3 gap-3 text-center mb-8">
                 {[
-                  ["Moon Sign", `${result.chart_basis?.moon_sign || "—"}`, result.chart_basis?.moon_sign_sanskrit],
-                  ["Nakshatra", result.chart_basis?.nakshatra || "—", result.chart_basis?.nakshatra_pada ? `Pada ${result.chart_basis.nakshatra_pada}` : ""],
-                  ["Ruling Planet", result.chart_basis?.ruling_planet || "—", ""],
-                ].map(([label, value, sub]) => (
-                  <div key={label} className="gold-line bg-cream p-4">
-                    <div className="text-[10px] uppercase tracking-widest text-gold-soft">{label}</div>
-                    <div className="font-serifd text-lg text-maroon-deep mt-1">{value}</div>
-                    {sub && <div className="text-[10px] text-ink-muted mt-0.5">{sub}</div>}
-                  </div>
+                  [MoonStars, "Moon Sign", `${result.chart_basis?.moon_sign || "—"}`, result.chart_basis?.moon_sign_sanskrit],
+                  [Star, "Nakshatra", result.chart_basis?.nakshatra || "—", result.chart_basis?.nakshatra_pada ? `Pada ${result.chart_basis.nakshatra_pada}` : ""],
+                  [Compass, "Ruling Planet", result.chart_basis?.ruling_planet || "—", ""],
+                ].map(([Icon, label, value, sub], i) => (
+                  <Reveal key={label} delay={i * 0.08}>
+                    <div className="gold-line bg-cream p-4 hover-lift">
+                      <Icon size={16} weight="duotone" className="text-gold-soft mx-auto mb-1.5" />
+                      <div className="text-[10px] uppercase tracking-widest text-gold-soft">{label}</div>
+                      <div className="font-serifd text-lg text-maroon-deep mt-1">{value}</div>
+                      {sub && <div className="text-[10px] text-ink-muted mt-0.5">{sub}</div>}
+                    </div>
+                  </Reveal>
                 ))}
               </div>
 

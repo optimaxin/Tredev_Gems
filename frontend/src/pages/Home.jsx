@@ -353,9 +353,22 @@ export default function Home() {
       <section className="relative overflow-hidden bg-maroon-deep text-ivory" aria-label="Lucky Rudraksha calculator">
         <div className="absolute inset-0 opacity-[0.10]" style={{ backgroundImage: `url('${RUDRAKSHA_CALC_IMG}')`, backgroundSize: "cover", backgroundPosition: "center" }} />
         <div className="grain absolute inset-0 pointer-events-none" />
+        <YantraWatermark className="pointer-events-none absolute -left-20 -bottom-20 w-[280px] h-[280px] text-gold/[0.07] hidden md:block" />
         <div className="relative mx-auto max-w-7xl px-6 lg:px-10 py-14 flex flex-col lg:flex-row gap-8 items-center">
-          <div className="hidden lg:flex w-20 h-20 rounded-full brand-gradient text-ivory items-center justify-center shrink-0">
-            <MoonStars size={32} weight="duotone" />
+          <div className="hidden lg:flex relative w-24 h-24 shrink-0 items-center justify-center" aria-hidden="true">
+            <div
+              className="halo-breathe absolute inset-0 rounded-full"
+              style={{ background: "radial-gradient(circle, rgba(212,175,55,0.4) 0%, rgba(242,140,40,0.15) 45%, transparent 70%)" }}
+            />
+            {[0, 1].map((i) => (
+              <div key={i} className="aura-ring absolute inset-0 rounded-full border border-gold/30" style={{ animationDelay: `${i * 2}s` }} />
+            ))}
+            <div className="w-20 h-20 rounded-full brand-gradient text-ivory flex items-center justify-center shadow-lg relative">
+              <MoonStars size={30} weight="duotone" />
+            </div>
+            <div className="absolute -top-1 -right-1 w-7 h-7 rounded-full bg-ivory border border-gold flex items-center justify-center text-gold-soft shadow">
+              <Sparkle size={13} weight="fill" />
+            </div>
           </div>
           <div className="flex-1 text-center lg:text-left">
             <div className="text-xs uppercase tracking-[0.3em] text-gold">Free tool · रुद्राक्ष कैलकुलेटर</div>

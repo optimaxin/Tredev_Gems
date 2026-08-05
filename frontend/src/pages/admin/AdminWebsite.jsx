@@ -32,13 +32,14 @@ export default function AdminWebsite() {
   const [announce, setAnnounce] = useState(null); // { messages: [...] }
   const [footer, setFooter] = useState(null);
   const [home, setHome] = useState(null);
+  const [header, setHeader] = useState(null); // { nav: [...], promo: {...}, verify_cta: {...} }
   const [purposes, setPurposes] = useState(null); // [{key,label}]
   const [rashi, setRashi] = useState(null);
   const [poojaPurposes, setPoojaPurposes] = useState(null); // [{key,label}]
   const [saving, setSaving] = useState("");
 
   useEffect(() => {
-    if (canContent) api.get("/admin/site-content").then((r) => { setAnnounce(r.data.announcement); setFooter(r.data.footer); setHome(normHome(r.data.home)); }).catch(() => {});
+    if (canContent) api.get("/admin/site-content").then((r) => { setAnnounce(r.data.announcement); setFooter(r.data.footer); setHome(normHome(r.data.home)); setHeader(r.data.header); }).catch(() => {});
     if (canTax) api.get("/admin/taxonomy").then((r) => { setPurposes(r.data.purposes); setRashi(r.data.rashi); setPoojaPurposes(r.data.pooja_purposes); }).catch(() => {});
   }, [canContent, canTax]);
 
@@ -68,7 +69,7 @@ export default function AdminWebsite() {
   const addTax = (setter) => setter((list) => [...(list || []), { key: "", label: "" }]);
   const rmTax = (setter, i) => setter((list) => list.filter((_, j) => j !== i));
 
-  // ── Homepage (single `home` JSONB blob) ──
+  // ── Deep-path editing for a JSONB blob (home, header, …) ──
   const getIn = (obj, path) => path.reduce((o, k) => (o == null ? undefined : o[k]), obj);
   const setIn = (obj, path, value) => {
     if (!path.length) return value;
@@ -77,26 +78,38 @@ export default function AdminWebsite() {
     clone[k] = setIn(clone[k], rest, value);
     return clone;
   };
-  const upd = (path, value) => setHome((h) => setIn(h, path, value));
-  const addAt = (path, item) => setHome((h) => setIn(h, path, [...(getIn(h, path) || []), item]));
-  const rmAt = (path, i) => setHome((h) => setIn(h, path, (getIn(h, path) || []).filter((_, j) => j !== i)));
+  // Binds {field, addBtn, rmBtn, upd, addAt, rmAt} to one blob's setState, so every
+  // JSONB content block (home, header) gets the same path-based editing without
+  // re-deriving setIn/getIn logic per block.
+  const makeEditor = (obj, setObj) => {
+    const upd = (path, value) => setObj((o) => setIn(o, path, value));
+    const addAt = (path, item) => setObj((o) => setIn(o, path, [...(getIn(o, path) || []), item]));
+    const rmAt = (path, i) => setObj((o) => setIn(o, path, (getIn(o, path) || []).filter((_, j) => j !== i)));
+    // A labelled field bound to obj[...path]. Rendered inline (not a component) so typing keeps focus.
+    const field = (label, path, opts = {}) => (
+      <label className="block">
+        {label && <div className="text-xs text-ink-muted mb-1">{label}</div>}
+        {opts.area
+          ? <textarea rows={opts.rows || 3} value={getIn(obj, path) ?? ""} onChange={(e) => upd(path, e.target.value)} className={inputCls + (opts.cls || "")} placeholder={opts.ph} />
+          : <input type={opts.num ? "number" : "text"} step={opts.step} value={getIn(obj, path) ?? ""} onChange={(e) => upd(path, opts.num ? (e.target.value === "" ? "" : Number(e.target.value)) : e.target.value)} className={inputCls + (opts.cls || "")} placeholder={opts.ph} />}
+      </label>
+    );
+    const addBtn = (path, item, text) => (
+      <button onClick={() => addAt(path, item)} className="mt-2 text-xs text-maroon underline inline-flex items-center gap-1"><PlusCircle size={12} /> {text}</button>
+    );
+    const rmBtn = (path, i) => (
+      <button onClick={() => rmAt(path, i)} className="text-ink-muted hover:text-revoked shrink-0"><Trash size={14} /></button>
+    );
+    return { field, addBtn, rmBtn, upd, addAt, rmAt };
+  };
 
-  // A labelled field bound to home[...path]. Rendered inline (not a component) so typing keeps focus.
-  const field = (label, path, opts = {}) => (
-    <label className="block">
-      {label && <div className="text-xs text-ink-muted mb-1">{label}</div>}
-      {opts.area
-        ? <textarea rows={opts.rows || 3} value={getIn(home, path) ?? ""} onChange={(e) => upd(path, e.target.value)} className={inputCls + (opts.cls || "")} placeholder={opts.ph} />
-        : <input type={opts.num ? "number" : "text"} step={opts.step} value={getIn(home, path) ?? ""} onChange={(e) => upd(path, opts.num ? (e.target.value === "" ? "" : Number(e.target.value)) : e.target.value)} className={inputCls + (opts.cls || "")} placeholder={opts.ph} />}
-    </label>
-  );
-  const addBtn = (path, item, text) => (
-    <button onClick={() => addAt(path, item)} className="mt-2 text-xs text-maroon underline inline-flex items-center gap-1"><PlusCircle size={12} /> {text}</button>
-  );
-  const rmBtn = (path, i) => (
-    <button onClick={() => rmAt(path, i)} className="text-ink-muted hover:text-revoked shrink-0"><Trash size={14} /></button>
-  );
+  const { field, addBtn, rmBtn } = makeEditor(home, setHome);
   const homeSave = <SaveBtn saving={saving === "home"} onClick={() => save("home", "/admin/site-content/home", home)} />;
+
+  // ── Header (nav mega-menu + promo card + Verify CTA) ──
+  const { field: hfield, addBtn: haddBtn, rmBtn: hrmBtn } = makeEditor(header, setHeader);
+  const headerSave = <SaveBtn saving={saving === "header"} onClick={() => save("header", "/admin/site-content/header", header)} />;
+  const VERIFY_STYLES = ["text", "outline", "solid"];
 
   const taxEditor = (label, list, setter, url, saveKey, opts = {}) => (
     <Section
@@ -136,6 +149,84 @@ export default function AdminWebsite() {
 
       {!canContent && !canTax && (
         <div className="gold-line p-10 text-center text-ink-muted">You don't have permission to edit website content.</div>
+      )}
+
+      {/* Header — nav mega-menu, promo card, Verify CTA */}
+      {canContent && header && (
+        <>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-display text-2xl text-maroon-deep">Header</h2>
+            {headerSave}
+          </div>
+
+          <Section title="Navigation menu" hint="The top nav bar. Each menu drops down into columns of links. Menu order here is the order shown on the site.">
+            <div className="space-y-3">
+              {(header.nav || []).map((m, ni) => (
+                <details key={ni} className="gold-line bg-cream p-4" open={false}>
+                  <summary className="cursor-pointer flex items-center justify-between gap-4">
+                    <span className="font-serifd text-ink">{m.label || "(untitled menu)"}</span>
+                    <span className="font-deva text-gold-soft text-xs">{m.hindi}</span>
+                  </summary>
+                  <div className="mt-4 grid md:grid-cols-3 gap-3">
+                    {hfield("Label (shown in the nav bar)", ["nav", ni, "label"])}
+                    {hfield("Devanagari (optional)", ["nav", ni, "hindi"], { cls: " font-deva" })}
+                    <div className="flex items-end justify-end">{hrmBtn(["nav"], ni)}</div>
+                  </div>
+
+                  <div className="mt-4 grid md:grid-cols-3 gap-3">
+                    {(m.columns || []).map((col, ci) => (
+                      <div key={ci} className="gold-line bg-ivory p-3">
+                        <div className="flex gap-1 items-center mb-2">
+                          <input value={col.title || ""} onChange={(e) => { const v = e.target.value; setHeader((h) => { const nav = [...h.nav]; nav[ni] = { ...nav[ni], columns: nav[ni].columns.map((c, i) => (i === ci ? { ...c, title: v } : c)) }; return { ...h, nav }; }); }} placeholder="Column title" className={inputCls + " font-medium"} />
+                          {hrmBtn(["nav", ni, "columns"], ci)}
+                        </div>
+                        <div className="space-y-2">
+                          {(col.items || []).map((it, ii) => (
+                            <div key={ii} className="flex gap-1 items-center">
+                              <div className="flex-1 space-y-1">
+                                {hfield(null, ["nav", ni, "columns", ci, "items", ii, "label"], { ph: "Label" })}
+                                {hfield(null, ["nav", ni, "columns", ci, "items", ii, "href"], { ph: "/shop?…", cls: " font-mono text-xs" })}
+                              </div>
+                              {hrmBtn(["nav", ni, "columns", ci, "items"], ii)}
+                            </div>
+                          ))}
+                        </div>
+                        {haddBtn(["nav", ni, "columns", ci, "items"], { label: "", href: "" }, "Add link")}
+                      </div>
+                    ))}
+                  </div>
+                  {haddBtn(["nav", ni, "columns"], { title: "", items: [] }, "Add column")}
+                </details>
+              ))}
+            </div>
+            {haddBtn(["nav"], { key: "", label: "New menu", hindi: "", columns: [] }, "Add menu")}
+          </Section>
+
+          <Section title="Dropdown promo card" hint="The highlighted card on the right of every open mega-menu.">
+            <div className="grid md:grid-cols-2 gap-4 max-w-3xl">
+              {hfield("Eyebrow", ["promo", "eyebrow"])}
+              {hfield("Title", ["promo", "title"])}
+              {hfield("Body", ["promo", "body"], { area: true, rows: 2, cls: " md:col-span-2" })}
+              {hfield("Button label", ["promo", "cta_label"])}
+              {hfield("Button link", ["promo", "cta_href"], { cls: " font-mono text-xs" })}
+            </div>
+          </Section>
+
+          <Section title="Verify button" hint="The button in the top-right of the header (and the mega-menu's mobile footer link).">
+            <div className="grid md:grid-cols-3 gap-4 max-w-3xl">
+              {hfield("Label", ["verify_cta", "label"])}
+              {hfield("Link", ["verify_cta", "href"], { cls: " font-mono text-xs" })}
+              <label className="block">
+                <div className="text-xs text-ink-muted mb-1">Style</div>
+                <select value={header.verify_cta?.style || "text"} onChange={(e) => setHeader((h) => ({ ...h, verify_cta: { ...h.verify_cta, style: e.target.value } }))} className={inputCls}>
+                  {VERIFY_STYLES.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </label>
+            </div>
+          </Section>
+
+          <div className="flex justify-end mb-10">{headerSave}</div>
+        </>
       )}
 
       {/* Announcement bar */}
