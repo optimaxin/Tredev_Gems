@@ -2085,14 +2085,25 @@ _DEFAULT_HEADER = {
     "verify_cta": {"label": "Verify", "href": "/verify", "style": "text"},
 }
 
+# The homepage "shoppable video" carousel — each video links to one in-catalog
+# product. `videos` holds only {video_url, product_id, caption}; the public
+# /shoppable-videos endpoint resolves product_id -> full product (name/price/image)
+# at read time so admin never hand-types a price that can drift from the catalog.
+_DEFAULT_SHOPPABLE_VIDEOS = {
+    "title": "Real Stories, Real Shifts",
+    "subtitle": "Watch how our gems & Rudraksha have transformed lives",
+    "videos": [],
+}
+
 _CONTENT_DEFAULTS = {
     "announcement": _DEFAULT_ANNOUNCEMENT, "footer": _DEFAULT_FOOTER,
     "home": _DEFAULT_HOME, "header": _DEFAULT_HEADER,
+    "shoppable_videos": _DEFAULT_SHOPPABLE_VIDEOS,
     "purposes": _DEFAULT_PURPOSES, "rashi": _DEFAULT_RASHI,
     "pooja_purposes": _DEFAULT_POOJA_PURPOSES,
     "consultation": _DEFAULT_CONSULTATION,
 }
-_CONTENT_KEYS = {"announcement", "footer", "home", "header", "consultation"}   # gated by "content" perm
+_CONTENT_KEYS = {"announcement", "footer", "home", "header", "shoppable_videos", "consultation"}   # "content" perm
 _TAXONOMY_KEYS = {"purposes", "rashi", "pooja_purposes"}   # gated by the "taxonomy" permission
 
 
@@ -2181,6 +2192,30 @@ async def site_content_public():
     """All buyer-facing editable content in one call — the frontend fetches this once."""
     return await respcache.get_or_set("site_content", ttl=300, tag="site_content",
                                       compute=_site_content_body)
+
+
+@api.get("/shoppable-videos")
+async def shoppable_videos_public(currency: str = "INR"):
+    """The homepage video carousel, each entry resolved to its live product (name,
+    price, image) — admin only ever stores a product_id, never a price, so this can
+    never show a stale/out-of-sync price. A video whose product was since archived
+    or deleted is silently dropped rather than shown broken."""
+    cur = currency if currency in SUPPORTED_CURRENCIES else "INR"
+
+    async def _compute():
+        content = await _site_content("shoppable_videos") or _DEFAULT_SHOPPABLE_VIDEOS
+        videos = []
+        for v in content.get("videos") or []:
+            pid = v.get("product_id")
+            row = await db.fetch_one(_PRODUCT_SELECT + " AND p.id = $1::uuid", pid) if pid else None
+            if not row:
+                continue
+            p = _shape_product(row)
+            _apply_product_currency([p], cur)
+            videos.append({"video_url": v.get("video_url", ""), "caption": v.get("caption", ""), "product": p})
+        return {"title": content.get("title", ""), "subtitle": content.get("subtitle", ""), "videos": videos}
+
+    return await respcache.get_or_set(f"shoppable_videos:{cur}", ttl=300, tag="site_content", compute=_compute)
 
 
 # ── Geo lookup (Amazon Location, proxied) ─────────────────────────────────────
@@ -2991,13 +3026,71 @@ async def _issue_certificate_tx(conn, unit: dict, body, issued_by_user_id: str) 
         lab_id, en_id, temple_id, signing_key_id, payload, chash, signature,
         short_code(chash))
 
-    # QR gap: minted now, but only activated at dispatch.
+    # QR gap: minted now, but only activated once the order is marked delivered.
     await conn.execute(
         """INSERT INTO qr_codes (id, product_unit_id, authenticity_certificate_id,
                 token, status)
            VALUES ($1,$2::uuid,$3,$4,'pending')""",
         uuid.uuid4(), unit["unit_id"], cert_id, f"qr_{uuid.uuid4().hex[:16]}")
     return str(cert_id)
+
+
+async def _activate_order_certificates_tx(conn, order_id: str, buyer_user_id: Optional[str]) -> int:
+    """Activate the QR on every live (non-revoked) certificate for units sold on this
+    order, and add them to the buyer's verified vault. Called when an order is marked
+    'delivered' — not at dispatch — so a unit only ever reads as verified once the
+    buyer actually has it in hand. Safe to call more than once (idempotent): already-
+    active QRs and existing verified_items rows are left as-is.
+    """
+    activated = await conn.fetch(
+        """UPDATE qr_codes SET status='active', activated_at=now()
+            WHERE status='pending' AND authenticity_certificate_id IN (
+                SELECT ac.id
+                  FROM product_units pu
+                  JOIN order_items oi ON oi.id = pu.sold_order_item_id
+                  JOIN authenticity_certificates ac ON ac.product_unit_id = pu.id
+                                                    AND ac.revoked_at IS NULL
+                 WHERE oi.order_id = $1::uuid)
+          RETURNING id""", order_id)
+    if buyer_user_id:
+        await conn.execute(
+            """INSERT INTO verified_items (user_id, product_unit_id, qr_code_id, product_id)
+               SELECT $2::uuid, pu.id, q.id, pu.product_id
+                 FROM product_units pu
+                 JOIN order_items oi ON oi.id = pu.sold_order_item_id
+                 JOIN authenticity_certificates ac ON ac.product_unit_id = pu.id
+                                                   AND ac.revoked_at IS NULL
+                 JOIN qr_codes q ON q.authenticity_certificate_id = ac.id
+                WHERE oi.order_id = $1::uuid
+               ON CONFLICT (user_id, product_unit_id) DO NOTHING""",
+            order_id, buyer_user_id)
+    return len(activated)
+
+
+async def _revoke_order_certificates_tx(conn, order_id: str) -> int:
+    """Revoke every live (non-revoked) certificate for units sold on this order, turn
+    off their QRs, and drop them from any buyer's verified vault. Called when an order
+    is cancelled or refunded — including after it was already dispatched or delivered —
+    so a cancelled order can never keep reading as verified. A physical QR label that
+    already went out now correctly scans REVOKED instead of AUTHENTIC.
+    """
+    revoked = await conn.fetch(
+        """UPDATE authenticity_certificates SET revoked_at = now()
+            WHERE revoked_at IS NULL AND product_unit_id IN (
+                SELECT pu.id FROM product_units pu
+                  JOIN order_items oi ON oi.id = pu.sold_order_item_id
+                 WHERE oi.order_id = $1::uuid)
+          RETURNING id, product_unit_id""", order_id)
+    if not revoked:
+        return 0
+    cert_ids = [r["id"] for r in revoked]
+    unit_ids = [r["product_unit_id"] for r in revoked]
+    await conn.execute(
+        "UPDATE qr_codes SET status='revoked' WHERE authenticity_certificate_id = ANY($1::uuid[])",
+        cert_ids)
+    await conn.execute(
+        "DELETE FROM verified_items WHERE product_unit_id = ANY($1::uuid[])", unit_ids)
+    return len(cert_ids)
 
 
 @api.post("/admin/certificates/issue")
@@ -4478,6 +4571,12 @@ async def cancel_order(order_id: str, body: OrderCancelIn, user_id: str = Depend
             raise HTTPException(502, "Could not process the refund. Please contact support.")
 
     async with db.transaction() as conn:
+        # Revoke first, while product_units.sold_order_item_id still links units to
+        # this order — the stock-release step below clears that link, and the lookup
+        # inside _revoke_order_certificates_tx depends on it. Self-cancel today is only
+        # allowed pre-shipment (no certs exist yet), but this keeps the guarantee true
+        # even if that window is ever widened.
+        await _revoke_order_certificates_tx(conn, order_id)
         # Units are only ever bound to order_items at payment capture (_mark_paid) —
         # release them back to sale so cancelling doesn't strand stock as phantom-sold.
         await conn.execute(
@@ -4556,24 +4655,15 @@ async def admin_dispatch(body: DispatchIn, user_id: str = Depends(require_admin)
             raise HTTPException(400, "No paid units on this order — capture payment first.")
 
         # Issue a signed certificate for any unit that doesn't already have a live one.
+        # This is the paperwork step — lab report, temple, priest — captured here
+        # because it's when staff actually has it in hand. The QR stays 'pending' and
+        # nothing is added to the buyer's vault yet: activation now happens only when
+        # the order is marked 'delivered' (see admin_update_order_status), not here.
+        # That's what keeps a cancelled-after-dispatch order from ever having shown as
+        # verified — nothing verifies until delivery is confirmed.
         for u in units:
             if not u["cert_id"]:
                 await _issue_certificate_tx(conn, u, body, user_id)
-
-        # Activate only the QR on each unit's LIVE certificate — this is what makes a
-        # public scan verify. Scoping to authenticity_certificate_id (not just
-        # product_unit_id) matters: a unit re-dispatched after a revoke has an old,
-        # already-revoked QR sitting in the same table, and reactivating that one would
-        # let a stale label out in the wild start verifying as AUTHENTIC again.
-        await conn.execute(
-            """UPDATE qr_codes SET status='active', activated_at=now()
-                WHERE authenticity_certificate_id IN (
-                    SELECT ac.id
-                      FROM product_units pu
-                      JOIN order_items oi ON oi.id = pu.sold_order_item_id
-                      JOIN authenticity_certificates ac ON ac.product_unit_id = pu.id
-                                                        AND ac.revoked_at IS NULL
-                     WHERE oi.order_id = $1::uuid)""", body.order_id)
 
         # Shipment carries tracking + the buyer-facing ETA; orders only carries status.
         await conn.execute(
@@ -4590,20 +4680,6 @@ async def admin_dispatch(body: DispatchIn, user_id: str = Depends(require_admin)
             """INSERT INTO order_events (id, order_id, actor_id, from_status, to_status, reason)
                VALUES ($1,$2::uuid,$3::uuid,'paid','shipped','dispatched')""",
             uuid.uuid4(), body.order_id, user_id)
-        # Add every dispatched unit to the buyer's verified vault — via the same live
-        # (non-revoked) certificate's QR, for the reasons above.
-        if order.get("user_id"):
-            await conn.execute(
-                """INSERT INTO verified_items (user_id, product_unit_id, qr_code_id, product_id)
-                   SELECT $2::uuid, pu.id, q.id, pu.product_id
-                     FROM product_units pu
-                     JOIN order_items oi ON oi.id = pu.sold_order_item_id
-                     JOIN authenticity_certificates ac ON ac.product_unit_id = pu.id
-                                                       AND ac.revoked_at IS NULL
-                     JOIN qr_codes q ON q.authenticity_certificate_id = ac.id
-                    WHERE oi.order_id = $1::uuid
-                   ON CONFLICT (user_id, product_unit_id) DO NOTHING""",
-                body.order_id, order["user_id"])
 
     # WhatsApp "order shipped" — via the OpenWA gateway + the editable order_shipped
     # template (was a fixed Meta utility template).
@@ -4626,15 +4702,18 @@ async def admin_dispatch(body: DispatchIn, user_id: str = Depends(require_admin)
 @api.post("/admin/certificates/revoke/{cert_id}")
 async def admin_revoke(cert_id: str, user_id: str = Depends(require_admin)):
     async with db.transaction() as conn:
-        got = await conn.fetchval(
+        row = await conn.fetchrow(
             """UPDATE authenticity_certificates SET revoked_at = now()
-                WHERE id = $1::uuid RETURNING id""", cert_id)
-        if not got:
+                WHERE id = $1::uuid RETURNING id, product_unit_id""", cert_id)
+        if not row:
             raise HTTPException(404, "Cert not found")
         # The QR must stop verifying too — it's what the public actually scans.
         await conn.execute(
             "UPDATE qr_codes SET status='revoked' WHERE authenticity_certificate_id=$1::uuid",
             cert_id)
+        # A revoked certificate must not keep showing in whoever's verified vault it's in.
+        await conn.execute(
+            "DELETE FROM verified_items WHERE product_unit_id = $1::uuid", row["product_unit_id"])
     await audit_log(user_id, "certificate.revoke", cert_id)
     return {"ok": True}
 
@@ -7007,6 +7086,14 @@ async def admin_update_order_status(order_id: str, body: OrderStatusIn, actor: s
                VALUES ($1,$2::uuid,$3::order_status,$4::order_status,'admin status change')""",
             uuid.uuid4(), order_id, db.ORDER_STATUS_TO_DB.get(prev["status"], "pending"),
             db.ORDER_STATUS_TO_DB[body.status])
+        # Delivered activates whatever certificates dispatch already issued (QR live,
+        # unit added to the buyer's verified vault) — nothing verifies before this.
+        # Cancelled/refunded is the reverse: revoke any live certs and pull the unit
+        # back out of the vault, however far the order had already gotten.
+        if body.status == "delivered":
+            await _activate_order_certificates_tx(conn, order_id, prev.get("user_id"))
+        elif body.status in ("cancelled", "refunded"):
+            await _revoke_order_certificates_tx(conn, order_id)
     await audit_log(actor, "order.status_change", order_id,
                     {"from": prev["status"], "to": body.status})
 

@@ -33,13 +33,22 @@ export default function AdminWebsite() {
   const [footer, setFooter] = useState(null);
   const [home, setHome] = useState(null);
   const [header, setHeader] = useState(null); // { nav: [...], promo: {...}, verify_cta: {...} }
+  const [videosContent, setVideosContent] = useState(null); // { title, subtitle, videos: [...] }
+  const [products, setProducts] = useState([]); // for the video->product picker
   const [purposes, setPurposes] = useState(null); // [{key,label}]
   const [rashi, setRashi] = useState(null);
   const [poojaPurposes, setPoojaPurposes] = useState(null); // [{key,label}]
   const [saving, setSaving] = useState("");
 
   useEffect(() => {
-    if (canContent) api.get("/admin/site-content").then((r) => { setAnnounce(r.data.announcement); setFooter(r.data.footer); setHome(normHome(r.data.home)); setHeader(r.data.header); }).catch(() => {});
+    if (canContent) {
+      api.get("/admin/site-content").then((r) => {
+        setAnnounce(r.data.announcement); setFooter(r.data.footer);
+        setHome(normHome(r.data.home)); setHeader(r.data.header);
+        setVideosContent(r.data.shoppable_videos);
+      }).catch(() => {});
+      api.get("/products?limit=500").then((r) => setProducts(r.data)).catch(() => {});
+    }
     if (canTax) api.get("/admin/taxonomy").then((r) => { setPurposes(r.data.purposes); setRashi(r.data.rashi); setPoojaPurposes(r.data.pooja_purposes); }).catch(() => {});
   }, [canContent, canTax]);
 
@@ -110,6 +119,13 @@ export default function AdminWebsite() {
   const { field: hfield, addBtn: haddBtn, rmBtn: hrmBtn } = makeEditor(header, setHeader);
   const headerSave = <SaveBtn saving={saving === "header"} onClick={() => save("header", "/admin/site-content/header", header)} />;
   const VERIFY_STYLES = ["text", "outline", "solid"];
+
+  // ── Shoppable videos (homepage autoplay carousel) ──
+  const { field: vfield, addBtn: vaddBtn, rmBtn: vrmBtn } = makeEditor(videosContent, setVideosContent);
+  const videosSave = <SaveBtn saving={saving === "shoppable_videos"} onClick={() => save("shoppable_videos", "/admin/site-content/shoppable_videos", videosContent)} />;
+  const setVideoProduct = (i, product_id) => setVideosContent((v) => ({
+    ...v, videos: v.videos.map((it, j) => (j === i ? { ...it, product_id } : it)),
+  }));
 
   const taxEditor = (label, list, setter, url, saveKey, opts = {}) => (
     <Section
@@ -226,6 +242,44 @@ export default function AdminWebsite() {
           </Section>
 
           <div className="flex justify-end mb-10">{headerSave}</div>
+        </>
+      )}
+
+      {/* Shoppable videos — homepage autoplay carousel */}
+      {canContent && videosContent && (
+        <>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-display text-2xl text-maroon-deep">Shoppable videos</h2>
+            {videosSave}
+          </div>
+
+          <Section title="Section heading">
+            <div className="grid md:grid-cols-2 gap-4 max-w-3xl">
+              {vfield("Title", ["title"])}
+              {vfield("Subtitle", ["subtitle"])}
+            </div>
+          </Section>
+
+          <Section title="Videos" hint="Each video autoplays (muted) on the homepage and links to one product — pick which one from your live catalog; its photo and price always come from the product itself, never typed here.">
+            <div className="space-y-3">
+              {(videosContent.videos || []).map((v, i) => (
+                <div key={i} className="gold-line bg-cream p-3 grid md:grid-cols-[2fr_2fr_1fr] gap-3 items-start">
+                  {vfield("Video URL (mp4)", ["videos", i, "video_url"], { ph: "https://…", cls: " font-mono text-xs" })}
+                  <label className="block">
+                    <div className="text-xs text-ink-muted mb-1">Product</div>
+                    <select value={v.product_id || ""} onChange={(e) => setVideoProduct(i, e.target.value)} className={inputCls}>
+                      <option value="">— choose a product —</option>
+                      {products.map((p) => <option key={p.product_id} value={p.product_id}>{p.name}</option>)}
+                    </select>
+                  </label>
+                  <div className="flex items-end justify-end h-full">{vrmBtn(["videos"], i)}</div>
+                </div>
+              ))}
+            </div>
+            {vaddBtn(["videos"], { video_url: "", product_id: "" }, "Add video")}
+          </Section>
+
+          <div className="flex justify-end mb-10">{videosSave}</div>
         </>
       )}
 
