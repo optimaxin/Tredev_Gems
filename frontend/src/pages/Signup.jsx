@@ -30,7 +30,20 @@ export default function Signup() {
   const set = (k) => (e) => setForm((x) => ({ ...x, [k]: e.target.value }));
   const checkEmail = (v) => setEmailErr(v && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) ? "Enter a valid email address" : "");
 
-  const onVerified = (p, token) => {
+  // The mirror of Login's onFbVerified. /auth/firebase-verify returns a
+  // { session } whenever that phone already belongs to a verified account — so an
+  // existing customer who lands on Signup by mistake is just logged in, rather than
+  // being asked to build an account they already have (which then fails on
+  // "Email already registered", or worse, on a different email quietly makes a
+  // second account against the same number).
+  const onVerified = async (p, token, session) => {
+    if (session?.token) {
+      localStorage.setItem("gemora_jwt", session.token);
+      await refresh();
+      toast.success("Welcome back — you already have an account");
+      nav(dest);
+      return;
+    }
     setPhone(p); setOtpToken(token); setStep(2);
   };
 

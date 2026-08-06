@@ -1,0 +1,25 @@
+# Keeps the build context small and fast, and stops stale local artifacts
+# (a 744MB backend/venv, a 1.2GB frontend/node_modules) from ever being sent to
+# the Docker daemon or copied into the image.
+
+.git
+.gitignore
+
+# Frontend deploys separately (Vercel) — not needed for this backend image at all.
+frontend/
+
+# Backend: local dev virtualenv and caches — the image installs its own deps
+# fresh from requirements.txt.
+backend/venv/
+backend/**/__pycache__/
+backend/**/*.pyc
+backend/.pytest_cache/
+
+# OpenWA gateway: any locally-installed deps/build output — the image builds
+# these fresh in the openwa-builder/openwa-deps stages.
+services/openwa/node_modules/
+services/openwa/dashboard/node_modules/
+services/openwa/dist/
+services/openwa/dashboard/dist/
+
+**/.DS_Store

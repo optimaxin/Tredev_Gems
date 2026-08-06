@@ -16,9 +16,19 @@ non-zero ban risk. Never point this at a number whose loss would break auth —
 Tredev's phone verification runs on Firebase, not WhatsApp, precisely so a ban
 cannot lock customers out.
 
+DEPLOYMENT
+----------
+The gateway (services/openwa) runs in the SAME container as this backend, as a
+second process under supervisord (see /Dockerfile, /supervisord.conf) — not a
+separate Render service. That's why OPENWA_BASE_URL below is a bare loopback
+address: the gateway is never reachable over any network, private or public,
+only from this process via 127.0.0.1. If that ever changes back to a standalone
+deployment, this becomes a real network address again and the API key is what
+stands between the gateway and anyone who can reach it.
+
 CONFIG (backend/.env)
 ---------------------
-    OPENWA_BASE_URL        http://127.0.0.1:2785     (private; never public)
+    OPENWA_BASE_URL        http://127.0.0.1:2785     (loopback — see DEPLOYMENT above)
     OPENWA_API_KEY         owa_k1_...                (sent as X-API-Key)
     OPENWA_SESSION_ID      uuid of the paired session
     OPENWA_WEBHOOK_SECRET  shared secret for inbound HMAC verification

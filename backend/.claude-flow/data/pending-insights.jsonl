@@ -475,3 +475,7 @@
 {"type":"edit","file":"/Users/lubhanshsharma/Downloads/gemora-main-main/backend/server.py","success":true,"timestamp":1785947256563,"sessionId":null}
 {"type":"edit","file":"/Users/lubhanshsharma/Downloads/gemora-main-main/backend/server.py","success":true,"timestamp":1785947281841,"sessionId":null}
 {"type":"edit","file":"/Users/lubhanshsharma/Downloads/gemora-main-main/backend/server.py","success":true,"timestamp":1785947304026,"sessionId":null}
+{"type":"edit","file":"/Users/lubhanshsharma/Downloads/gemora-main-main/services/openwa/fly.toml","success":true,"timestamp":1785963114953,"sessionId":null}
+{"type":"edit","file":"/Users/lubhanshsharma/Downloads/gemora-main-main/services/Caddyfile","success":true,"timestamp":1785963479616,"sessionId":null}
+{"type":"edit","file":"/Users/lubhanshsharma/Downloads/gemora-main-main/docker-compose.openwa.caddy.yml","success":true,"timestamp":1785963516853,"sessionId":null}
+{"type":"edit","file":"/Users/lubhanshsharma/Downloads/gemora-main-main/backend/server.py","success":true,"timestamp":1786001066834,"sessionId":null}

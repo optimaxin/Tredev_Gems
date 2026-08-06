@@ -296,17 +296,25 @@ def _otp_provider() -> str:
 
 
 def normalize_phone(phone: str) -> str:
-    """Return an E.164-formatted phone. Assumes +91 for bare 10-digit Indian numbers."""
+    """Return an E.164-formatted phone. Assumes +91 for bare 10-digit Indian numbers.
+
+    A leading zero is always stripped, including after a "+". No country code
+    begins with 0, so "+07060065326" is not a valid E.164 number — it is someone
+    typing the domestic trunk prefix ("07060065326") into a field that prepends
+    "+". Returning that unchanged (as this did) stores a number Firebase can never
+    match: Firebase always hands back true E.164, so the lookup in
+    /auth/firebase-verify misses, no session is issued, and an existing customer is
+    pushed through signup again — creating a second account on the same number.
+    """
     p = re.sub(r"[^0-9+]", "", phone or "")
     if not p:
         raise HTTPException(400, "Phone number required")
-    if p.startswith("+"):
-        return p
-    if len(p) == 10:
-        return f"+91{p}"
-    if len(p) == 12 and p.startswith("91"):
-        return f"+{p}"
-    return f"+{p}"
+    digits = p.lstrip("+").lstrip("0")
+    if not digits:
+        raise HTTPException(400, "Phone number required")
+    if len(digits) == 10:
+        return f"+91{digits}"
+    return f"+{digits}"
 
 
 async def _store_local_otp(phone: str, code: str) -> None:
