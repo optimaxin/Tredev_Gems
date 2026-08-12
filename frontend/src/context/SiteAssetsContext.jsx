@@ -36,7 +36,12 @@ function readCachedAssets() {
 // How long a first-time visitor (no cache) will wait for the real image map before
 // we give up and render with defaults. Keeps a slow/unreachable API from hanging the
 // page while still avoiding the placeholder→real swap in the normal case.
-const FIRST_PAINT_TIMEOUT_MS = 1500;
+// 1.5s was too tight for real-world latency (cross-region requests, cold TLS on a
+// fresh visit) — the timeout kept firing before /site-assets returned, so visitors
+// saw the hardcoded stock images paint first and then swap once the slow response
+// finally landed. 5s covers realistic worst-case latency without hanging forever
+// if the API is genuinely unreachable.
+const FIRST_PAINT_TIMEOUT_MS = 5000;
 
 export function SiteAssetsProvider({ children }) {
   // Lazy initialiser runs synchronously before first paint — no flash on refresh.
