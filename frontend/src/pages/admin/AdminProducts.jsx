@@ -13,7 +13,10 @@ const EMPTY = {
   images: [], devanagari_name: "", attrs: "{}", quantity: "", care_instructions: "",
   groups: [], // option groups, seeded from the category template
   shipping_charges: [], // [{region, amount}] — USD, outside-India only
+  hsn_code: "", gst_rate_bp: "", uqc: "", // gst_rate_bp is edited as a percentage here
 };
+
+const UQC_OPTIONS = ["PCS", "NOS", "GMS", "CTM", "SET", "PAC"];
 
 // Surcharges travel as paise/cents; the form edits rupees/dollars.
 const groupsToForm = (groups) =>
@@ -106,6 +109,10 @@ export default function AdminProducts() {
       price: p.price != null ? (p.price / 100).toString() : "",
       price_usd: p.price_usd != null ? (p.price_usd / 100).toString() : "",
       mrp: p.mrp != null ? (p.mrp / 100).toString() : "",
+      // Stored in basis points; the form edits percent.
+      hsn_code: p.hsn_code || "",
+      gst_rate_bp: p.gst_rate_bp != null ? (p.gst_rate_bp / 100).toString() : "",
+      uqc: p.uqc || "",
       images: p.images || [],
       attrs: JSON.stringify(p.attrs || {}, null, 2),
       care_instructions: (p.care_instructions || []).join("\n"),
@@ -163,12 +170,22 @@ export default function AdminProducts() {
         if (isNaN(n) || n < 0) throw new Error("Enter a valid USD price");
         return Math.round(n * 100);
       };
+      // The form edits a percentage (3, 0.25, 12); the API stores basis points.
+      const percentToBp = (v) => {
+        if (v === "" || v == null) return null;
+        const n = Number(v);
+        if (isNaN(n) || n < 0) throw new Error("Enter a valid GST rate in percent");
+        return Math.round(n * 100);
+      };
       const { groups, shipping_charges, ...rest } = form;
       const payload = {
         ...rest,
         price: rupeesToPaise(form.price) || 0,
         price_usd: priceUsdToCents(form.price_usd),
         mrp: form.mrp ? rupeesToPaise(form.mrp) : null,
+        hsn_code: form.hsn_code.trim() || null,
+        gst_rate_bp: percentToBp(form.gst_rate_bp),
+        uqc: form.uqc || null,
         // Region label -> USD amount (major unit, dollars — this is jsonb on the
         // product row, not paise like price/mrp above).
         shipping_charges: Object.fromEntries(
@@ -352,6 +369,47 @@ export default function AdminProducts() {
               </div>
             </label>
           )}
+
+          <div className="md:col-span-2 pt-2 border-t border-gold/20">
+            <div className="text-xs uppercase tracking-widest text-gold-soft mt-3 mb-2">GST / Tax</div>
+            <div className="text-[10px] text-ink-muted mb-3">
+              A product without all three of these set can't be invoiced — the tax invoice is blocked until they're filled in.
+            </div>
+            <div className="grid md:grid-cols-3 gap-4">
+              <label className="block">
+                <div className="text-xs text-ink-muted mb-1">HSN code</div>
+                <input
+                  value={form.hsn_code} onChange={(e) => setForm({ ...form, hsn_code: e.target.value })}
+                  maxLength={8} placeholder="e.g. 71031029" data-testid="product-hsn-code-input"
+                  className="w-full gold-line px-3 py-2 outline-none focus:border-maroon"
+                />
+              </label>
+              <label className="block">
+                <div className="text-xs text-ink-muted mb-1">GST rate (%)</div>
+                <div className="flex gold-line bg-ivory overflow-hidden focus-within:border-maroon">
+                  <input
+                    type="number" min="0" step="0.01" inputMode="decimal"
+                    value={form.gst_rate_bp} onChange={(e) => setForm({ ...form, gst_rate_bp: e.target.value })}
+                    placeholder="e.g. 3" data-testid="product-gst-rate-input"
+                    className="flex-1 px-3 py-2 outline-none"
+                  />
+                  <span className="px-3 py-2 bg-cream text-ink-soft border-l border-gold/30 font-serifd">%</span>
+                </div>
+                {form.gst_rate_bp !== "" && !isNaN(Number(form.gst_rate_bp)) && (
+                  <div className="text-[10px] font-mono text-ink-muted mt-1">
+                    = {Math.round(Number(form.gst_rate_bp) * 100)} basis points (stored)
+                  </div>
+                )}
+              </label>
+              <label className="block">
+                <div className="text-xs text-ink-muted mb-1">Unit (UQC)</div>
+                <select value={form.uqc} onChange={(e) => setForm({ ...form, uqc: e.target.value })} data-testid="product-uqc-select" className="w-full gold-line px-3 py-2 bg-ivory">
+                  <option value="">—</option>
+                  {UQC_OPTIONS.map((u) => <option key={u} value={u}>{u}</option>)}
+                </select>
+              </label>
+            </div>
+          </div>
 
           {/* Pricing options — which selectors appear is driven by the category */}
           <div className="md:col-span-2 pt-2 border-t border-gold/20">

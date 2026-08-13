@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { api, describeOptions } from "@/lib/api";
+import { api, describeOptions, openInvoice, apiErrorMessage } from "@/lib/api";
 // Orders are placed in INR or USD, so every amount here renders against the
 // currency stored on its own order — never a hardcoded ₹.
 import { formatPrice } from "@/lib/currency";
@@ -68,6 +68,7 @@ export default function AdminOrders() {
   const [detailFor, setDetailFor] = useState(null); // order shown in the expanded detail modal
   const [detailCustomer, setDetailCustomer] = useState(null);
   const [detailCustomerLoading, setDetailCustomerLoading] = useState(false);
+  const [invoicing, setInvoicing] = useState(false);
 
   const refresh = () => api.get("/admin/orders").then((r) => setOrders(r.data));
   useEffect(() => { refresh(); }, []);
@@ -76,12 +77,34 @@ export default function AdminOrders() {
     const prevOrders = orders;
     setOrders((cur) => cur.map((o) => (o.order_id === order_id ? { ...o, status } : o)));
     try {
-      await api.patch(`/admin/orders/${order_id}/status`, { status });
+      const { data } = await api.patch(`/admin/orders/${order_id}/status`, { status });
       toast.success(`Order ${status}`);
+      // Delivery generates the tax invoice. If that part failed the status change
+      // still stands — surface the reason so staff can fix the data and retry.
+      if (data?.invoice_error) toast.error(data.invoice_error, { duration: 15000 });
+      refresh();
     } catch (e) {
       setOrders(prevOrders);
       toast.error(e.response?.data?.detail || "Could not update order status");
     }
+  };
+
+  const viewInvoice = async (order_id) => {
+    const r = await openInvoice(`/admin/orders/${order_id}/invoice`);
+    if (!r.ok) toast.error(r.blocked ? "Allow popups for this site to view the invoice." : r.error);
+  };
+
+  const generateInvoice = async (order_id) => {
+    setInvoicing(true);
+    try {
+      await api.post(`/admin/orders/${order_id}/invoice`);
+      toast.success("Invoice generated");
+      await refresh();
+    } catch (e) {
+      // The server's message names the exact missing field (HSN / GST rate / UQC),
+      // so it's shown verbatim rather than a generic failure line.
+      toast.error(apiErrorMessage(e, "Could not generate the invoice"), { duration: 15000 });
+    } finally { setInvoicing(false); }
   };
 
   const removeOrder = async (order_id) => {
@@ -359,6 +382,37 @@ export default function AdminOrders() {
                     <span className="font-display text-2xl text-maroon-deep">{formatPrice(detail.total, detail.currency)}</span>
                   </div>
                 </div>
+
+                {detail.buyer_gstin && (
+                  <div className="mt-3 pt-3 border-t border-gold/30" data-testid="detail-gst">
+                    <div className="text-xs uppercase tracking-widest text-ink-muted mb-1">GST / B2B</div>
+                    <div className="text-sm font-mono text-ink">{detail.buyer_gstin}</div>
+                    {detail.buyer_legal_name && <div className="text-sm text-ink-soft mt-0.5">{detail.buyer_legal_name}</div>}
+                  </div>
+                )}
+
+                {detail.invoice_number ? (
+                  <div className="mt-3">
+                    <button
+                      onClick={() => viewInvoice(detail.order_id)}
+                      data-testid={`detail-invoice-view-${detail.order_id}`}
+                      className="text-xs uppercase tracking-widest border border-maroon text-maroon px-4 py-2 inline-flex items-center gap-1.5 hover:bg-maroon hover:text-ivory transition-colors"
+                    >
+                      <Receipt size={13} weight="duotone" /> View / print invoice
+                    </button>
+                    <div className="text-[10px] font-mono text-ink-muted mt-1">{detail.invoice_number}</div>
+                  </div>
+                ) : detail.status === "delivered" && (
+                  <AsyncButton
+                    loading={invoicing}
+                    loadingText="Generating…"
+                    onClick={() => generateInvoice(detail.order_id)}
+                    data-testid={`detail-invoice-generate-${detail.order_id}`}
+                    className="mt-3 text-xs uppercase tracking-widest border border-maroon text-maroon px-4 py-2 inline-flex items-center gap-1.5 hover:bg-maroon hover:text-ivory transition-colors disabled:opacity-50"
+                  >
+                    <Receipt size={13} weight="duotone" /> Generate invoice
+                  </AsyncButton>
+                )}
               </div>
 
               {/* Fulfilment */}

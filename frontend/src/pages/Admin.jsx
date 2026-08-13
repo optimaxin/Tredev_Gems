@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import {
   ChartBar, Package, Stack, Certificate as CertIcon, Truck, SquaresFour, Sparkle, Calendar,
   ChatCircleDots, UsersFour, ShieldStar, ArrowLeft, WhatsappLogo, Image as ImageIcon, MegaphoneSimple, PaintBrush,
-  ArrowsClockwise, Diamond, Browser, Star, Notebook, ClockCounterClockwise, Fire, Tag,
+  ArrowsClockwise, Diamond, Browser, Star, Notebook, ClockCounterClockwise, Fire, Tag, Receipt,
 } from "@phosphor-icons/react";
 
 import AdminDashboard from "@/pages/admin/AdminDashboard";
@@ -31,6 +31,7 @@ import AdminEvents from "@/pages/admin/AdminEvents";
 import AdminLogs from "@/pages/admin/AdminLogs";
 import AdminLeads from "@/pages/admin/AdminLeads";
 import AdminCoupons from "@/pages/admin/AdminCoupons";
+import AdminInvoiceSettings from "@/pages/admin/AdminInvoiceSettings";
 
 const NAV_ITEMS = [
   { to: "dashboard", label: "Dashboard", Icon: ChartBar, ownerOnly: true },
@@ -40,6 +41,7 @@ const NAV_ITEMS = [
   { to: "certificates", label: "Certificates", Icon: CertIcon, perm: "certificates" },
   { to: "orders", label: "Orders", Icon: Truck, perm: "orders" },
   { to: "leads", label: "Leads", Icon: Fire, perm: "orders" },
+  { to: "invoice-settings", label: "Invoice Settings", Icon: Receipt, perm: "orders" },
   { to: "categories", label: "Categories", Icon: SquaresFour, perm: "categories" },
   { to: "coupons", label: "Coupons", Icon: Tag, perm: "coupons" },
   { to: "media", label: "Media", Icon: ImageIcon, adminAny: true },
@@ -145,6 +147,7 @@ export default function Admin() {
           <Route path="certificates" element={<AdminCerts />} />
           <Route path="orders" element={<AdminOrders />} />
           <Route path="leads" element={<AdminLeads />} />
+          <Route path="invoice-settings" element={<AdminInvoiceSettings />} />
           <Route path="categories" element={<AdminCategories />} />
           <Route path="coupons" element={<AdminCoupons />} />
           <Route path="media" element={<AdminMedia />} />

@@ -47,6 +47,10 @@ import db  # Postgres/Supabase access layer — see backend/MIGRATION.md
 import coupons as coupon_rules  # Coupon rules engine — see .claude/promo_code_feature.md
 import storage_sb  # Supabase Storage — replaces the Emergent object store
 import rudraksha_calc  # Lucky Rudraksha calculator — Swiss Ephemeris + moon-sign matrix
+# Aliased: checkout() has a local `gst` (the order's tax total), which would
+# shadow the module inside that function.
+import gst as gst_engine  # Pure GST tax engine — see .claude/invoice.md §5
+import invoice as invoicing  # Invoice numbering / persistence / HTML render
 from circuit import CircuitOpenError, get_circuit
 import respcache
 from pydantic import BaseModel, EmailStr, Field, field_validator
@@ -703,6 +707,12 @@ class ProductIn(BaseModel):
     care_instructions: List[str] = []  # rendered as bullet points on the product page
     # Omitted -> the category's template is used as-is (all surcharges at 0).
     variant_options: Optional[VariantOptionsIn] = None
+    # GST tax master (.claude/invoice.md §6). Left unset on purpose rather than
+    # defaulted: a plausible-looking wrong rate renders cleanly and silently
+    # mis-taxes every sale, so invoicing hard-blocks until these are filled in.
+    hsn_code: Optional[str] = None
+    gst_rate_bp: Optional[int] = None  # basis points: 3% -> 300, 0.25% -> 25
+    uqc: Optional[str] = None          # PCS / NOS / GMS / CTM / SET / PAC
 
 
 class UnitIn(BaseModel):
@@ -779,6 +789,12 @@ class CheckoutIn(BaseModel):
     # shipping region (_shipping_region_for_country) to look up each product's
     # shipping_charges dict. Ignored for INR (always free within India).
     shipping_country: Optional[str] = None
+    # Optional B2B details ("Have a GST number?" at checkout). When supplied, the
+    # invoice is issued as B2B and prints the buyer's GSTIN, which is what lets
+    # them claim input tax credit. Validated (format + checksum) before the order
+    # is created — a typo'd GSTIN on a statutory document is not fixable later.
+    buyer_gstin: Optional[str] = None
+    buyer_legal_name: Optional[str] = None
 
 
 class DispatchIn(BaseModel):
@@ -1523,6 +1539,9 @@ _PRODUCT_SELECT = """
            p.attributes                            AS attributes,
            COALESCE(p.care_instructions, ARRAY[]::text[]) AS care_instructions,
            p.variant_options                       AS variant_options,
+           p.hsn_code                              AS hsn_code,
+           p.gst_rate_bp                           AS gst_rate_bp,
+           p.uqc                                   AS uqc,
            p.created_at                            AS created_at,
            COALESCE(m.urls, ARRAY[]::text[])       AS images,
            g.planet_graha::text                    AS g_graha,
@@ -2304,6 +2323,65 @@ async def _upsert_content(key: str, value) -> None:
     respcache.invalidate("categories")
 
 
+# ── Invoice settings (§2 supplier master data, admin-editable) ───────────────
+# Stored in site_content under its own key but deliberately NOT in
+# _CONTENT_DEFAULTS: that dict drives the PUBLIC /site-content payload, and the
+# supplier's PAN/CIN have no business being in an unauthenticated response.
+_INVOICE_SETTINGS_KEY = "invoice_settings"
+
+
+async def _invoice_settings() -> dict:
+    """Current supplier master data — stored overrides merged over the defaults."""
+    stored = await db.fetch_val("SELECT value FROM site_content WHERE key = $1",
+                                _INVOICE_SETTINGS_KEY)
+    if isinstance(stored, str):
+        try:
+            stored = json.loads(stored)
+        except (ValueError, TypeError):
+            stored = None
+    return {**invoicing.DEFAULT_SETTINGS, **(stored or {})}
+
+
+@api.get("/admin/invoice-settings")
+async def admin_get_invoice_settings(_: str = Depends(require_perm("orders"))):
+    return await _invoice_settings()
+
+
+@api.put("/admin/invoice-settings")
+async def admin_put_invoice_settings(body: SiteContentIn,
+                                     actor: str = Depends(require_perm("orders"))):
+    value = body.value
+    if not isinstance(value, dict):
+        raise HTTPException(400, "Invoice settings must be an object")
+    merged = {**invoicing.DEFAULT_SETTINGS, **value}
+
+    # A wrong supplier state silently produces wrong CGST/SGST-vs-IGST on every
+    # future invoice, so both of these fail loudly at save time rather than
+    # quietly corrupting documents that are already legally binding (§2).
+    gstin = (merged.get("gstin") or "").strip().upper()
+    if gstin and not gst_engine.valid_gstin(gstin):
+        raise HTTPException(400, f"'{gstin}' is not a valid GSTIN.")
+    state_code = (merged.get("state_code") or "").strip()
+    if gstin and state_code and gstin[:2] != state_code:
+        raise HTTPException(
+            400, f"State code '{state_code}' does not match the GSTIN's state "
+                 f"prefix '{gstin[:2]}'.")
+    if state_code and state_code not in gst_engine.STATES:
+        raise HTTPException(400, f"Unknown GST state code '{state_code}'.")
+    prefix = (merged.get("invoice_prefix") or "").strip().upper()
+    if not re.match(r"^[A-Z]{2,4}$", prefix):
+        raise HTTPException(400, "Invoice prefix must be 2-4 letters (e.g. TRE).")
+    merged["gstin"], merged["state_code"], merged["invoice_prefix"] = (
+        gstin, state_code, prefix)
+
+    await db.execute(
+        """INSERT INTO site_content (key, value, updated_at) VALUES ($1,$2::jsonb, now())
+           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()""",
+        _INVOICE_SETTINGS_KEY, json.dumps(merged))
+    await audit_log(actor, "invoice_settings.update", _INVOICE_SETTINGS_KEY, {})
+    return merged
+
+
 @api.get("/admin/site-content")
 async def admin_site_content(_: str = Depends(require_perm("content"))):
     """Announcement + footer content for the Website editor, each with its current
@@ -2833,9 +2911,10 @@ async def admin_create_product(p: ProductIn, user_id: str = Depends(require_admi
                         title_devanagari, slug, description, base_price, price_usd,
                         compare_at_price, currency, is_serialized, attributes,
                         shipping_charges, care_instructions,
-                        variant_options, status, published_at)
+                        variant_options, status, published_at,
+                        hsn_code, gst_rate_bp, uqc)
                    VALUES ($1,$2::uuid,$3::category_key,$4,$5,$6::citext,$7,$8,$9,$10,'INR',$11,
-                           $12,$13,$14,$15,'active', now())""",
+                           $12,$13,$14,$15,'active', now(),$16,$17,$18)""",
                 pid, cat_id, ck, p.name, p.devanagari_name, p.slug, p.description,
                 db.to_amount(p.price), db.to_amount(p.price_usd), db.to_amount(p.mrp), p.is_serialized,
                 p.attrs or {}, p.shipping_charges or {},
@@ -2846,7 +2925,9 @@ async def admin_create_product(p: ProductIn, user_id: str = Depends(require_admi
                 # single-choice groups get dropped).
                 _normalize_variant_options(
                     p.variant_options.model_dump() if p.variant_options is not None
-                    else _category_option_template(ck)))
+                    else _category_option_template(ck)),
+                (p.hsn_code or "").strip() or None, p.gst_rate_bp,
+                (p.uqc or "").strip().upper() or None)
             # cart_items/order_items require a variant, so every product needs one.
             variant_id = uuid.uuid4()
             await conn.execute(
@@ -3600,6 +3681,8 @@ _ORDER_SELECT = """
            o.coupon_breakdown            AS coupon_breakdown,
            o.consultation_credit_id::text AS consultation_credit_id,
            o.currency                    AS currency,
+           o.buyer_gstin                 AS buyer_gstin,
+           o.buyer_legal_name            AS buyer_legal_name,
            o.status::text                AS status_db,
            o.affiliate_code::text        AS affiliate_code,
            o.affiliate_astrologer_id::text AS affiliate_astrologer_id,
@@ -3620,9 +3703,18 @@ _ORDER_SELECT = """
            sh.carrier             AS courier,
            sh.shipped_at          AS shipped_at,
            sh.estimated_delivery_date AS estimated_delivery_date,
-           cm.id::text            AS commission_id
+           cm.id::text            AS commission_id,
+           -- Lateral, not a per-order lookup: the list endpoints shape many orders
+           -- at once and a second query per row would reintroduce an N+1.
+           inv.invoice_number     AS invoice_number,
+           inv.issued_at          AS invoice_issued_at
       FROM orders o
       LEFT JOIN addresses a ON a.id = o.shipping_address_id
+      LEFT JOIN LATERAL (
+            SELECT invoice_number, issued_at FROM tax_invoices
+             WHERE order_id = o.id AND status = 'issued'
+             ORDER BY created_at LIMIT 1
+      ) inv ON true
       LEFT JOIN LATERAL (
             SELECT gateway_ref, gateway_payment_id, paid_at
               FROM payments WHERE order_id = o.id ORDER BY created_at DESC LIMIT 1
@@ -3771,6 +3863,19 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
     if not items:
         raise HTTPException(400, "Cart is empty")
 
+    # Optional B2B GSTIN. Rejected here rather than at invoicing time: by the time
+    # we issue the invoice the order is delivered and the number is unfixable, so a
+    # typo has to be caught while the buyer is still on the page to correct it.
+    buyer_gstin = (body.buyer_gstin or "").strip().upper() or None
+    buyer_legal_name = (body.buyer_legal_name or "").strip() or None
+    if buyer_gstin:
+        if not gst_engine.valid_gstin(buyer_gstin):
+            raise HTTPException(400, "That GST number doesn't look valid. Please "
+                                     "check it, or leave the field blank.")
+        if not buyer_legal_name:
+            raise HTTPException(400, "Enter the registered business name for the "
+                                     "GST number.")
+
     # Shipping is free within India; outside it, each distinct product in the cart
     # can carry its own USD charge per shipping region (admin-set on the product,
     # e.g. a heavier piece costing more to ship) — summed once per product, not per
@@ -3903,9 +4008,9 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
                     subtotal, discount_total, tax_total, shipping_total, grand_total,
                     shipping_address_id, billing_address_id, affiliate_code,
                     affiliate_astrologer_id, placed_at, consultation_credit_id,
-                    coupon_id, coupon_breakdown)
+                    coupon_id, coupon_breakdown, buyer_gstin, buyer_legal_name)
                VALUES ($1,$2::uuid,$3,'pending',$12,$4,$5,$6,$13,$7,$8,$8,$9::citext,$10::uuid, now(),$11::uuid,
-                       $14::uuid,$15::jsonb)""",
+                       $14::uuid,$15::jsonb,$16,$17)""",
             order_id, buyer_id, None,
             db.to_amount(subtotal), db.to_amount(discount), db.to_amount(gst), db.to_amount(total),
             addr_id, aff_ref if aff_astro_id else None, aff_astro_id,
@@ -3914,7 +4019,7 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
             # codec whose encoder is json.dumps, so pre-serialising here would store
             # a JSON *string* and record_redemptions would iterate its characters.
             # (The json_dumps calls elsewhere feed jsonb[] params, which differ.)
-            primary_coupon_id, coupon_breakdown)
+            primary_coupon_id, coupon_breakdown, buyer_gstin, buyer_legal_name)
 
         item_ids = [uuid.uuid4() for _ in items]
         product_ids = [li["product_id"] for li in items]
@@ -5552,6 +5657,9 @@ class ProductUpdateIn(BaseModel):
     care_instructions: Optional[List[str]] = None
     variant_options: Optional[VariantOptionsIn] = None
     shipping_charges: Optional[Dict[str, float]] = None  # region label -> USD amount
+    hsn_code: Optional[str] = None
+    gst_rate_bp: Optional[int] = None
+    uqc: Optional[str] = None
 
 
 class CategoryIn(BaseModel):
@@ -5872,8 +5980,17 @@ async def _purge_order_rows(conn, order_id: Optional[str] = None) -> None:
             f"DELETE FROM {tbl}" + (
                 " WHERE shipment_id IN (SELECT id FROM shipments WHERE order_id=$1::uuid)"
                 if one else ""), *args)
-    for tbl in ("payments", "shipments", "invoices", "order_events", "notifications",
-                "coupon_redemptions", "affiliate_commissions", "order_items"):
+    # tax_invoice_line_items/tax_invoice_audit_log hang off tax_invoices (not
+    # order_id directly), so they need the same subquery treatment as
+    # shipment_items above — deleted before the invoice row they reference.
+    for tbl in ("tax_invoice_line_items", "tax_invoice_audit_log"):
+        await conn.execute(
+            f"DELETE FROM {tbl}" + (
+                " WHERE invoice_id IN (SELECT id FROM tax_invoices WHERE order_id=$1::uuid)"
+                if one else ""), *args)
+    for tbl in ("payments", "shipments", "invoices", "tax_invoices", "order_events",
+                "notifications", "coupon_redemptions", "affiliate_commissions",
+                "order_items"):
         await conn.execute(f"DELETE FROM {tbl}{w()}", *args)
     await conn.execute("DELETE FROM orders" + (" WHERE id = $1::uuid" if one else ""), *args)
 
@@ -6206,6 +6323,9 @@ _PRODUCT_PATCH_COLS = {
     "care_instructions": ("care_instructions",
                           lambda v: [s.strip() for s in v if s and s.strip()]),
     "variant_options": ("variant_options", _normalize_variant_options),
+    "hsn_code": ("hsn_code", lambda v: (v or "").strip() or None),
+    "gst_rate_bp": ("gst_rate_bp", lambda v: v),
+    "uqc": ("uqc", lambda v: (v or "").strip().upper() or None),
 }
 
 
@@ -7106,6 +7226,21 @@ async def admin_update_order_status(order_id: str, body: OrderStatusIn, actor: s
     await audit_log(actor, "order.status_change", order_id,
                     {"from": prev["status"], "to": body.status})
 
+    # Delivery is what triggers the tax invoice. Deliberately OUTSIDE the status
+    # transaction: a blocked invoice (missing HSN, unresolvable state) must not
+    # roll back a delivery that genuinely happened. The reason is surfaced to the
+    # admin in the response so it can be fixed and re-issued, not silently lost.
+    invoice_error = None
+    if body.status == "delivered":
+        try:
+            await invoicing.generate_for_order(order_id, await _invoice_settings())
+        except invoicing.InvoiceBlocked as e:
+            invoice_error = str(e)
+            log.warning("invoice blocked for order %s: %s", order_id, e)
+        except Exception as e:  # noqa: BLE001 — never let invoicing break delivery
+            invoice_error = "Invoice generation failed. See server logs."
+            log.error("invoice generation failed for order %s: %s", order_id, e)
+
     # WhatsApp update on the transitions the buyer cares about. Shipped is handled by
     # the dispatch flow (which carries tracking), so it is not duplicated here.
     _WA_STATUS_EVENT = {"delivered": "order.delivered", "cancelled": "order.cancelled"}
@@ -7118,7 +7253,106 @@ async def admin_update_order_status(order_id: str, body: OrderStatusIn, actor: s
                            name=(buyer or {}).get("name") or prev.get("shipping_name") or "friend",
                            user_id=prev.get("user_id"),
                            variables={"order_id": order_id})
-    return await _load_order(order_id)
+    return {**(await _load_order(order_id)), "invoice_error": invoice_error}
+
+
+# ── Invoices (§10) ───────────────────────────────────────────────────────────
+async def _invoice_bundle(order_id: str) -> Optional[tuple[dict, list[dict], str]]:
+    """(invoice, lines, order_no) for an order, or None if none has been issued."""
+    inv = await db.fetch_one(
+        """SELECT i.*, o.order_no FROM tax_invoices i JOIN orders o ON o.id = i.order_id
+            WHERE i.order_id = $1::uuid AND i.status = 'issued'
+            ORDER BY i.created_at LIMIT 1""", order_id)
+    if not inv:
+        return None
+    lines = await db.fetch_all(
+        "SELECT * FROM tax_invoice_line_items WHERE invoice_id = $1::uuid ORDER BY line_no",
+        inv["id"])
+    return dict(inv), [dict(r) for r in lines], inv["order_no"]
+
+
+async def _log_invoice_access(invoice_id, actor_type: str, actor_id: str,
+                              request: Request) -> None:
+    await db.execute(
+        """INSERT INTO tax_invoice_audit_log (id, invoice_id, actor_type, actor_id,
+                                          action, ip, user_agent)
+           VALUES ($1,$2::uuid,$3,$4,'view',$5,$6)""",
+        uuid.uuid4(), invoice_id, actor_type, actor_id,
+        (request.client.host if request.client else None),
+        request.headers.get("user-agent", "")[:400])
+
+
+def _invoice_summary(inv: dict) -> dict:
+    return {"invoice_number": inv["invoice_number"], "issued_at": inv["issued_at"],
+            "grand_total": inv["grand_total_paise"], "currency": inv["currency"],
+            "supply_type": inv["supply_type"], "buyer_gstin": inv["buyer_gstin"],
+            "document_type": inv["document_type"]}
+
+
+@api.get("/orders/{order_id}/invoice")
+async def order_invoice(order_id: str, request: Request,
+                        user_id: str = Depends(require_user)):
+    """The buyer's own tax invoice, as a printable page.
+
+    Authorised on ORDER OWNERSHIP, never on knowing the invoice number: numbers
+    are sequential, so a number-keyed lookup would let anyone walk the whole
+    customer base's names, addresses and purchase history (§10.2).
+    """
+    owner = await db.fetch_val(
+        "SELECT user_id::text FROM orders WHERE id = $1::uuid", order_id)
+    if not owner:
+        raise HTTPException(404, "Order not found")
+    if owner != user_id:
+        raise HTTPException(404, "Order not found")  # not 403 — don't confirm it exists
+    bundle = await _invoice_bundle(order_id)
+    if not bundle:
+        raise HTTPException(404, "No invoice has been issued for this order yet. "
+                                 "Invoices are generated once the order is delivered.")
+    inv, lines, order_no = bundle
+    await _log_invoice_access(inv["id"], "user", user_id, request)
+    return FastAPIResponse(content=invoicing.render_html(inv, lines, order_no),
+                           media_type="text/html")
+
+
+@api.get("/admin/orders/{order_id}/invoice")
+async def admin_order_invoice(order_id: str, request: Request,
+                              actor: str = Depends(require_perm("orders"))):
+    bundle = await _invoice_bundle(order_id)
+    if not bundle:
+        raise HTTPException(404, "No invoice issued for this order yet.")
+    inv, lines, order_no = bundle
+    await _log_invoice_access(inv["id"], "admin", actor, request)
+    return FastAPIResponse(content=invoicing.render_html(inv, lines, order_no),
+                           media_type="text/html")
+
+
+@api.post("/admin/orders/{order_id}/invoice")
+async def admin_generate_invoice(order_id: str, actor: str = Depends(require_perm("orders"))):
+    """Manual re-try for an order whose invoice was blocked at delivery (e.g. the
+    product was missing an HSN code, now filled in). Idempotent — an order that
+    already has an invoice gets that same one back, never a second number."""
+    try:
+        inv = await invoicing.generate_for_order(order_id, await _invoice_settings())
+    except invoicing.InvoiceBlocked as e:
+        raise HTTPException(400, str(e))
+    await audit_log(actor, "invoice.generate", order_id,
+                    {"invoice_number": inv["invoice_number"]})
+    return _invoice_summary(inv)
+
+
+@api.get("/admin/invoices")
+async def admin_list_invoices(actor: str = Depends(require_perm("orders")),
+                              limit: int = 100, offset: int = 0):
+    rows = await db.fetch_all(
+        """SELECT i.invoice_number, i.issued_at, i.order_id::text AS order_id,
+                  o.order_no, i.buyer_name, i.buyer_gstin, i.b2b_or_b2c,
+                  i.supply_type, i.place_of_supply_name, i.currency,
+                  i.total_taxable_paise, i.total_cgst_paise, i.total_sgst_paise,
+                  i.total_igst_paise, i.grand_total_paise, i.status
+             FROM tax_invoices i JOIN orders o ON o.id = i.order_id
+            ORDER BY i.issued_at DESC LIMIT $1 OFFSET $2""",
+        min(max(limit, 1), 500), max(offset, 0))
+    return rows
 
 
 # --- User queries / support inbox (perm: queries) ----------------------------

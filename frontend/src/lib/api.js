@@ -98,6 +98,27 @@ export const mediaSrc = (ref) => {
   return `${process.env.REACT_APP_BACKEND_URL || ""}${ref}`;
 };
 
+// Invoices are served as a printable HTML page, not JSON. They can't be opened
+// with a plain window.open: auth is a Bearer token from localStorage, which the
+// browser would not attach to a top-level navigation. So fetch through the API
+// client (which does attach it) and write the document into the new tab.
+export async function openInvoice(path) {
+  // Opened synchronously, before the await — a window.open() after an async gap
+  // is treated as an unrequested popup and gets blocked.
+  const win = window.open("", "_blank");
+  try {
+    const { data } = await api.get(path, { responseType: "text" });
+    if (!win) return { ok: false, blocked: true };
+    win.document.open();
+    win.document.write(data);
+    win.document.close();
+    return { ok: true };
+  } catch (e) {
+    if (win) win.close();
+    return { ok: false, error: apiErrorMessage(e, "Could not open the invoice") };
+  }
+}
+
 // Journal post URLs are derived from the title (no manual link field) — same
 // title always yields the same /journal/<slug> path.
 export const slugify = (text) =>

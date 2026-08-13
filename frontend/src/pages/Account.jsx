@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { api, formatINR, describeOptions, apiErrorMessage, mediaSrc } from "@/lib/api";
+import { api, formatINR, describeOptions, apiErrorMessage, mediaSrc, openInvoice } from "@/lib/api";
 import { formatPrice } from "@/lib/currency";
 import { useAuth } from "@/context/AuthContext";
 import { ShieldCheck, Package, Heart, Certificate as CertIcon, ArrowRight, Phone, WhatsappLogo, Gear, PencilSimple, LockKey, ChatCircleDots, CaretDown, CaretUp, MapPin, Calendar, VideoCamera, Wallet, XCircle } from "@phosphor-icons/react";
@@ -61,6 +61,12 @@ export default function Account() {
     } finally {
       setCancellingId(null);
     }
+  };
+
+  const downloadInvoice = async (o) => {
+    const r = await openInvoice(`/orders/${o.order_id}/invoice`);
+    if (r.ok) return;
+    toast.error(r.blocked ? "Please allow popups to view your invoice" : (r.error || "Could not open the invoice"));
   };
 
   // "Pay now" for an unpaid order: re-initiates payment on the existing order, then
@@ -366,6 +372,21 @@ export default function Account() {
                         {[o.shipping?.shipping_city, o.shipping?.shipping_state, o.shipping?.shipping_pincode].filter(Boolean).join(", ")}
                       </div>
                     </div>
+                  </div>
+                )}
+
+                {o.invoice_number && (
+                  <div className="mt-5 pt-4 border-t border-gold/30 flex flex-wrap items-center justify-between gap-3">
+                    <div className="text-xs text-ink-muted">
+                      Tax invoice <span className="font-mono">{o.invoice_number}</span>
+                    </div>
+                    <button
+                      onClick={() => downloadInvoice(o)}
+                      data-testid={`order-invoice-${o.order_id}`}
+                      className="border border-maroon text-maroon px-6 py-3 text-xs uppercase tracking-widest inline-flex items-center gap-2 hover:bg-maroon hover:text-ivory transition-colors"
+                    >
+                      <CertIcon size={14} weight="duotone" /> Download invoice
+                    </button>
                   </div>
                 )}
 

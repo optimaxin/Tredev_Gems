@@ -38,8 +38,10 @@ export default function Checkout() {
     shipping_name: "", shipping_phone: "", shipping_address: "",
     shipping_city: "", shipping_state: "", shipping_pincode: "", email: "",
     shipping_country: "", // required for a USD (outside-India) checkout only
+    buyer_gstin: "", buyer_legal_name: "", // optional — a B2B tax invoice
   });
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const [gstOpen, setGstOpen] = useState(false);
   const [pinLookup, setPinLookup] = useState("");  // "", "loading", "ok", "notfound"
   const currency = cart.currency || "INR";
 
@@ -234,6 +236,55 @@ export default function Checkout() {
                 {SHIPPING_COUNTRIES.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
               </select>
             </label>
+          )}
+
+          <div className="pt-2">
+            <button
+              type="button"
+              data-testid="checkout-gst-toggle"
+              // Collapsing clears both so the order goes back to being a plain B2C one.
+              onClick={() => {
+                setGstOpen((o) => !o);
+                if (gstOpen) setForm((f) => ({ ...f, buyer_gstin: "", buyer_legal_name: "" }));
+              }}
+              className="text-xs text-ink-muted underline underline-offset-4 hover:text-maroon"
+            >
+              Have a GST number? (optional)
+            </button>
+          </div>
+          {gstOpen && (
+            <>
+              <label className="block">
+                <div className="text-xs text-ink-muted mb-1 flex items-center gap-2">
+                  GST Number (GSTIN)
+                  {form.buyer_gstin && form.buyer_gstin.length !== 15 && (
+                    <span className="text-[10px] text-revoked">a GSTIN is 15 characters</span>
+                  )}
+                </div>
+                <input
+                  data-testid="checkout-buyer_gstin"
+                  value={form.buyer_gstin}
+                  onChange={(e) => setForm((f) => ({ ...f, buyer_gstin: e.target.value.toUpperCase() }))}
+                  type="text"
+                  maxLength={15}
+                  placeholder="09AAECO5418P1ZV"
+                  className="w-full gold-line bg-ivory px-4 py-3 outline-none focus:border-maroon"
+                />
+              </label>
+              <label className="block">
+                <div className="text-xs text-ink-muted mb-1">Registered Business Name</div>
+                <input
+                  data-testid="checkout-buyer_legal_name"
+                  value={form.buyer_legal_name}
+                  onChange={set("buyer_legal_name")}
+                  type="text"
+                  className="w-full gold-line bg-ivory px-4 py-3 outline-none focus:border-maroon"
+                />
+              </label>
+              <div className="text-[11px] text-ink-muted">
+                Entering a GSTIN puts it on the tax invoice so the business can claim input tax credit.
+              </div>
+            </>
           )}
         </div>
 
