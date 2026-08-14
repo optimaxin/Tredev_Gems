@@ -51,6 +51,7 @@ import rudraksha_calc  # Lucky Rudraksha calculator — Swiss Ephemeris + moon-s
 # shadow the module inside that function.
 import gst as gst_engine  # Pure GST tax engine — see .claude/invoice.md §5
 import invoice as invoicing  # Invoice numbering / persistence / HTML render
+import image_tools  # Upload compression — shared with backfill_compress_media.py
 from circuit import CircuitOpenError, get_circuit
 import respcache
 from pydantic import BaseModel, EmailStr, Field, field_validator
@@ -7551,33 +7552,12 @@ _MIME = {
     "gif": "image/gif", "webp": "image/webp", "svg": "image/svg+xml",
     "pdf": "application/pdf",
 }
-_MAX_IMAGE_DIM = 2000  # px, longest side
+# Compression itself lives in image_tools.py (no FastAPI/DB deps) so it can be
+# reused by backfill_compress_media.py, which recompresses objects uploaded
+# before this feature existed — see that script for why that backfill matters.
+_compress_image = image_tools.compress_image
 
 
-def _compress_image(data: bytes, ct: str, ext: str) -> tuple[bytes, str, str]:
-    """Downscale oversized images and re-encode as JPEG to cut load time.
-    GIF/SVG pass through untouched (animation/vector would break on re-encode).
-    Falls back to the original bytes if Pillow can't decode the file."""
-    if ct in ("image/gif", "image/svg+xml"):
-        return data, ct, ext
-    from PIL import Image
-    try:
-        img = Image.open(io.BytesIO(data))
-        img.load()
-    except Exception:
-        return data, ct, ext
-    if img.mode in ("RGBA", "P", "LA"):
-        img = img.convert("RGBA") if "A" in img.mode else img.convert("RGB")
-    else:
-        img = img.convert("RGB")
-    if max(img.size) > _MAX_IMAGE_DIM:
-        img.thumbnail((_MAX_IMAGE_DIM, _MAX_IMAGE_DIM), Image.LANCZOS)
-    out = io.BytesIO()
-    img.save(out, format="JPEG", quality=80, optimize=True)
-    compressed = out.getvalue()
-    if len(compressed) >= len(data):
-        return data, ct, ext
-    return compressed, "image/jpeg", "jpg"
 async def _storage_put(path: str, data: bytes, content_type: str) -> dict:
     if not storage_sb.configured():
         raise HTTPException(
