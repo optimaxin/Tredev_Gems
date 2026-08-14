@@ -1880,6 +1880,12 @@ _DEFAULT_FOOTER = {
             {"label": "Kolkata · Mumbai · Varanasi", "href": ""},
             {"label": "hello@gemora.in", "href": "mailto:hello@gemora.in"},
             {"label": "+91 90-000-000-00", "href": ""},
+            # Must mirror frontend/src/components/gemora/Footer.jsx's DEFAULT_FOOTER
+            # exactly. The admin editor (AdminWebsite.jsx) loads THIS object, not the
+            # frontend's — saving it as-is without these would silently drop both
+            # legal links from the live footer the moment an admin ever hits Save.
+            {"label": "Privacy Policy", "href": "/privacy-policy"},
+            {"label": "Terms & Conditions", "href": "/terms-and-conditions"},
         ]},
     ],
     "copyright": "An honest house for sacred things · Made with care in India",
