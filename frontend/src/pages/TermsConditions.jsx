@@ -99,9 +99,9 @@ const SECTIONS = [
         <li>
           If an item arrives damaged, defective, or different from what you ordered, contact us via Account
           → Support as soon as possible, ideally with photos or an unboxing video — this helps us resolve it
-          quickly given these are verified, serialised items.{" "}
-          <em>Our exact return/replacement window is being finalised internally — please check Account →
-          Support or contact us for the current policy rather than assuming a specific number of days.</em>
+          quickly given these are verified, serialised items. See our{" "}
+          <Link to="/refunds-and-cancellations" className={linkCls}>Refunds &amp; Cancellations</Link> policy
+          for the exact return window and process.
         </li>
         <li>Approved refunds are returned to your original payment method and typically reflect within 5–7 business days, depending on your bank.</li>
         <li>Items that have been temple-energised (puja performed) or customised at your request may not be eligible for return once the service has been carried out, except where the item itself is defective.</li>
