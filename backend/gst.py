@@ -316,6 +316,16 @@ def _demo() -> None:
     assert r["supply_type"] == SUPPLY_INTER
     assert r["total_igst_paise"] == 3000 and r["total_cgst_paise"] == 0, r
 
+    # 2b. Exclusive pricing (tax added on top, not extracted from the price) — the
+    # model some legacy orders used before the store switched to inclusive prices.
+    # Real case: order TDV-20260720-72, ₹18,500 subtotal + ₹555 (3%) GST = ₹19,055.
+    r = compute_invoice([{"qty": 1, "unit_price_paise": 1850000, "gst_rate_bp": 300}],
+                        supplier_state_code=UP, place_of_supply_code=UP,
+                        prices_include_tax=False)
+    assert r["total_taxable_paise"] == 1850000, r          # unchanged — nothing to extract
+    assert r["total_cgst_paise"] == 27750 and r["total_sgst_paise"] == 27750, r
+    assert r["grand_total_paise"] == 1905500, r             # 18500 + 555, tax ADDED on top
+
     # 3. Low-rate stone at 0.25%.
     r = compute_invoice([{"qty": 1, "unit_price_paise": 1002500, "gst_rate_bp": 25}],
                         supplier_state_code=UP, place_of_supply_code=UP)

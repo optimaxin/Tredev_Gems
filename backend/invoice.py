@@ -111,19 +111,16 @@ def _idempotency_key(document_type: str, order_id: str, revision: int = 0) -> st
 
 
 # ── generation ───────────────────────────────────────────────────────────────
-async def generate_for_order(order_id: str, settings: dict, *, conn=None) -> dict:
-    """Issue the tax invoice for a delivered order. Idempotent: if one already
-    exists it is returned untouched, so a re-marked-delivered order or a retried
-    call never mints a second document."""
-    existing = await db.fetch_one(
-        "SELECT * FROM tax_invoices WHERE order_id = $1::uuid AND status = 'issued'"
-        " ORDER BY created_at LIMIT 1", order_id)
-    if existing:
-        return dict(existing)
-
+async def _prepare_invoice(order_id: str, settings: dict) -> dict:
+    """All the reads, validation and tax computation, shared by preview_for_order
+    and generate_for_order. Raises InvoiceBlocked only for problems no amount of
+    review can fix (missing HSN, an address that won't resolve to a GST state, a
+    malformed GSTIN) — the §5.4 reconciliation check is deliberately NOT one of
+    these: it's returned as data (`mismatch_paise`) so a human can look at it and
+    decide, rather than a wall generate_for_order always hits."""
     order = await db.fetch_one(
         """SELECT o.id::text AS order_id, o.order_no, o.currency, o.subtotal,
-                  o.discount_total, o.shipping_total, o.grand_total,
+                  o.discount_total, o.tax_total, o.shipping_total, o.grand_total,
                   o.buyer_gstin, o.buyer_legal_name, o.user_id::text AS user_id,
                   a.recipient_name, a.phone, a.line1, a.line2, a.city, a.state,
                   a.pincode, a.country, a.email_snapshot::text AS email,
@@ -175,6 +172,14 @@ async def generate_for_order(order_id: str, settings: dict, *, conn=None) -> dic
     if buyer_gstin and not gst.valid_gstin(buyer_gstin):
         raise InvoiceBlocked(f"Buyer GSTIN '{buyer_gstin}' is not valid.")
 
+    # Current checkout stores listed prices as GST-inclusive and always writes
+    # tax_total = 0 (server.py's checkout()). Some older orders instead added tax
+    # on top of the price (a real, nonzero tax_total) — for those the invoice has
+    # to mirror what was actually charged, so the model is read off each order's
+    # own record rather than assumed globally.
+    tax_total_paise = db.to_paise(order["tax_total"]) or 0
+    prices_include_tax = tax_total_paise == 0
+
     supplier_state = (settings.get("state_code") or "09").strip()
     computed = gst.compute_invoice(
         [{"line_id": i["line_id"], "product_id": i["product_id"],
@@ -191,16 +196,74 @@ async def generate_for_order(order_id: str, settings: dict, *, conn=None) -> dic
         order_discount_paise=db.to_paise(order["discount_total"]) or 0,
         shipping_paise=db.to_paise(order["shipping_total"]) or 0,
         is_export=is_export,
+        prices_include_tax=prices_include_tax,
     )
 
-    # §5.4 reconciliation: the invoice total must equal the money actually taken.
-    # A mismatch is an audit finding, so it blocks issuance rather than printing.
     charged = db.to_paise(order["grand_total"]) or 0
-    if computed["grand_total_paise"] != charged:
-        raise InvoiceBlocked(
-            f"Invoice total ({computed['grand_total_paise'] / 100:.2f}) does not "
-            f"match the amount charged ({charged / 100:.2f}). Not issuing — this "
-            f"needs manual review.")
+    return {
+        "order": order, "computed": computed, "currency": currency,
+        "is_export": is_export, "place_code": place_code, "buyer_gstin": buyer_gstin,
+        "charged_paise": charged,
+        "mismatch_paise": computed["grand_total_paise"] - charged,
+    }
+
+
+async def preview_for_order(order_id: str, settings: dict) -> dict:
+    """Read-only: what the invoice WOULD look like, without allocating a number or
+    writing anything. Lets an admin review a would-be mismatch before deciding
+    whether to force-issue it."""
+    pre = await _prepare_invoice(order_id, settings)
+    computed = pre["computed"]
+    return {
+        "order_no": pre["order"]["order_no"], "currency": pre["currency"],
+        "lines": computed["lines"], "supply_type": computed["supply_type"],
+        "place_of_supply_name": computed["place_of_supply_name"],
+        "total_taxable_paise": computed["total_taxable_paise"],
+        "total_cgst_paise": computed["total_cgst_paise"],
+        "total_sgst_paise": computed["total_sgst_paise"],
+        "total_igst_paise": computed["total_igst_paise"],
+        "round_off_paise": computed["round_off_paise"],
+        "computed_grand_total_paise": computed["grand_total_paise"],
+        "charged_paise": pre["charged_paise"],
+        "mismatch_paise": pre["mismatch_paise"],
+        "will_block": pre["mismatch_paise"] != 0,
+    }
+
+
+async def generate_for_order(order_id: str, settings: dict, *, force: bool = False) -> dict:
+    """Issue the tax invoice for a delivered order. Idempotent: if one already
+    exists it is returned untouched, so a re-marked-delivered order or a retried
+    call never mints a second document.
+
+    `force=True` bypasses ONLY the §5.4 reconciliation check, and only after
+    absorbing the residual into round-off so the printed total still equals the
+    money actually collected — the one invariant that stays non-negotiable even
+    when forced. It never bypasses the missing-data blocks in _prepare_invoice;
+    those need the underlying order/product data fixed, not an override."""
+    existing = await db.fetch_one(
+        "SELECT * FROM tax_invoices WHERE order_id = $1::uuid AND status = 'issued'"
+        " ORDER BY created_at LIMIT 1", order_id)
+    if existing:
+        return dict(existing)
+
+    pre = await _prepare_invoice(order_id, settings)
+    order = pre["order"]
+    computed = pre["computed"]
+
+    if pre["mismatch_paise"] != 0:
+        if not force:
+            raise InvoiceBlocked(
+                f"Invoice total ({computed['grand_total_paise'] / 100:.2f}) does not "
+                f"match the amount charged ({pre['charged_paise'] / 100:.2f}). Not "
+                f"issuing — review the breakdown, then re-issue with 'force' once "
+                f"you've confirmed the total.")
+        computed["round_off_paise"] -= pre["mismatch_paise"]
+        computed["grand_total_paise"] = pre["charged_paise"]
+        log.warning("invoice for order %s force-issued with a %.2f mismatch absorbed "
+                    "into round-off", order_id, pre["mismatch_paise"] / 100)
+
+    currency = pre["currency"]
+    place_code, buyer_gstin = pre["place_code"], pre["buyer_gstin"]
 
     now = datetime.now(timezone.utc)
     fy = fy_code(now)

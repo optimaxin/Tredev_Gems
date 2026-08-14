@@ -69,6 +69,9 @@ export default function AdminOrders() {
   const [detailCustomer, setDetailCustomer] = useState(null);
   const [detailCustomerLoading, setDetailCustomerLoading] = useState(false);
   const [invoicing, setInvoicing] = useState(false);
+  const [reviewFor, setReviewFor] = useState(null); // order_id under invoice review
+  const [preview, setPreview] = useState(null);      // GET .../invoice/preview result
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   const refresh = () => api.get("/admin/orders").then((r) => setOrders(r.data));
   useEffect(() => { refresh(); }, []);
@@ -94,17 +97,34 @@ export default function AdminOrders() {
     if (!r.ok) toast.error(r.blocked ? "Allow popups for this site to view the invoice." : r.error);
   };
 
-  const generateInvoice = async (order_id) => {
+  const generateInvoice = async (order_id, { force = false } = {}) => {
     setInvoicing(true);
     try {
-      await api.post(`/admin/orders/${order_id}/invoice`);
-      toast.success("Invoice generated");
+      await api.post(`/admin/orders/${order_id}/invoice`, { force });
+      toast.success(force ? "Invoice force-issued" : "Invoice generated");
+      setReviewFor(null);
       await refresh();
     } catch (e) {
-      // The server's message names the exact missing field (HSN / GST rate / UQC),
-      // so it's shown verbatim rather than a generic failure line.
+      // The server's message names the exact missing field (HSN / GST rate / UQC)
+      // or the mismatch amount, so it's shown verbatim rather than a generic line.
       toast.error(apiErrorMessage(e, "Could not generate the invoice"), { duration: 15000 });
     } finally { setInvoicing(false); }
+  };
+
+  // Manual review before issuing: fetches the computed breakdown WITHOUT writing
+  // anything, so staff can see a §5.4 total mismatch (legacy orders that priced
+  // tax differently) before deciding whether to force-issue.
+  const openReview = async (order_id) => {
+    setReviewFor(order_id);
+    setPreview(null);
+    setPreviewLoading(true);
+    try {
+      const { data } = await api.get(`/admin/orders/${order_id}/invoice/preview`);
+      setPreview(data);
+    } catch (e) {
+      toast.error(apiErrorMessage(e, "Could not preview the invoice"), { duration: 15000 });
+      setReviewFor(null);
+    } finally { setPreviewLoading(false); }
   };
 
   const removeOrder = async (order_id) => {
@@ -403,15 +423,13 @@ export default function AdminOrders() {
                     <div className="text-[10px] font-mono text-ink-muted mt-1">{detail.invoice_number}</div>
                   </div>
                 ) : detail.status === "delivered" && (
-                  <AsyncButton
-                    loading={invoicing}
-                    loadingText="Generating…"
-                    onClick={() => generateInvoice(detail.order_id)}
-                    data-testid={`detail-invoice-generate-${detail.order_id}`}
-                    className="mt-3 text-xs uppercase tracking-widest border border-maroon text-maroon px-4 py-2 inline-flex items-center gap-1.5 hover:bg-maroon hover:text-ivory transition-colors disabled:opacity-50"
+                  <button
+                    onClick={() => openReview(detail.order_id)}
+                    data-testid={`detail-invoice-review-${detail.order_id}`}
+                    className="mt-3 text-xs uppercase tracking-widest border border-maroon text-maroon px-4 py-2 inline-flex items-center gap-1.5 hover:bg-maroon hover:text-ivory transition-colors"
                   >
-                    <Receipt size={13} weight="duotone" /> Generate invoice
-                  </AsyncButton>
+                    <Receipt size={13} weight="duotone" /> Review &amp; generate invoice
+                  </button>
                 )}
               </div>
 
@@ -443,6 +461,80 @@ export default function AdminOrders() {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Invoice review — preview the computed breakdown before issuing. A order
+          whose recorded total doesn't reconcile (older pricing model, manual
+          adjustment) shows the mismatch here instead of failing silently. */}
+      {reviewFor && (
+        <div className="fixed inset-0 z-50 bg-ink/40 flex items-center justify-center p-4" onClick={() => setReviewFor(null)} data-testid="invoice-review-modal">
+          <div onClick={(e) => e.stopPropagation()} className="bg-ivory gold-line-strong max-w-lg w-full max-h-[90vh] overflow-y-auto p-6">
+            <div className="flex items-start justify-between gap-4 mb-4">
+              <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">Invoice review</div>
+              <button onClick={() => setReviewFor(null)} className="text-ink-muted hover:text-revoked"><X size={18} /></button>
+            </div>
+
+            {previewLoading && <div className="text-sm text-ink-muted">Computing…</div>}
+
+            {preview && (
+              <div className="space-y-4">
+                <div className="text-sm text-ink-muted">
+                  {preview.supply_type === "intra_state" ? "Intra-state" : preview.supply_type === "inter_state" ? "Inter-state" : "Export"}
+                  {preview.place_of_supply_name && ` · ${preview.place_of_supply_name}`}
+                </div>
+
+                <table className="w-full text-sm">
+                  <tbody>
+                    <tr><td className="text-ink-muted py-1">Taxable value</td><td className="text-right font-mono">{formatPrice(preview.total_taxable_paise, preview.currency)}</td></tr>
+                    {preview.supply_type === "intra_state" ? (
+                      <>
+                        <tr><td className="text-ink-muted py-1">CGST</td><td className="text-right font-mono">{formatPrice(preview.total_cgst_paise, preview.currency)}</td></tr>
+                        <tr><td className="text-ink-muted py-1">SGST</td><td className="text-right font-mono">{formatPrice(preview.total_sgst_paise, preview.currency)}</td></tr>
+                      </>
+                    ) : (
+                      <tr><td className="text-ink-muted py-1">IGST</td><td className="text-right font-mono">{formatPrice(preview.total_igst_paise, preview.currency)}</td></tr>
+                    )}
+                    {preview.round_off_paise !== 0 && (
+                      <tr><td className="text-ink-muted py-1">Round off</td><td className="text-right font-mono">{formatPrice(preview.round_off_paise, preview.currency)}</td></tr>
+                    )}
+                    <tr className="border-t border-gold/30"><td className="pt-2 font-semibold">Invoice total</td><td className="text-right font-mono pt-2 font-semibold">{formatPrice(preview.computed_grand_total_paise, preview.currency)}</td></tr>
+                    <tr><td className="text-ink-muted py-1">Amount charged</td><td className="text-right font-mono">{formatPrice(preview.charged_paise, preview.currency)}</td></tr>
+                  </tbody>
+                </table>
+
+                {preview.will_block ? (
+                  <div className="border border-revoked bg-revoked/5 px-3 py-3 text-xs text-revoked space-y-2" data-testid="invoice-review-mismatch">
+                    <div>
+                      The computed invoice total ({formatPrice(preview.computed_grand_total_paise, preview.currency)}) doesn't
+                      match what was actually charged ({formatPrice(preview.charged_paise, preview.currency)}) — likely an
+                      order priced under an older tax model. Review the numbers above; forcing will keep this line-item
+                      breakdown but adjust round-off so the printed total matches the {formatPrice(preview.charged_paise, preview.currency)} actually collected.
+                    </div>
+                    <AsyncButton
+                      loading={invoicing}
+                      loadingText="Issuing…"
+                      onClick={() => generateInvoice(reviewFor, { force: true })}
+                      data-testid={`invoice-force-issue-${reviewFor}`}
+                      className="w-full bg-revoked text-ivory px-4 py-2 text-xs uppercase tracking-widest inline-flex items-center justify-center gap-1.5 disabled:opacity-50"
+                    >
+                      Force issue anyway
+                    </AsyncButton>
+                  </div>
+                ) : (
+                  <AsyncButton
+                    loading={invoicing}
+                    loadingText="Issuing…"
+                    onClick={() => generateInvoice(reviewFor)}
+                    data-testid={`invoice-issue-${reviewFor}`}
+                    className="w-full border border-maroon text-maroon px-4 py-2 text-xs uppercase tracking-widest inline-flex items-center justify-center gap-1.5 hover:bg-maroon hover:text-ivory transition-colors disabled:opacity-50"
+                  >
+                    <Receipt size={13} weight="duotone" /> Confirm &amp; issue invoice
+                  </AsyncButton>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}

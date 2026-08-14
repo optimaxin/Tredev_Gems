@@ -7326,17 +7326,38 @@ async def admin_order_invoice(order_id: str, request: Request,
                            media_type="text/html")
 
 
+@api.get("/admin/orders/{order_id}/invoice/preview")
+async def admin_preview_invoice(order_id: str, actor: str = Depends(require_perm("orders"))):
+    """Read-only: shows what the invoice would look like — including a §5.4
+    reconciliation mismatch, if there is one — without allocating a number or
+    writing anything. Lets an admin manually review before deciding to force-issue
+    a legacy order whose total won't reconcile under the current tax model."""
+    try:
+        return await invoicing.preview_for_order(order_id, await _invoice_settings())
+    except invoicing.InvoiceBlocked as e:
+        raise HTTPException(400, str(e))
+
+
+class InvoiceGenerateIn(BaseModel):
+    # Bypasses ONLY the §5.4 reconciliation check, after the admin has reviewed
+    # the /preview breakdown. Never bypasses a missing-data block (HSN, address,
+    # GSTIN) — those need the underlying data fixed, not an override.
+    force: bool = False
+
+
 @api.post("/admin/orders/{order_id}/invoice")
-async def admin_generate_invoice(order_id: str, actor: str = Depends(require_perm("orders"))):
+async def admin_generate_invoice(order_id: str, body: InvoiceGenerateIn = InvoiceGenerateIn(),
+                                 actor: str = Depends(require_perm("orders"))):
     """Manual re-try for an order whose invoice was blocked at delivery (e.g. the
     product was missing an HSN code, now filled in). Idempotent — an order that
     already has an invoice gets that same one back, never a second number."""
     try:
-        inv = await invoicing.generate_for_order(order_id, await _invoice_settings())
+        inv = await invoicing.generate_for_order(order_id, await _invoice_settings(),
+                                                 force=body.force)
     except invoicing.InvoiceBlocked as e:
         raise HTTPException(400, str(e))
-    await audit_log(actor, "invoice.generate", order_id,
-                    {"invoice_number": inv["invoice_number"]})
+    await audit_log(actor, "invoice.generate_forced" if body.force else "invoice.generate",
+                    order_id, {"invoice_number": inv["invoice_number"], "forced": body.force})
     return _invoice_summary(inv)
 
 
