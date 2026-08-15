@@ -47,7 +47,9 @@ export default function AdminWebsite() {
         setHome(normHome(r.data.home)); setHeader(r.data.header);
         setVideosContent(r.data.shoppable_videos);
       }).catch(() => {});
-      api.get("/products?limit=500").then((r) => setProducts(r.data)).catch(() => {});
+      // Admin list, not the public /products — a shoppable video should still be
+      // linkable to a product that's currently hidden (e.g. pre-launch).
+      api.get("/admin/products?limit=500").then((r) => setProducts(r.data)).catch(() => {});
     }
     if (canTax) api.get("/admin/taxonomy").then((r) => { setPurposes(r.data.purposes); setRashi(r.data.rashi); setPoojaPurposes(r.data.pooja_purposes); }).catch(() => {});
   }, [canContent, canTax]);

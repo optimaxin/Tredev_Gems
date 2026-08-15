@@ -78,7 +78,9 @@ export default function AdminCoupons() {
   useEffect(() => {
     load();
     api.get("/categories").then((r) => setCats(r.data.categories.filter((c) => !c.is_sub))).catch(() => {});
-    api.get("/products?limit=500").then((r) => setProducts(r.data)).catch(() => {});
+    // Admin list, not the public /products — a coupon should still be restrictable
+    // to a product that's currently hidden (e.g. being prepped pre-launch).
+    api.get("/admin/products?limit=500").then((r) => setProducts(r.data)).catch(() => {});
   }, [load]);
 
   const startEdit = (c) => setEditing({

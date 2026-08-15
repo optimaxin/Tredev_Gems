@@ -1665,6 +1665,24 @@ async def list_products(
     return _apply_product_currency(products, currency if currency in SUPPORTED_CURRENCIES else "INR")
 
 
+@api.get("/admin/products")
+async def admin_list_products(limit: int = 500, _: str = Depends(require_admin)):
+    """Every product regardless of status (active/draft/archived/pending_review) —
+    AdminProducts, AdminInventory, AdminCoupons and AdminWebsite all need this
+    instead of the public /products, which filters to status='active' only.
+    Reusing the public endpoint for admin lists would make a product vanish from
+    admin screens the moment its is_active toggle is switched off, with no way
+    back short of the DB, and would block coupon/video linking for a
+    not-yet-launched product.
+
+    Gated on any staff/owner login rather than the narrower "products" permission:
+    this is read-only catalog data (already fully public for active items via
+    /products), and pages reached under other permissions (coupons, content)
+    legitimately need it too. Mutations stay behind require_perm("products")."""
+    sql = f"{_PRODUCT_SELECT} ORDER BY p.created_at DESC LIMIT $1"
+    return [_shape_product(r) for r in await db.fetch_all(sql, limit)]
+
+
 @api.get("/products/{slug}")
 async def get_product(slug: str, currency: str = "INR"):
     row = await db.fetch_one(_PRODUCT_SELECT + " AND p.slug = $1::citext", slug)

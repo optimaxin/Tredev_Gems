@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api, formatINR, mediaSrc } from "@/lib/api";
 import { toast } from "sonner";
-import { PencilSimple, PlusCircle, Trash, Stack, Prohibit, CheckCircle, Image as ImageIcon } from "@phosphor-icons/react";
+import { PencilSimple, PlusCircle, Trash, Stack, Prohibit, CheckCircle, Image as ImageIcon, Eye, EyeSlash } from "@phosphor-icons/react";
 import SearchBar from "@/components/gemora/SearchBar";
 import ShippingChargesEditor from "@/components/gemora/ShippingChargesEditor";
 import AsyncButton from "@/components/gemora/AsyncButton";
@@ -42,7 +42,10 @@ export default function AdminProducts() {
   const [showPicker, setShowPicker] = useState(false);
 
   const refresh = () => {
-    api.get("/products?limit=500").then((r) => setProducts(r.data));
+    // The admin list, not the public /products — that one filters to status='active'
+    // only, so a product toggled off would vanish from this screen too and have no
+    // way back short of the database.
+    api.get("/admin/products?limit=500").then((r) => setProducts(r.data));
     api.get("/categories").then((r) => setCats(r.data.categories));
     api.get("/admin/products/stock").then((r) => setStock(r.data)).catch(() => {});
   };
@@ -77,6 +80,23 @@ export default function AdminProducts() {
     } catch (e) {
       setProducts(prevProducts);
       toast.error(e.response?.data?.detail || "Could not update stock status");
+    }
+  };
+
+  // Live/hidden — is_active drives whether the product shows up anywhere on the
+  // public site (product.status = 'active' vs 'archived'). Unlike out-of-stock,
+  // this hides the listing entirely rather than just blocking purchase.
+  const toggleLive = async (p) => {
+    const next = !p.is_active;
+    const prevProducts = products;
+    setProducts((cur) => cur.map((x) =>
+      x.product_id === p.product_id ? { ...x, is_active: next } : x));
+    try {
+      await api.patch(`/admin/products/${p.product_id}`, { is_active: next });
+      toast.success(next ? `${p.name} is now live on the site` : `${p.name} is now hidden from the site`);
+    } catch (e) {
+      setProducts(prevProducts);
+      toast.error(e.response?.data?.detail || "Could not update visibility");
     }
   };
 
@@ -565,7 +585,12 @@ export default function AdminProducts() {
           <div key={p.product_id} className="gold-line bg-ivory p-4 flex gap-4">
             {p.images?.[0] && <div className="w-24 h-24 gold-line overflow-hidden shrink-0"><img src={mediaSrc(p.images[0])} alt="" className="w-full h-full object-cover" /></div>}
             <div className="flex-1 min-w-0">
-              <div className="font-serifd text-lg truncate">{p.name}</div>
+              <div className="flex items-start justify-between gap-2">
+                <div className="font-serifd text-lg truncate">{p.name}</div>
+                <span className={`shrink-0 text-[10px] uppercase tracking-widest inline-flex items-center gap-1 ${p.is_active ? "text-verified" : "text-ink-muted"}`}>
+                  ● {p.is_active ? "Live" : "Hidden"}
+                </span>
+              </div>
               <div className="text-xs font-mono text-ink-muted">
                 {p.category}{p.subcategory ? ` · ${p.subcategory}` : ""}
               </div>
@@ -580,6 +605,19 @@ export default function AdminProducts() {
                 <button onClick={() => startEdit(p)} className="text-maroon inline-flex items-center gap-1"><PencilSimple size={12} /> Edit</button>
                 <button onClick={() => del(p)} className="text-revoked inline-flex items-center gap-1 ml-auto"><Trash size={12} /> Remove</button>
               </div>
+              <button
+                onClick={() => toggleLive(p)}
+                data-testid={`toggle-live-${p.product_id}`}
+                className={`mt-2 w-full text-xs uppercase tracking-widest border px-3 py-1.5 inline-flex items-center justify-center gap-1 transition-colors ${
+                  p.is_active
+                    ? "border-revoked text-revoked hover:bg-revoked hover:text-ivory"
+                    : "border-verified text-verified hover:bg-verified hover:text-ivory"
+                }`}
+              >
+                {p.is_active
+                  ? <><EyeSlash size={12} weight="duotone" /> Hide from site</>
+                  : <><Eye size={12} weight="duotone" /> Make live</>}
+              </button>
               <button
                 onClick={() => toggleOutOfStock(p)}
                 data-testid={`toggle-out-of-stock-${p.product_id}`}

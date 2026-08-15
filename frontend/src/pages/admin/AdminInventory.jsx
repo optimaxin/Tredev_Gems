@@ -19,7 +19,9 @@ export default function AdminInventory() {
   const [issuingFor, setIssuingFor] = useState(null);
 
   const refresh = () => {
-    api.get("/products?limit=500").then((r) => setProducts(r.data));
+    // The admin list, not the public /products — that one filters to status='active'
+    // only, so a hidden product would disappear from this picker too.
+    api.get("/admin/products?limit=500").then((r) => setProducts(r.data));
     api.get("/admin/units", { params: sel ? { product_id: sel } : {} }).then((r) => setUnits(r.data));
     api.get("/admin/certificates").then((r) => setCerts(r.data));
   };
