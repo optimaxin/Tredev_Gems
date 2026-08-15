@@ -706,6 +706,7 @@ class ProductIn(BaseModel):
     is_serialized: bool = True  # if False, non-unit-based
     quantity: int = 0  # serialized only: auto-generate this many units with serial numbers
     care_instructions: List[str] = []  # rendered as bullet points on the product page
+    how_to_wear: List[str] = []  # rendered as bullet points on the product page
     # Omitted -> the category's template is used as-is (all surcharges at 0).
     variant_options: Optional[VariantOptionsIn] = None
     # GST tax master (.claude/invoice.md §6). Left unset on purpose rather than
@@ -1539,6 +1540,7 @@ _PRODUCT_SELECT = """
            (p.status = 'active')                   AS is_active,
            p.attributes                            AS attributes,
            COALESCE(p.care_instructions, ARRAY[]::text[]) AS care_instructions,
+           COALESCE(p.how_to_wear, ARRAY[]::text[]) AS how_to_wear,
            p.variant_options                       AS variant_options,
            p.hsn_code                              AS hsn_code,
            p.gst_rate_bp                           AS gst_rate_bp,
@@ -2937,15 +2939,16 @@ async def admin_create_product(p: ProductIn, user_id: str = Depends(require_admi
                 """INSERT INTO products (id, category_id, category_key, title,
                         title_devanagari, slug, description, base_price, price_usd,
                         compare_at_price, currency, is_serialized, attributes,
-                        shipping_charges, care_instructions,
+                        shipping_charges, care_instructions, how_to_wear,
                         variant_options, status, published_at,
                         hsn_code, gst_rate_bp, uqc)
                    VALUES ($1,$2::uuid,$3::category_key,$4,$5,$6::citext,$7,$8,$9,$10,'INR',$11,
-                           $12,$13,$14,$15,'active', now(),$16,$17,$18)""",
+                           $12,$13,$14,$15,$16,'active', now(),$17,$18,$19)""",
                 pid, cat_id, ck, p.name, p.devanagari_name, p.slug, p.description,
                 db.to_amount(p.price), db.to_amount(p.price_usd), db.to_amount(p.mrp), p.is_serialized,
                 p.attrs or {}, p.shipping_charges or {},
                 [s.strip() for s in p.care_instructions if s and s.strip()],
+                [s.strip() for s in p.how_to_wear if s and s.strip()],
                 # No variant_options sent -> fall back to the category's template, so a
                 # product always offers the right selectors even via a bare API call.
                 # Normalized either way, so both paths behave identically (notably:
@@ -5682,6 +5685,7 @@ class ProductUpdateIn(BaseModel):
     is_active: Optional[bool] = None
     stock_qty: Optional[int] = None  # for non-serialised items
     care_instructions: Optional[List[str]] = None
+    how_to_wear: Optional[List[str]] = None
     variant_options: Optional[VariantOptionsIn] = None
     shipping_charges: Optional[Dict[str, float]] = None  # region label -> USD amount
     hsn_code: Optional[str] = None
@@ -6349,6 +6353,8 @@ _PRODUCT_PATCH_COLS = {
     "shipping_charges": ("shipping_charges", lambda v: v),
     "care_instructions": ("care_instructions",
                           lambda v: [s.strip() for s in v if s and s.strip()]),
+    "how_to_wear": ("how_to_wear",
+                    lambda v: [s.strip() for s in v if s and s.strip()]),
     "variant_options": ("variant_options", _normalize_variant_options),
     "hsn_code": ("hsn_code", lambda v: (v or "").strip() or None),
     "gst_rate_bp": ("gst_rate_bp", lambda v: v),

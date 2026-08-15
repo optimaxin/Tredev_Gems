@@ -255,21 +255,25 @@ function ProvenanceBand({ reduce }) {
   );
 }
 
-/* ── 5. Ritual — category-aware ────────────────────────────────────── */
-function Ritual({ copy }) {
+/* ── 5. Ritual — real how_to_wear win; copy is the fallback ────────── */
+function Ritual({ p, copy }) {
+  const custom = (p.how_to_wear || []).filter(Boolean);
+  const items = custom.length
+    ? custom.map((line, i) => ({ icon: ["drop", "moon", "leaf", "sparkle"][i % 4], title: null, body: line }))
+    : copy.ritual;
   return (
     <section className="mx-auto max-w-7xl px-6 lg:px-10 py-20">
       <SectionHead eyebrow={`Ritual · ${copy.ritualDeva || "विधि"}`} title={copy.ritualTitle} />
       <div className="mt-12 grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
-        {copy.ritual.map((s, i) => (
-          <Reveal key={s.title} delay={i * 0.08}>
+        {items.map((s, i) => (
+          <Reveal key={i} delay={i * 0.08}>
             <div className="relative gold-line-strong bg-ivory p-6 h-full hover-lift">
               <div className="flex items-center justify-between">
                 <Ico name={s.icon} size={28} weight="duotone" className="text-gold-soft" />
                 <span className="font-display text-4xl text-cream select-none">{i + 1}</span>
               </div>
-              <div className="font-serifd text-xl text-maroon-deep mt-3">{s.title}</div>
-              <p className="text-sm text-ink-soft mt-2 leading-relaxed">{s.body}</p>
+              {s.title && <div className="font-serifd text-xl text-maroon-deep mt-3">{s.title}</div>}
+              <p className={`text-sm text-ink-soft leading-relaxed ${s.title ? "mt-2" : "mt-3"}`}>{s.body}</p>
             </div>
           </Reveal>
         ))}
@@ -287,7 +291,7 @@ function CareGuide({ p, copy }) {
   return (
     <section className="bg-cream border-y border-gold/30 py-20">
       <div className="mx-auto max-w-7xl px-6 lg:px-10">
-        <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">Care & wear · देखभाल</div>
+        <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">How to care · देखभाल</div>
         <h2 className="font-display text-4xl md:text-5xl text-ink mt-2">Keep it as it reached you</h2>
         <div className="mt-10 grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
           {items.map((c, i) => (
@@ -773,11 +777,11 @@ export default function ProductStory({ p, reviews = [], onReviewAdded }) {
       <Reviews reviews={reviews} productId={p.product_id} onAdded={onReviewAdded} />
       <TrustMarquee />
       <Specs p={p} />
-      <Ritual copy={copy} />
+      <Ritual p={p} copy={copy} />
       <Benefits p={p} copy={copy} />
       <ConsultBanner reduce={reduce} />
-      <ProvenanceBand reduce={reduce} />
       <CareGuide p={p} copy={copy} />
+      <ProvenanceBand reduce={reduce} />
       <Policies />
       <Faq p={p} />
       <Related p={p} />
