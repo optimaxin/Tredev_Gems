@@ -305,7 +305,7 @@ export default function ProductDetail() {
           {unitPrice !== p.price && (
             <div className="text-xs text-ink-muted mt-1">Base price {formatPrice(p.price, p.currency)} + your selected options</div>
           )}
-          <p className="mt-6 text-ink-soft leading-relaxed">{p.description}</p>
+          <p className="mt-6 text-ink-soft leading-relaxed whitespace-pre-line">{p.description}</p>
 
           {/* Quick trust chips — the full detail lives further down the page */}
           <div className="mt-6 flex flex-wrap gap-2">
