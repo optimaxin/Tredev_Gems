@@ -149,7 +149,6 @@ export default function Signup() {
                     loading={googleLoading}
                     loadingText="Signing in…"
                     data-testid="signup-google"
-                    disabled={!agreed}
                     className="w-full border border-maroon text-maroon py-3 text-sm uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-maroon hover:text-ivory transition-colors"
                   >
                     <GoogleLogo size={16} weight="bold" /> Continue with Google
