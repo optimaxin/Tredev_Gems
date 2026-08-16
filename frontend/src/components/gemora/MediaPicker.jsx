@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { absolutize } from "@/context/SiteAssetsContext";
 import { toast } from "sonner";
-import { X, UploadSimple, Image as ImageIcon, TrashSimple } from "@phosphor-icons/react";
+import { X, UploadSimple, LinkSimple, Image as ImageIcon, TrashSimple } from "@phosphor-icons/react";
 
 /**
  * MediaPicker
@@ -14,6 +14,9 @@ export default function MediaPicker({ open, onClose, onPick, mode = "picker" }) 
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const fileRef = useRef(null);
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkUrl, setLinkUrl] = useState("");
+  const [linkBusy, setLinkBusy] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -45,6 +48,20 @@ export default function MediaPicker({ open, onClose, onPick, mode = "picker" }) 
     if (ok) toast.success(`Uploaded ${ok} file${ok > 1 ? "s" : ""}`);
     setBusy(false);
     load();
+  };
+
+  const addLink = async () => {
+    const url = linkUrl.trim();
+    if (!url) return;
+    setLinkBusy(true);
+    try {
+      await api.post("/admin/media/link", { url });
+      toast.success("Image added");
+      setLinkUrl(""); setLinkOpen(false);
+      load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Couldn't add that link");
+    } finally { setLinkBusy(false); }
   };
 
   const remove = async (media_id) => {
@@ -85,11 +102,39 @@ export default function MediaPicker({ open, onClose, onPick, mode = "picker" }) 
               onChange={(e) => handleFiles(Array.from(e.target.files || []))}
               data-testid="media-file-input"
             />
+            <button
+              onClick={() => setLinkOpen((o) => !o)}
+              data-testid="media-link-toggle"
+              className="gold-line px-4 py-2 text-xs uppercase tracking-widest inline-flex items-center gap-2 hover:border-maroon"
+            >
+              <LinkSimple size={14} weight="bold" /> Add by link
+            </button>
             <button onClick={onClose} className="text-ink-muted hover:text-maroon" data-testid="media-picker-close">
               <X size={18} />
             </button>
           </div>
         </div>
+        {linkOpen && (
+          <div className="flex items-center gap-2 px-6 py-3 border-b border-gold/30 bg-cream/50">
+            <input
+              autoFocus
+              value={linkUrl}
+              onChange={(e) => setLinkUrl(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") addLink(); }}
+              placeholder="Paste an image URL — e.g. a public Google Drive share link"
+              data-testid="media-link-input"
+              className="flex-1 gold-line bg-ivory px-3 py-2 text-sm outline-none focus:border-maroon"
+            />
+            <button
+              onClick={addLink}
+              disabled={linkBusy || !linkUrl.trim()}
+              data-testid="media-link-submit"
+              className="brand-gradient text-ivory px-4 py-2 text-xs uppercase tracking-widest disabled:opacity-50"
+            >
+              {linkBusy ? "Adding…" : "Add"}
+            </button>
+          </div>
+        )}
         <div className="p-6 overflow-y-auto">
           {loading ? (
             <div className="text-ink-muted">Loading…</div>

@@ -3325,6 +3325,30 @@ async def _resolve_category_id(ck: str, subcategory_id: Optional[str]) -> str:
     return sub
 
 
+async def _sync_product_images(conn, product_id, urls: list[str], user_id: str) -> None:
+    """Replaces a product's image set with exactly `urls`, in order (first = cover).
+    Each URL is deduped against any existing media_assets row for that same URL
+    (bucket='external') rather than minting a fresh row every save — a product
+    re-saved with its same images shouldn't pile up duplicate rows. `urls` can be
+    either a Media Library URL (an upload's /api/media/file/... path, or another
+    external link already in the library) or any other absolute URL typed/pasted
+    directly into a product's Images field — both are just strings here."""
+    await conn.execute("DELETE FROM product_media WHERE product_id = $1::uuid", product_id)
+    for i, url in enumerate(urls):
+        mid = await conn.fetchval(
+            "SELECT id FROM media_assets WHERE object_key=$1 AND bucket='external'", url)
+        if not mid:
+            mid = uuid.uuid4()
+            await conn.execute(
+                """INSERT INTO media_assets (id, owner_type, storage_provider, bucket,
+                        object_key, mime_type, is_public, uploaded_by)
+                   VALUES ($1,'product','external','external',$2,'image/jpeg',true,$3::uuid)""",
+                mid, url, user_id)
+        await conn.execute(
+            """INSERT INTO product_media (id, product_id, media_id, position, is_primary)
+               VALUES ($1,$2,$3,$4,$5)""", uuid.uuid4(), product_id, mid, i, i == 0)
+
+
 @api.post("/admin/products")
 async def admin_create_product(p: ProductIn, user_id: str = Depends(require_admin)):
     ck = db.CATEGORY_TO_DB.get(p.category)
@@ -3373,19 +3397,7 @@ async def admin_create_product(p: ProductIn, user_id: str = Depends(require_admi
             if p.is_serialized and p.quantity > 0:
                 await _generate_units(conn, str(pid), p.slug, ck, variant_id,
                                       db.to_amount(p.price), p.quantity)
-            for i, url in enumerate(p.images or []):
-                mid = await conn.fetchval(
-                    "SELECT id FROM media_assets WHERE object_key=$1 AND bucket='external'", url)
-                if not mid:
-                    mid = uuid.uuid4()
-                    await conn.execute(
-                        """INSERT INTO media_assets (id, owner_type, storage_provider, bucket,
-                                object_key, mime_type, is_public, uploaded_by)
-                           VALUES ($1,'product','external','external',$2,'image/jpeg',true,$3::uuid)""",
-                        mid, url, user_id)
-                await conn.execute(
-                    """INSERT INTO product_media (id, product_id, media_id, position, is_primary)
-                       VALUES ($1,$2,$3,$4,$5)""", uuid.uuid4(), pid, mid, i, i == 0)
+            await _sync_product_images(conn, pid, p.images or [], user_id)
     except HTTPException:
         raise
     except asyncpg.exceptions.UniqueViolationError as e:
@@ -6878,6 +6890,9 @@ async def admin_update_product(product_id: str, body: ProductUpdateIn, actor: st
             cur_attrs = await db.fetch_val(
                 "SELECT attributes FROM products WHERE id=$1::uuid", product_id) or {}
         await _upsert_typed_details(db.execute, product_id, cur_ck, cur_attrs)
+    if "images" in updates:
+        async with db.transaction() as conn:
+            await _sync_product_images(conn, product_id, updates["images"] or [], actor)
     if "stock_qty" in updates:
         await db.execute(
             """UPDATE product_variants SET stock_qty = $2, updated_at = now()
@@ -8139,13 +8154,57 @@ async def admin_media_upload(request: Request, user_id: str = Depends(require_ad
     return await db.fetch_one(_MEDIA_SELECT + " AND m.id = $1::uuid", str(media_id))
 
 
+# Google Drive "share" links (.../file/d/<id>/view, .../open?id=<id>) are an HTML
+# viewer page, not raw image bytes — an <img> pointed at one just breaks. Rewrite
+# to Drive's direct-file form so a pasted share link works without the admin
+# needing to know the difference. Anything else is left untouched.
+def _normalize_media_url(url: str) -> Optional[str]:
+    url = (url or "").strip()
+    if not url or not re.match(r"^https?://", url, re.I) or len(url) > 2048:
+        return None
+    if "drive.google.com" in url:
+        m = re.search(r"/file/d/([\w-]{10,})", url) or re.search(r"[?&]id=([\w-]{10,})", url)
+        if m:
+            return f"https://drive.google.com/uc?export=view&id={m.group(1)}"
+    return url
+
+
+class MediaLinkIn(BaseModel):
+    url: str
+    label: Optional[str] = None
+
+
+@api.post("/admin/media/link")
+async def admin_media_link(body: MediaLinkIn, user_id: str = Depends(require_admin)):
+    """Adds an externally-hosted image (e.g. a public Google Drive link) to the
+    shared media library by URL instead of uploading a file. Stored as a normal
+    media_assets row (storage_provider='external', bucket='media' — same bucket
+    the picker/library list — object_key IS the URL, matching how product images
+    already treat an external URL: frontend's mediaSrc() uses absolute URLs as-is,
+    only prepending the backend origin for our own relative /api/media/file/...
+    paths). So once added here it's just another tile in the picker, selectable
+    anywhere a Media Library image is — product images, site-asset slots, etc."""
+    url = _normalize_media_url(body.url)
+    if not url:
+        raise HTTPException(400, "Enter a valid image URL (http/https)")
+    media_id = uuid.uuid4()
+    await db.execute(
+        """INSERT INTO media_assets (id, owner_type, storage_provider, bucket, object_key,
+                original_filename, is_public, uploaded_by)
+           VALUES ($1,'product','external','media',$2,$3,true,$4::uuid)""",
+        media_id, url, (body.label or "").strip() or url, user_id)
+    await audit_log(user_id, "media.link", str(media_id), {"url": url})
+    return await db.fetch_one(_MEDIA_SELECT + " AND m.id = $1::uuid", str(media_id))
+
+
 _MEDIA_SELECT = """
     SELECT m.id::text            AS media_id,
            m.object_key          AS storage_path,
            m.mime_type           AS content_type,
            m.file_size_bytes     AS size,
            m.original_filename   AS original_filename,
-           '/api/media/file/' || m.object_key AS url,
+           CASE WHEN m.storage_provider = 'external' THEN m.object_key
+                ELSE '/api/media/file/' || m.object_key END AS url,
            m.uploaded_by::text   AS uploaded_by,
            (m.deleted_at IS NOT NULL) AS is_deleted,
            m.created_at          AS created_at
