@@ -4289,9 +4289,12 @@ async def gstin_verify(body: GstinVerifyIn, _rl: None = Depends(rate_limit(10, 6
     # generic exception message.
     legal_name = (resp.get("legal_name_of_business") or "").strip()
     if status != 200 or not resp.get("valid") or not legal_name:
+        # Cashfree's own `message` is an operator-facing string (IP whitelisting,
+        # auth failures, wallet balance...) — logged in full, but never sent to the
+        # browser: a customer at checkout must never see our infra details.
         log.info("gstin verify: not verified for %s (http %s): %s", gstin, status, resp)
         return {"verified": False, "reason": resp.get("code") or "NOT_FOUND",
-                "message": resp.get("message") or "We couldn't verify this GSTIN."}
+                "message": "We couldn't verify this GSTIN. You can retry, or continue checkout without it."}
     trade_name = (resp.get("trade_name_of_business") or "").strip() or None
 
     row_id = str(uuid.uuid4())
