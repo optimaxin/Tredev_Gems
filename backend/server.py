@@ -1619,6 +1619,7 @@ _PRODUCT_SELECT = """
            p.gst_rate_bp                           AS gst_rate_bp,
            p.uqc                                   AS uqc,
            p.created_at                            AS created_at,
+           COALESCE(p.shipping_charges, '{}'::jsonb) AS shipping_charges,
            COALESCE(m.urls, ARRAY[]::text[])       AS images,
            g.planet_graha::text                    AS g_graha,
            g.weight_carat                          AS g_carat,
