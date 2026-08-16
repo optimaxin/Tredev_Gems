@@ -34,7 +34,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
     Ed25519PublicKey,
 )
-from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding as rsa_padding
 from dotenv import load_dotenv
 from fastapi import APIRouter, Cookie, Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
@@ -249,6 +250,28 @@ def _cashfree_kyb_base_url() -> str:
             else "https://sandbox.cashfree.com/verification")
 
 
+def _cashfree_kyb_signature(client_id: str) -> Optional[str]:
+    """Cashfree Secure ID's "Public Key" 2FA method — an alternative to IP
+    whitelisting that needs no fixed egress IP, which Render's shared/rotating
+    outbound pool can't reliably provide. `X-Cf-Signature` = base64(RSA-OAEP-SHA1(
+    "{client_id}.{unix_ts}") encrypted with the public key Cashfree's dashboard
+    issues (Developers > Two-Factor Authentication > Secure ID > Public Key).
+    Store that PEM verbatim in CASHFREE_VERIFICATION_PUBLIC_KEY_PEM — it's a public
+    key, so it isn't a secret the way the client secret is, but it's still
+    account-specific. Signature is only valid 5 minutes, so it's computed fresh
+    per call rather than cached. Returns None (header omitted) when the account
+    isn't using this 2FA method, so IP whitelisting keeps working unchanged."""
+    pem = os.environ.get("CASHFREE_VERIFICATION_PUBLIC_KEY_PEM", "").strip()
+    if not pem:
+        return None
+    public_key = serialization.load_pem_public_key(pem.encode())
+    payload = f"{client_id}.{int(time.time())}".encode()
+    ciphertext = public_key.encrypt(
+        payload, rsa_padding.OAEP(mgf=rsa_padding.MGF1(algorithm=hashes.SHA1()),
+                                  algorithm=hashes.SHA1(), label=None))
+    return base64.b64encode(ciphertext).decode()
+
+
 async def _cashfree_verify_gstin(gstin: str) -> tuple[int, dict]:
     """Calls Cashfree Secure ID's GSTIN KYB endpoint (VRS v2 — no x-api-version header,
     unlike the Payment Gateway). Returns (http_status, body) for ANY response Cashfree
@@ -262,13 +285,16 @@ async def _cashfree_verify_gstin(gstin: str) -> tuple[int, dict]:
     if not client_id or not secret:
         raise RuntimeError("Cashfree Secure ID credentials are not configured")
 
+    headers = {"x-client-id": client_id, "x-client-secret": secret,
+               "Content-Type": "application/json"}
+    signature = _cashfree_kyb_signature(client_id)
+    if signature:
+        headers["X-Cf-Signature"] = signature
+
     async def _call():
         async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.post(
-                f"{_cashfree_kyb_base_url()}/gstin",
-                headers={"x-client-id": client_id, "x-client-secret": secret,
-                         "Content-Type": "application/json"},
-                json={"GSTIN": gstin})
+            resp = await client.post(f"{_cashfree_kyb_base_url()}/gstin",
+                                     headers=headers, json={"GSTIN": gstin})
             return resp.status_code, resp.json()
 
     return await _cashfree_kyb_circuit.call(_call)
