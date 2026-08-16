@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import {
   ChartBar, Package, Stack, Certificate as CertIcon, Truck, SquaresFour, Sparkle, Calendar,
   ChatCircleDots, UsersFour, ShieldStar, ArrowLeft, WhatsappLogo, Image as ImageIcon, MegaphoneSimple, PaintBrush,
-  ArrowsClockwise, Diamond, Browser, Star, Notebook, ClockCounterClockwise, Fire, Tag, Receipt,
+  ArrowsClockwise, Diamond, Browser, Star, Notebook, ClockCounterClockwise, Fire, Tag, Receipt, FileText,
 } from "@phosphor-icons/react";
 
 import AdminDashboard from "@/pages/admin/AdminDashboard";
@@ -32,6 +32,7 @@ import AdminLogs from "@/pages/admin/AdminLogs";
 import AdminLeads from "@/pages/admin/AdminLeads";
 import AdminCoupons from "@/pages/admin/AdminCoupons";
 import AdminInvoiceSettings from "@/pages/admin/AdminInvoiceSettings";
+import AdminLegalPages from "@/pages/admin/AdminLegalPages";
 
 const NAV_ITEMS = [
   { to: "dashboard", label: "Dashboard", Icon: ChartBar, ownerOnly: true },
@@ -47,6 +48,7 @@ const NAV_ITEMS = [
   { to: "media", label: "Media", Icon: ImageIcon, adminAny: true },
   { to: "site-assets", label: "Site Images", Icon: PaintBrush, adminAny: true },
   { to: "website", label: "Website", Icon: Browser, anyPerm: ["content", "taxonomy"] },
+  { to: "legal-pages", label: "Legal Pages", Icon: FileText, adminAny: true },
   { to: "journal", label: "Journal", Icon: Notebook, perm: "content" },
   { to: "events", label: "Events", Icon: MegaphoneSimple, adminAny: true },
   { to: "astrologers", label: "Astrologers", Icon: Sparkle, perm: "astrologers" },
@@ -153,6 +155,7 @@ export default function Admin() {
           <Route path="media" element={<AdminMedia />} />
           <Route path="site-assets" element={<AdminSiteAssets />} />
           <Route path="website" element={<AdminWebsite />} />
+          <Route path="legal-pages" element={<AdminLegalPages />} />
           <Route path="journal" element={<AdminJournal />} />
           <Route path="events" element={<AdminEvents />} />
           <Route path="astrologers" element={<AdminAstrologers />} />

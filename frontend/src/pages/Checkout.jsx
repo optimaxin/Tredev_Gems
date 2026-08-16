@@ -38,10 +38,35 @@ export default function Checkout() {
     shipping_name: "", shipping_phone: "", shipping_address: "",
     shipping_city: "", shipping_state: "", shipping_pincode: "", email: "",
     shipping_country: "", // required for a USD (outside-India) checkout only
-    buyer_gstin: "", buyer_legal_name: "", // optional — a B2B tax invoice
+    buyer_gstin: "", // optional — a B2B tax invoice; business name comes from Cashfree, never typed
   });
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const [gstOpen, setGstOpen] = useState(false);
+  // "" | "verifying" | "verified" | "failed" — mirrors .claude/gst_verification.md §6.2.
+  // The business name is only ever set from a successful /gstin/verify response.
+  const [gstinStatus, setGstinStatus] = useState("");
+  const [gstinError, setGstinError] = useState("");
+  const [businessName, setBusinessName] = useState("");
+  const GSTIN_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
+  const gstinFormatValid = GSTIN_RE.test(form.buyer_gstin);
+
+  const verifyGstin = async () => {
+    setGstinStatus("verifying");
+    setGstinError("");
+    try {
+      const { data } = await api.post("/gstin/verify", { gstin: form.buyer_gstin });
+      if (data.verified) {
+        setBusinessName(data.businessName);
+        setGstinStatus("verified");
+      } else {
+        setGstinStatus("failed");
+        setGstinError(data.message || "We couldn't verify this GSTIN.");
+      }
+    } catch (e) {
+      setGstinStatus("failed");
+      setGstinError(e?.response?.data?.detail || "We couldn't verify this GSTIN.");
+    }
+  };
   const [pinLookup, setPinLookup] = useState("");  // "", "loading", "ok", "notfound"
   const currency = cart.currency || "INR";
 
@@ -245,7 +270,10 @@ export default function Checkout() {
               // Collapsing clears both so the order goes back to being a plain B2C one.
               onClick={() => {
                 setGstOpen((o) => !o);
-                if (gstOpen) setForm((f) => ({ ...f, buyer_gstin: "", buyer_legal_name: "" }));
+                if (gstOpen) {
+                  setForm((f) => ({ ...f, buyer_gstin: "" }));
+                  setGstinStatus(""); setGstinError(""); setBusinessName("");
+                }
               }}
               className="text-xs text-ink-muted underline underline-offset-4 hover:text-maroon"
             >
@@ -257,32 +285,69 @@ export default function Checkout() {
               <label className="block">
                 <div className="text-xs text-ink-muted mb-1 flex items-center gap-2">
                   GST Number (GSTIN)
-                  {form.buyer_gstin && form.buyer_gstin.length !== 15 && (
+                  {form.buyer_gstin && !gstinFormatValid && (
                     <span className="text-[10px] text-revoked">a GSTIN is 15 characters</span>
                   )}
                 </div>
-                <input
-                  data-testid="checkout-buyer_gstin"
-                  value={form.buyer_gstin}
-                  onChange={(e) => setForm((f) => ({ ...f, buyer_gstin: e.target.value.toUpperCase() }))}
-                  type="text"
-                  maxLength={15}
-                  placeholder="09AAECO5418P1ZV"
-                  className="w-full gold-line bg-ivory px-4 py-3 outline-none focus:border-maroon"
-                />
+                <div className="flex gap-2">
+                  <input
+                    data-testid="checkout-buyer_gstin"
+                    value={form.buyer_gstin}
+                    onChange={(e) => {
+                      setForm((f) => ({ ...f, buyer_gstin: e.target.value.toUpperCase() }));
+                      if (gstinStatus) { setGstinStatus(""); setGstinError(""); setBusinessName(""); }
+                    }}
+                    readOnly={gstinStatus === "verifying" || gstinStatus === "verified"}
+                    type="text"
+                    maxLength={15}
+                    placeholder="09AAECO5418P1ZV"
+                    className="flex-1 gold-line bg-ivory px-4 py-3 outline-none focus:border-maroon disabled:opacity-60"
+                  />
+                  {gstinStatus === "verified" ? (
+                    <span className="inline-flex items-center gap-1 px-3 text-xs text-green-700 whitespace-nowrap">
+                      <CheckCircle size={16} weight="fill" /> Verified
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      data-testid="checkout-gstin-verify"
+                      onClick={verifyGstin}
+                      disabled={!gstinFormatValid || gstinStatus === "verifying"}
+                      className="px-4 py-2 text-xs uppercase tracking-widest gold-line hover:border-maroon disabled:opacity-40 whitespace-nowrap"
+                    >
+                      {gstinStatus === "verifying" ? "Verifying…" : gstinStatus === "failed" ? "Retry" : "Verify"}
+                    </button>
+                  )}
+                </div>
+                {gstinStatus === "verified" && (
+                  <button
+                    type="button"
+                    data-testid="checkout-gstin-change"
+                    onClick={() => { setGstinStatus(""); setGstinError(""); setBusinessName(""); }}
+                    className="mt-1 text-[11px] text-maroon underline underline-offset-4"
+                  >
+                    Change GSTIN
+                  </button>
+                )}
+                {gstinStatus === "failed" && gstinError && (
+                  <div className="mt-1 text-[11px] text-revoked">{gstinError}</div>
+                )}
               </label>
               <label className="block">
                 <div className="text-xs text-ink-muted mb-1">Registered Business Name</div>
                 <input
                   data-testid="checkout-buyer_legal_name"
-                  value={form.buyer_legal_name}
-                  onChange={set("buyer_legal_name")}
+                  value={businessName}
+                  disabled
+                  readOnly
+                  placeholder="Auto-filled after GSTIN verification"
                   type="text"
-                  className="w-full gold-line bg-ivory px-4 py-3 outline-none focus:border-maroon"
+                  className="w-full gold-line bg-cream/60 px-4 py-3 outline-none text-ink-muted disabled:opacity-70"
                 />
               </label>
               <div className="text-[11px] text-ink-muted">
-                Entering a GSTIN puts it on the tax invoice so the business can claim input tax credit.
+                Verify your GSTIN to put it on the tax invoice so the business can claim input tax credit.
+                {gstinStatus !== "verified" && " Unverified GST numbers aren't added to the order."}
               </div>
             </>
           )}

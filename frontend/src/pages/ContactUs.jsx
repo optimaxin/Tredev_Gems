@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, apiErrorMessage } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
@@ -21,10 +21,14 @@ const CATEGORIES = [
   { key: "other", label: "Other" },
 ];
 
-const SUPPORT_EMAIL = "hello@gemora.in";
-const SUPPORT_PHONE = "+91 76684 89528";
-const SUPPORT_PHONE_TEL = "+917668489528";
-const SUPPORT_ADDRESS = ["221A, Nalanda Town, Shamshabad Road", "Agra, Uttar Pradesh – 282001, India"];
+// Shown until /site-content resolves — mirrors server.py's _DEFAULT_CONTACT_US, which
+// is also what's returned if an admin has never saved an edit (Admin → Legal Pages).
+const FALLBACK_CONTACT = {
+  email: "hello@gemora.in", phone: "+91 76684 89528", phone_tel: "+917668489528",
+  hours: "Daily, 9 AM – 9 PM IST", office_name: "OptiMaxin Solutions Private Limited",
+  address_line1: "221A, Nalanda Town, Shamshabad Road",
+  address_line2: "Agra, Uttar Pradesh – 282001, India",
+};
 
 function InfoRow({ Icon, label, children }) {
   return (
@@ -40,6 +44,7 @@ function InfoRow({ Icon, label, children }) {
 
 export default function ContactUs() {
   const { user } = useAuth();
+  const [contact, setContact] = useState(FALLBACK_CONTACT);
   const [form, setForm] = useState({
     name: user?.name || "", email: user?.email || "", phone: user?.phone || "",
     category: "other", message: "",
@@ -47,6 +52,12 @@ export default function ContactUs() {
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
+
+  useEffect(() => {
+    api.get("/site-content").then(({ data }) => {
+      if (data?.contact_us) setContact(data.contact_us);
+    }).catch(() => {});
+  }, []);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -85,23 +96,23 @@ export default function ContactUs() {
         {/* ── Contact details ── */}
         <aside className="gold-line bg-cream p-6 h-fit space-y-6">
           <InfoRow Icon={EnvelopeSimple} label="Email">
-            <a href={`mailto:${SUPPORT_EMAIL}`} className={linkCls}>{SUPPORT_EMAIL}</a>
+            <a href={`mailto:${contact.email}`} className={linkCls}>{contact.email}</a>
           </InfoRow>
           <InfoRow Icon={Phone} label="Phone">
-            <a href={`tel:${SUPPORT_PHONE_TEL}`} className={linkCls}>{SUPPORT_PHONE}</a>
+            <a href={`tel:${contact.phone_tel}`} className={linkCls}>{contact.phone}</a>
           </InfoRow>
           <InfoRow Icon={WhatsappLogo} label="WhatsApp">
-            <a href={`https://wa.me/${SUPPORT_PHONE_TEL.replace("+", "")}`} className={linkCls} target="_blank" rel="noopener noreferrer">
-              {SUPPORT_PHONE}
+            <a href={`https://wa.me/${contact.phone_tel.replace("+", "")}`} className={linkCls} target="_blank" rel="noopener noreferrer">
+              {contact.phone}
             </a>
           </InfoRow>
           <InfoRow Icon={Clock} label="Hours">
-            Daily, 9 AM – 9 PM IST
+            {contact.hours}
           </InfoRow>
           <InfoRow Icon={MapPin} label="Registered office">
-            <span className="font-semibold">OptiMaxin Solutions Private Limited</span><br />
-            {SUPPORT_ADDRESS[0]}<br />
-            {SUPPORT_ADDRESS[1]}
+            <span className="font-semibold">{contact.office_name}</span><br />
+            {contact.address_line1}<br />
+            {contact.address_line2}
           </InfoRow>
           <div className="text-[11px] text-ink-muted pt-2 border-t border-gold/30">
             Already have an account? <Link to="/account" className={linkCls}>Raise a query from Account → Support</Link> to track it alongside your orders.

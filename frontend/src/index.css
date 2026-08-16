@@ -76,6 +76,21 @@ body {
 .gold-line-t { border-top: 1px solid rgba(212, 175, 55, 0.35); }
 .gold-line-b { border-bottom: 1px solid rgba(212, 175, 55, 0.35); }
 
+/* Admin-authored HTML on legal/contact pages (LegalPage's `html` mode) */
+.legal-html h2 {
+  font-family: "Yatra One", "Cormorant Garamond", serif;
+  font-size: 1.5rem; color: var(--maroon-deep); border-bottom: 1px solid rgba(212, 175, 55, 0.35);
+  padding-bottom: 0.5rem; margin-top: 2.5rem; margin-bottom: 1rem; scroll-margin-top: 6rem;
+}
+.legal-html h2:first-child { margin-top: 0; }
+.legal-html p { margin-top: 0.75rem; }
+.legal-html ul, .legal-html ol { margin-top: 0.75rem; padding-left: 1.25rem; }
+.legal-html ul { list-style: disc; }
+.legal-html ol { list-style: decimal; }
+.legal-html li { margin-top: 0.5rem; }
+.legal-html a { color: var(--maroon); text-decoration: underline; text-decoration-color: rgba(212, 175, 55, 0.6); }
+.legal-html strong { color: var(--ink); }
+
 /* Subtle sacred-geometry watermark */
 .geom-bg {
   background-image:

@@ -234,6 +234,42 @@ async def _cashfree_create_refund(app_id: str, secret: str, order_id: str, refun
     return await _cashfree_circuit.call(_refund)
 
 
+# ── Cashfree Secure ID (GSTIN / KYB verification) — see .claude/gst_verification.md ──
+# Separate product from the Payment Gateway above (different base host, and Cashfree
+# may issue separate credentials for it), so it gets its own env vars and circuit
+# rather than reusing _cashfree_circuit's payment credentials.
+_cashfree_kyb_circuit = get_circuit("cashfree_kyb", failure_threshold=3, reset_timeout=20.0,
+                                    call_timeout=8.0, max_concurrency=10)
+GSTIN_CACHE_TTL_DAYS = 60
+
+
+def _cashfree_kyb_base_url() -> str:
+    return ("https://api.cashfree.com/verification"
+            if os.environ.get("CASHFREE_VERIFICATION_ENV") == "production"
+            else "https://sandbox.cashfree.com/verification")
+
+
+async def _cashfree_verify_gstin(gstin: str) -> dict:
+    """Calls Cashfree Secure ID's GSTIN KYB endpoint. Raises on any failure/timeout;
+    the caller (gstin_verify) treats that as verified=false rather than an outage."""
+    client_id = os.environ.get("CASHFREE_VERIFICATION_CLIENT_ID", "").strip()
+    secret = os.environ.get("CASHFREE_VERIFICATION_CLIENT_SECRET", "").strip()
+    if not client_id or not secret:
+        raise RuntimeError("Cashfree Secure ID credentials are not configured")
+
+    async def _call():
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.post(
+                f"{_cashfree_kyb_base_url()}/gstin",
+                headers={"x-client-id": client_id, "x-client-secret": secret,
+                         "x-api-version": _CASHFREE_API_VERSION, "Content-Type": "application/json"},
+                json={"GSTIN": gstin})
+            resp.raise_for_status()
+            return resp.json()
+
+    return await _cashfree_kyb_circuit.call(_call)
+
+
 # ── Razorpay (international / non-INR checkout only — Cashfree still handles INR) ──
 _razorpay_circuit = get_circuit("razorpay", failure_threshold=3, reset_timeout=20.0,
                                 call_timeout=8.0, max_concurrency=10)
@@ -796,8 +832,13 @@ class CheckoutIn(BaseModel):
     # invoice is issued as B2B and prints the buyer's GSTIN, which is what lets
     # them claim input tax credit. Validated (format + checksum) before the order
     # is created — a typo'd GSTIN on a statutory document is not fixable later.
+    # No buyer_legal_name here on purpose: the business name is never client input
+    # (see gstin_verify) — checkout() looks it up from gstin_verifications itself.
     buyer_gstin: Optional[str] = None
-    buyer_legal_name: Optional[str] = None
+
+
+class GstinVerifyIn(BaseModel):
+    gstin: str
 
 
 class DispatchIn(BaseModel):
@@ -2153,6 +2194,260 @@ _DEFAULT_SHOPPABLE_VIDEOS = {
     "videos": [],
 }
 
+_DEFAULT_CONTACT_US = {
+    "email": "hello@gemora.in", "phone": "+91 76684 89528", "phone_tel": "+917668489528",
+    "hours": "Daily, 9 AM – 9 PM IST",
+    "office_name": "OptiMaxin Solutions Private Limited",
+    "address_line1": "221A, Nalanda Town, Shamshabad Road",
+    "address_line2": "Agra, Uttar Pradesh – 282001, India",
+}
+_DEFAULT_PRIVACY_POLICY = {
+    "title": "Privacy Policy", "effective_date": "5 August 2026",
+    "intro": "This Privacy Policy explains what personal information Tredev collects, why, and how you can control it. By using this website you agree to the practices described here.",
+    "html": (
+        '<h2 id="who-we-are">Who we are</h2>'
+        '<p>Tredev (“<strong>we</strong>”, “<strong>us</strong>”, “<strong>our</strong>”) is a website and '
+        'service operated by <strong>OptiMaxin Solutions Private Limited</strong> (“the Company”), a '
+        'company incorporated under the Companies Act, 2013 (CIN: <strong>U62013UP2024PTC211889</strong>), '
+        'with its registered/correspondence address at 221A, Nalanda Town, Shamshabad Road, Agra, Uttar '
+        'Pradesh – 282001, India.</p>'
+        '<p>This Privacy Policy applies to the Tredev website, our ordering and account systems, our free '
+        'astrology tools (Lucky Rudraksha finder, Carat ↔ Ratti converter), and our consultation booking '
+        'service.</p>'
+        '<h2 id="information-we-collect">Information we collect</h2>'
+        '<p>We collect information you give us directly, information created when you use our tools, and limited technical information about how you browse.</p>'
+        '<ul>'
+        '<li><strong>Account details</strong> — name, email address, phone number, and password (stored as a salted hash, never in plain text).</li>'
+        '<li><strong>Identity verification</strong> — a one-time password (OTP) sent to your phone via Firebase Authentication to confirm you own the number; if you sign in with Google, we receive your name, email, and profile photo from your Google account.</li>'
+        '<li><strong>Order &amp; shipping details</strong> — delivery address, PIN code, and the items you buy.</li>'
+        '<li><strong>Astrology tool inputs</strong> — if you use the Lucky Rudraksha finder or book a consultation, we ask for your date of birth, time of birth, and place of birth (as coordinates) so we can compute your Moon sign and Nakshatra. This is used only to generate your reading.</li>'
+        '<li><strong>Communication preferences</strong> — whether you’ve opted in to WhatsApp updates about orders, offers, or temple pooja recordings.</li>'
+        '<li><strong>Reviews and questions</strong> — anything you post publicly on a product page.</li>'
+        '<li><strong>Usage data</strong> — pages visited, device/browser type, and approximate location (from IP), collected automatically through analytics tooling.</li>'
+        '</ul>'
+        '<p>We do <strong>not</strong> collect or store your card, UPI, or net-banking credentials — those are entered directly on our payment partner’s secure page (see “Payment information” below).</p>'
+        '<h2 id="how-we-use-your-information">How we use your information</h2>'
+        '<ul>'
+        '<li>To create and secure your account, and to verify your identity via phone OTP or Google sign-in.</li>'
+        '<li>To process, ship, and support your orders, including generating your item’s signed authenticity certificate and QR verification record.</li>'
+        '<li>To compute results for the Lucky Rudraksha finder and Carat ↔ Ratti converter, and to prepare for a consultation call you’ve booked.</li>'
+        '<li>To send order updates, WhatsApp messages (only if you’ve opted in), and — where legally permitted — offers on new arrivals.</li>'
+        '<li>To detect fraud, prevent abuse of our OTP and payment systems, and comply with legal obligations.</li>'
+        '<li>To understand, in aggregate, how the site is used, so we can improve it.</li>'
+        '</ul>'
+        '<h2 id="sharing-with-third-parties">Sharing with third parties</h2>'
+        '<p>We do not sell your personal information. We share it only with the service providers who help us run Tredev, each engaged only for the purpose stated:</p>'
+        '<ul>'
+        '<li><strong>Firebase (Google)</strong> — phone OTP delivery and Google sign-in.</li>'
+        '<li><strong>Razorpay</strong>, and where applicable other RBI-authorised payment aggregators — to process your payment. We never see or store your full card number.</li>'
+        '<li><strong>Supabase</strong> — our database and file-storage infrastructure, which holds your account, order, and certificate records.</li>'
+        '<li>Product analytics tooling (such as PostHog) — to understand aggregate site usage, not to build an advertising profile of you.</li>'
+        '<li>Courier and logistics partners — to deliver your order, receiving only the shipping details needed to do so.</li>'
+        '<li>Law enforcement or regulators, if we’re legally required to disclose information.</li>'
+        '</ul>'
+        '<h2 id="cookies-and-tracking">Cookies &amp; tracking</h2>'
+        '<p>We use your browser’s local storage to keep you signed in, and cookies or similar technologies from '
+        'our analytics provider to understand how the site is used. You can clear these at any time from your '
+        'browser settings; doing so will sign you out and reset anonymous usage tracking, but won’t affect '
+        'your account or orders.</p>'
+        '<h2 id="payment-information">Payment information</h2>'
+        '<p>All payments are processed by our payment gateway partner(s) (currently Razorpay) on their own '
+        'PCI-DSS-compliant systems. Tredev never receives or stores your full card number, CVV, or '
+        'net-banking password — we only receive confirmation that a payment succeeded or failed, plus a '
+        'reference ID for support purposes.</p>'
+        '<h2 id="data-retention">Data retention</h2>'
+        '<p>We keep your account and order data for as long as your account is active, and for a reasonable '
+        'period after (typically up to 7 years for order and financial records) to meet our tax, accounting, '
+        'and consumer-dispute obligations under Indian law. You can ask us to delete your account and '
+        'personal data at any time, subject to what we’re legally required to retain — see “Your rights and '
+        'choices” below.</p>'
+        '<h2 id="data-security">Data security</h2>'
+        '<p>We use industry-standard safeguards — encrypted connections (HTTPS), hashed passwords, and '
+        'access-controlled infrastructure — to protect your information. No system is 100% secure; if we '
+        'become aware of a breach affecting your personal data, we will notify you and the relevant '
+        'authorities as required by law.</p>'
+        '<h2 id="your-rights-and-choices">Your rights and choices</h2>'
+        '<ul>'
+        '<li>Access or correct your account details from Account → Settings.</li>'
+        '<li>Opt out of WhatsApp marketing (Account → Settings, or reply STOP on WhatsApp) — you’ll still receive essential order updates.</li>'
+        '<li>Request a copy of the personal data we hold about you, or ask us to delete it, by writing to our Grievance Officer below.</li>'
+        '<li>Withdraw consent for optional data uses (like the astrology tools) simply by not using those features.</li>'
+        '</ul>'
+        '<h2 id="childrens-privacy">Children’s privacy</h2>'
+        '<p>Tredev is intended for users who are 18 years of age or older, or who are using the site with the '
+        'involvement of a parent or guardian for the purpose of placing an order or entering into a payment. '
+        'We do not knowingly collect personal information from children. If you believe a child has provided '
+        'us with personal data, please contact our Grievance Officer and we will remove it.</p>'
+        '<h2 id="changes-to-this-policy">Changes to this policy</h2>'
+        '<p>We may update this Privacy Policy from time to time, for example as we add new features or as the '
+        'law changes. We’ll update the “Effective” date at the top of this page, and for material changes, '
+        'we’ll make reasonable efforts to let you know (such as an email or an on-site notice).</p>'
+        '<h2 id="grievance-officer">Grievance Officer</h2>'
+        '<p>In accordance with the Information Technology Act, 2000 and the rules made thereunder, the Grievance Officer for Tredev is:</p>'
+        '<p><strong>Lubhansh Sharma</strong><br>'
+        'OptiMaxin Solutions Private Limited<br>'
+        '221A, Nalanda Town, Shamshabad Road, Agra, Uttar Pradesh – 282001, India<br>'
+        'Phone: <a href="tel:+917668489528">+91 76684 89528</a><br>'
+        'Email: <a href="mailto:lubhansh.sharma@optimaxin.com">lubhansh.sharma@optimaxin.com</a></p>'
+        '<p>We will acknowledge and address grievances as promptly as possible, and in line with statutory timelines where applicable.</p>'
+        '<h2 id="contact-us">Contact us</h2>'
+        '<p>For general questions about this Privacy Policy or your data, write to us at '
+        '<a href="mailto:hello@gemora.in">hello@gemora.in</a>, or reach our Grievance '
+        'Officer directly using the details above.</p>'
+    ),
+}
+_DEFAULT_TERMS_CONDITIONS = {
+    "title": "Terms & Conditions", "effective_date": "5 August 2026",
+    "intro": "These Terms & Conditions govern your access to and use of the Tredev website and services, operated by OptiMaxin Solutions Private Limited. By using the Services, you agree to be bound by them.",
+    "html": (
+        '<h2 id="acceptance-of-terms">Acceptance of terms</h2>'
+        '<p>These Terms &amp; Conditions (“Terms”) are a binding agreement between you and '
+        '<strong>OptiMaxin Solutions Private Limited</strong> (“Company”, “we”, “us”), which operates the '
+        'Tredev website, app, and related services (together, the “Services”). By browsing the site, creating '
+        'an account, booking a consultation, or placing an order, you agree to these Terms and to our '
+        '<a href="/privacy-policy">Privacy Policy</a>. If you do not agree, please do '
+        'not use the Services.</p>'
+        '<h2 id="about-us">About us</h2>'
+        '<p><strong>OptiMaxin Solutions Private Limited</strong> is a company incorporated in India under the '
+        'Companies Act, 2013 (CIN: U62013UP2024PTC211889), with its registered/correspondence address at '
+        '221A, Nalanda Town, Shamshabad Road, Agra, Uttar Pradesh – 282001, India.</p>'
+        '<h2 id="eligibility-and-accounts">Eligibility &amp; accounts</h2>'
+        '<ul>'
+        '<li>You must be at least 18 years old and capable of entering into a binding contract under the Indian Contract Act, 1872, to create an account or place an order.</li>'
+        '<li>You’re responsible for keeping your account credentials (password, and access to the phone number or Google account used to sign in) confidential, and for all activity under your account.</li>'
+        '<li>You agree to give accurate information at signup and when placing an order — particularly your shipping address and, where relevant for our astrology tools, your date, time, and place of birth.</li>'
+        '</ul>'
+        '<h2 id="products-and-authenticity">Products &amp; authenticity</h2>'
+        '<p>Every gemstone, rudraksha, bracelet, yantra, and idol we sell as a “serialised, signed” product is '
+        'issued a unique, cryptographically signed authenticity record, verifiable via QR code at '
+        '<a href="/verify">/verify</a>. Product images and descriptions are as '
+        'accurate as we can make them, but natural stones vary — colour, inclusions, and exact weight may '
+        'differ slightly from photographs.</p>'
+        '<h2 id="astrology-tools-and-consultations-disclaimer">Astrology tools &amp; consultations disclaimer</h2>'
+        '<p>Our free tools — the Lucky Rudraksha finder and Carat ↔ Ratti converter — and our astrologer '
+        'consultation calls are provided for <strong>spiritual and informational purposes only</strong>. They '
+        'are not a substitute for professional medical, legal, financial, or psychological advice, and we '
+        'make no guarantee of any specific outcome from wearing a gemstone or rudraksha, or from following '
+        'guidance given on a call.</p>'
+        '<h2 id="pricing-and-payments">Pricing &amp; payments</h2>'
+        '<p>Prices are shown in Indian Rupees (₹) or US Dollars ($) depending on your selected currency, and are '
+        'inclusive of applicable taxes unless stated otherwise. Payments are processed securely by our '
+        'payment gateway partner(s); we reserve the right to cancel and refund an order if payment cannot be '
+        'verified.</p>'
+        '<h2 id="shipping-and-delivery">Shipping &amp; delivery</h2>'
+        '<p>We ship across India, and internationally where offered at checkout. Delivery timelines shown at '
+        'checkout are estimates, not guarantees — delays can occur due to courier, weather, or customs issues '
+        'beyond our control. Risk in the goods passes to you on delivery.</p>'
+        '<h2 id="cancellations-returns-and-refunds">Cancellations, returns &amp; refunds</h2>'
+        '<ul>'
+        '<li>You may cancel an order before it is dispatched, from Account → Orders or by contacting support; once dispatched, cancellation is no longer possible and the item must instead be returned after delivery.</li>'
+        '<li>If an item arrives damaged, defective, or different from what you ordered, contact us via Account '
+        '→ Support as soon as possible, ideally with photos or an unboxing video — this helps us resolve it '
+        'quickly given these are verified, serialised items. See our '
+        '<a href="/refunds-and-cancellations">Refunds &amp; Cancellations</a> policy '
+        'for the exact return window and process.</li>'
+        '<li>Approved refunds are returned to your original payment method and typically reflect within 5–7 business days, depending on your bank.</li>'
+        '<li>Items that have been temple-energised (puja performed) or customised at your request may not be eligible for return once the service has been carried out, except where the item itself is defective.</li>'
+        '</ul>'
+        '<h2 id="intellectual-property">Intellectual property</h2>'
+        '<p>All text, images, logos, and the signed-verification system on this site belong to the Company or '
+        'its licensors. You may not copy, resell, or use our content or branding without our written '
+        'permission.</p>'
+        '<h2 id="user-conduct">User conduct</h2>'
+        '<p>You agree not to: misuse the OTP/verification system, attempt to access another user’s account, post '
+        'false reviews, scrape the site, or use the Services for any unlawful purpose. We may suspend or '
+        'terminate accounts that violate this.</p>'
+        '<h2 id="limitation-of-liability">Limitation of liability</h2>'
+        '<p>To the maximum extent permitted by law, the Company’s liability for any claim arising from your use '
+        'of the Services is limited to the amount you paid for the relevant order. We are not liable for '
+        'indirect or consequential losses, or for outcomes attributed to astrological guidance given via our '
+        'tools or consultations.</p>'
+        '<h2 id="indemnification">Indemnification</h2>'
+        '<p>You agree to indemnify and hold the Company harmless from any claim arising from your misuse of the '
+        'Services or breach of these Terms.</p>'
+        '<h2 id="governing-law-and-jurisdiction">Governing law &amp; jurisdiction</h2>'
+        '<p>These Terms are governed by the laws of India. Subject to the grievance redressal process below, '
+        'courts at Agra, Uttar Pradesh shall have exclusive jurisdiction over any dispute arising from these '
+        'Terms or your use of the Services.</p>'
+        '<h2 id="grievance-redressal">Grievance redressal</h2>'
+        '<p>In accordance with the Information Technology Act, 2000, the Consumer Protection (E-Commerce) '
+        'Rules, 2020, and the rules made thereunder, our Grievance Officer is:</p>'
+        '<p><strong>Lubhansh Sharma</strong><br>'
+        'OptiMaxin Solutions Private Limited<br>'
+        '221A, Nalanda Town, Shamshabad Road, Agra, Uttar Pradesh – 282001, India<br>'
+        'Phone: <a href="tel:+917668489528">+91 76684 89528</a><br>'
+        'Email: <a href="mailto:lubhansh.sharma@optimaxin.com">lubhansh.sharma@optimaxin.com</a></p>'
+        '<h2 id="changes-to-these-terms">Changes to these terms</h2>'
+        '<p>We may revise these Terms from time to time; the “Effective” date above will reflect the latest '
+        'version. Continuing to use the Services after a change means you accept the revised Terms.</p>'
+        '<h2 id="contact-us">Contact us</h2>'
+        '<p>Questions about these Terms? Write to us at '
+        '<a href="mailto:hello@gemora.in">hello@gemora.in</a>, or reach our Grievance '
+        'Officer using the details above.</p>'
+    ),
+}
+_DEFAULT_REFUNDS_CANCELLATIONS = {
+    "title": "Refunds & Cancellations", "effective_date": "15 August 2026",
+    "intro": "Our policy for cancelling an order, returning a delivered item, and how refunds are processed.",
+    "html": (
+        '<h2 id="overview">Overview</h2>'
+        '<p>This policy explains when you can cancel an order, when you can return a delivered item, and how '
+        'refunds are processed. It applies to all orders placed on the Tredev website. For general terms, '
+        'see our <a href="/terms-and-conditions">Terms &amp; Conditions</a>.</p>'
+        '<h2 id="cancelling-an-order">Cancelling an order</h2>'
+        '<ul>'
+        '<li>You can cancel an order free of charge any time <strong>before it is dispatched</strong>, from Account → Orders, or by <a href="/contact-us">contacting us</a>.</li>'
+        '<li>Once an order is dispatched, it can no longer be cancelled — you’ll instead need to request a return after the item is delivered.</li>'
+        '<li>If your payment was captured but the order could not be placed (a rare gateway/technical error), it is automatically refunded in full — see “Refund timeline” below.</li>'
+        '</ul>'
+        '<h2 id="return-eligibility">Return eligibility</h2>'
+        '<p>You may request a return within <strong>7 days of delivery</strong> if:</p>'
+        '<ul>'
+        '<li>the item arrived damaged or defective,</li>'
+        '<li>you received the wrong product, size, or variant, or</li>'
+        '<li>the item materially differs from what was described on the product page.</li>'
+        '</ul>'
+        '<p>Since every gemstone, rudraksha, and idol we sell is a serialised, individually certified item, we '
+        'ask you to keep the original packaging, the authenticity certificate, and — where possible — an '
+        'unboxing video or photos taken within 48 hours of delivery. This isn’t a strict condition for '
+        'raising a claim, but it helps us resolve genuine issues quickly without back-and-forth.</p>'
+        '<h2 id="non-returnable-items">Non-returnable items</h2>'
+        '<ul>'
+        '<li>Items that have been <strong>temple-energised</strong> (a puja performed at your request) or <strong>customised</strong> to your specification — once that service is carried out, the piece is made for you specifically. This does not apply if the item itself is defective.</li>'
+        '<li>Consumables such as Temple Prashad, once opened.</li>'
+        '<li>A simple change of mind after delivery is not, on its own, grounds for a return — our product pages describe each piece as accurately as we can, but natural stones vary slightly in colour and inclusions from photographs.</li>'
+        '</ul>'
+        '<h2 id="how-to-request-a-return-or-refund">How to request a return or refund</h2>'
+        '<ol>'
+        '<li>Go to Account → Orders and raise a query against the order (category “Return” or “Refund”), or use our <a href="/contact-us">Contact Us</a> page.</li>'
+        '<li>Include your order number, a description of the issue, and photos or an unboxing video if the item arrived damaged, defective, or incorrect.</li>'
+        '<li>Our team reviews the request, usually within 24–48 hours, and confirms the next step — a pickup, a replacement, or a refund.</li>'
+        '</ol>'
+        '<h2 id="refund-timeline">Refund timeline</h2>'
+        '<ul>'
+        '<li>Once a return is approved (or a cancellation processed), we initiate the refund within <strong>2 business days</strong>.</li>'
+        '<li>Refunds are credited to your original payment method only — we do not offer cash refunds. Prepaid orders are refunded via our payment gateway (Razorpay/Cashfree) to the original card, UPI ID, or bank account used to pay.</li>'
+        '<li>From initiation, funds typically reflect in <strong>5–7 business days</strong>, though this can take longer depending on your bank or card issuer — that part is outside our control once the gateway confirms the refund.</li>'
+        '<li>You’ll receive an email/WhatsApp update at each stage: request received, approved, refund initiated.</li>'
+        '</ul>'
+        '<h2 id="pickup-and-shipping-costs">Pickup &amp; shipping costs</h2>'
+        '<p>For an approved return due to a damaged, defective, or incorrect item, we arrange and pay for reverse '
+        'pickup. If you’re returning an item for any other approved reason, return shipping may be deducted '
+        'from your refund — we’ll always confirm this with you before the pickup is scheduled.</p>'
+        '<h2 id="order-cancelled-or-refunded-by-us">If we cancel or refund your order</h2>'
+        '<p>Occasionally we may need to cancel an order ourselves — for example, if a serialised unit fails a '
+        'final quality check, or stock information was incorrect. In that case we notify you immediately and '
+        'refund the full amount, following the same timeline in “Refund timeline” above, with no action '
+        'required from you.</p>'
+        '<h2 id="non-delivery-or-lost-in-transit">Non-delivery or lost in transit</h2>'
+        '<p>If a shipment is confirmed lost or undelivered by our courier partner, we will send a replacement at '
+        'no extra cost or issue a full refund, whichever you prefer.</p>'
+        '<h2 id="contact-us">Contact us</h2>'
+        '<p>Questions about a cancellation, return, or refund? Visit our <a href="/contact-us">Contact Us</a> page, '
+        'or write to us at <a href="mailto:hello@gemora.in">hello@gemora.in</a>.</p>'
+    ),
+}
+
 _CONTENT_DEFAULTS = {
     "announcement": _DEFAULT_ANNOUNCEMENT, "footer": _DEFAULT_FOOTER,
     "home": _DEFAULT_HOME, "header": _DEFAULT_HEADER,
@@ -2160,9 +2455,16 @@ _CONTENT_DEFAULTS = {
     "purposes": _DEFAULT_PURPOSES, "rashi": _DEFAULT_RASHI,
     "pooja_purposes": _DEFAULT_POOJA_PURPOSES,
     "consultation": _DEFAULT_CONSULTATION,
+    "contact_us": _DEFAULT_CONTACT_US,
+    "privacy_policy": _DEFAULT_PRIVACY_POLICY,
+    "terms_conditions": _DEFAULT_TERMS_CONDITIONS,
+    "refunds_cancellations": _DEFAULT_REFUNDS_CANCELLATIONS,
 }
 _CONTENT_KEYS = {"announcement", "footer", "home", "header", "shoppable_videos", "consultation"}   # "content" perm
 _TAXONOMY_KEYS = {"purposes", "rashi", "pooja_purposes"}   # gated by the "taxonomy" permission
+# Contact/legal pages: editable by ANY staff/owner login (require_admin), not gated
+# behind the "content" permission — see admin_legal_pages/admin_put_legal_page below.
+_LEGAL_PAGE_KEYS = {"contact_us", "privacy_policy", "terms_conditions", "refunds_cancellations"}
 
 
 async def _site_content(key: str):
@@ -2430,6 +2732,30 @@ async def admin_put_site_content(key: str, body: SiteContentIn,
         raise HTTPException(400, f"Unknown content key. Allowed: {sorted(_CONTENT_KEYS)}")
     await _upsert_content(key, body.value)
     await audit_log(actor, "site_content.update", key, {})
+    return {"ok": True, "key": key, "value": await _site_content(key)}
+
+
+@api.get("/admin/legal-pages")
+async def admin_legal_pages(_: str = Depends(require_admin)):
+    """Contact Us / Privacy Policy / Terms & Conditions / Refunds & Cancellations,
+    each with its current (stored or default) value. Gated on any staff/owner
+    login rather than the narrower "content" permission — these are low-risk,
+    frequently-needed edits (an address change, a policy tweak) that shouldn't
+    require a separate permission grant."""
+    rows = await db.fetch_all("SELECT key, value FROM site_content WHERE key = ANY($1)",
+                              list(_LEGAL_PAGE_KEYS))
+    stored = {r["key"]: r["value"] for r in rows}
+    return {k: (stored.get(k) or _CONTENT_DEFAULTS[k]) for k in _LEGAL_PAGE_KEYS}
+
+
+@api.put("/admin/legal-pages/{key}")
+async def admin_put_legal_page(key: str, body: SiteContentIn, actor: str = Depends(require_admin)):
+    if key not in _LEGAL_PAGE_KEYS:
+        raise HTTPException(400, f"Unknown page key. Allowed: {sorted(_LEGAL_PAGE_KEYS)}")
+    if not isinstance(body.value, dict):
+        raise HTTPException(400, "Page content must be an object")
+    await _upsert_content(key, body.value)
+    await audit_log(actor, "legal_page.update", key, {})
     return {"ok": True, "key": key, "value": await _site_content(key)}
 
 
@@ -3927,6 +4253,58 @@ async def _load_order(order_id: str, conn=None) -> Optional[dict]:
     return await _shape_order(row, conn)
 
 
+@api.post("/gstin/verify")
+async def gstin_verify(body: GstinVerifyIn, _rl: None = Depends(rate_limit(10, 60))):
+    """Verifies a GSTIN via Cashfree Secure ID (KYB) and caches the result so the
+    checkout business-name field is never client input — see
+    .claude/gst_verification.md §5. Never raises for an ordinary verification miss;
+    only a malformed GSTIN gets a 400, everything else returns verified=false."""
+    gstin = (body.gstin or "").strip().upper()
+    if not gst_engine.valid_gstin(gstin):
+        raise HTTPException(400, "That doesn't look like a valid GSTIN.")
+
+    cached = await db.fetch_one(
+        "SELECT id, gstin, legal_name, trade_name, verified_at FROM gstin_verifications "
+        "WHERE gstin = $1 AND expires_at > now()", gstin)
+    if cached:
+        return {"verified": True, "gstin": gstin,
+                "businessName": cached["trade_name"] or cached["legal_name"],
+                "verificationId": cached["id"], "verifiedAt": cached["verified_at"]}
+
+    try:
+        resp = await _cashfree_verify_gstin(gstin)
+    except Exception as e:
+        log.warning("gstin verify failed for %s: %s", gstin, e)
+        return {"verified": False, "reason": "VERIFICATION_FAILED",
+                "message": "We couldn't verify this GSTIN. You can retry, or continue checkout without it."}
+
+    data = resp.get("data") or {}
+    legal_name = (data.get("legal_name") or "").strip()
+    trade_name = (data.get("trade_name") or "").strip() or None
+    if resp.get("status") != "SUCCESS" or not legal_name:
+        return {"verified": False, "reason": resp.get("error_code") or "NOT_FOUND",
+                "message": resp.get("message") or "We couldn't verify this GSTIN."}
+
+    row_id = str(uuid.uuid4())
+    verified_at = now()
+    expires_at = verified_at + timedelta(days=GSTIN_CACHE_TTL_DAYS)
+    await db.execute(
+        """INSERT INTO gstin_verifications
+               (id, gstin, legal_name, trade_name, registration_status, raw_response,
+                verified_at, expires_at, source)
+           VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, 'cashfree')
+           ON CONFLICT (gstin) DO UPDATE SET
+               legal_name = EXCLUDED.legal_name, trade_name = EXCLUDED.trade_name,
+               registration_status = EXCLUDED.registration_status,
+               raw_response = EXCLUDED.raw_response, verified_at = EXCLUDED.verified_at,
+               expires_at = EXCLUDED.expires_at""",
+        row_id, gstin, legal_name, trade_name, data.get("registration_status"),
+        db.json_dumps(resp), verified_at, expires_at)
+
+    return {"verified": True, "gstin": gstin, "businessName": trade_name or legal_name,
+            "verificationId": row_id, "verifiedAt": iso(verified_at)}
+
+
 @api.post("/checkout")
 async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(require_user)):
     # Buying requires an account — the frontend hides the total and gates this call
@@ -3938,18 +4316,21 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
     if not items:
         raise HTTPException(400, "Cart is empty")
 
-    # Optional B2B GSTIN. Rejected here rather than at invoicing time: by the time
-    # we issue the invoice the order is delivered and the number is unfixable, so a
-    # typo has to be caught while the buyer is still on the page to correct it.
+    # Optional B2B GSTIN. The business name is never client input (see gstin_verify)
+    # — it's only ever pulled from a Cashfree-verified cache row for this exact
+    # GSTIN. A GSTIN the buyer typed but never successfully verified (or verified
+    # long enough ago that it lapsed) is dropped silently rather than trusted, per
+    # .claude/gst_verification.md §7.2 — checkout is never blocked on this.
     buyer_gstin = (body.buyer_gstin or "").strip().upper() or None
-    buyer_legal_name = (body.buyer_legal_name or "").strip() or None
+    buyer_legal_name = None
     if buyer_gstin:
-        if not gst_engine.valid_gstin(buyer_gstin):
-            raise HTTPException(400, "That GST number doesn't look valid. Please "
-                                     "check it, or leave the field blank.")
-        if not buyer_legal_name:
-            raise HTTPException(400, "Enter the registered business name for the "
-                                     "GST number.")
+        verification = await db.fetch_one(
+            "SELECT legal_name, trade_name FROM gstin_verifications "
+            "WHERE gstin = $1 AND expires_at > now()", buyer_gstin)
+        if verification:
+            buyer_legal_name = verification["trade_name"] or verification["legal_name"]
+        else:
+            buyer_gstin = None
 
     # Shipping is free within India; outside it, each distinct product in the cart
     # can carry its own USD charge per shipping region (admin-set on the product,
