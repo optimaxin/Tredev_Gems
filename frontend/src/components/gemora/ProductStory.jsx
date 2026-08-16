@@ -111,6 +111,10 @@ function Specs({ p }) {
 /* ── 3. Benefits — category-aware ──────────────────────────────────── */
 function Benefits({ p, copy }) {
   const purpose = p.attrs?.purpose;
+  const custom = (p.benefits || []).filter(Boolean);
+  const items = custom.length
+    ? custom.map((line, i) => ({ icon: ["shield", "lotus", "hand", "qr"][i % 4], title: null, body: line }))
+    : copy.benefits;
   return (
     <section className="bg-cream border-y border-gold/30 py-20">
       <div className="mx-auto max-w-7xl px-6 lg:px-10">
@@ -122,15 +126,15 @@ function Benefits({ p, copy }) {
           </p>
         )}
         <div className="mt-10 grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
-          {copy.benefits.map((b, i) => (
-            <Reveal key={b.title} delay={i * 0.08}>
+          {items.map((b, i) => (
+            <Reveal key={i} delay={i * 0.08}>
               <div className="gold-line bg-ivory p-6 h-full relative hover-lift">
                 <div className="absolute -top-3 left-6 brand-gradient text-ivory text-[10px] tracking-widest px-2 py-0.5 uppercase font-mono">
                   {String(i + 1).padStart(2, "0")}
                 </div>
                 <Ico name={b.icon} size={30} weight="duotone" className="text-gold-soft mt-3" />
-                <div className="font-serifd text-xl text-maroon-deep mt-3 leading-snug">{b.title}</div>
-                <p className="text-sm text-ink-soft mt-2 leading-relaxed">{b.body}</p>
+                {b.title && <div className="font-serifd text-xl text-maroon-deep mt-3 leading-snug">{b.title}</div>}
+                <p className={`text-sm text-ink-soft leading-relaxed ${b.title ? "mt-2" : "mt-3"}`}>{b.body}</p>
               </div>
             </Reveal>
           ))}

@@ -10,7 +10,7 @@ import MediaPicker from "@/components/gemora/MediaPicker";
 const EMPTY = {
   name: "", slug: "", category: "gemstone", subcategory_id: "", description: "", price: "", mrp: "",
   price_usd: "", // shown/charged to visitors outside India
-  images: [], devanagari_name: "", attrs: "{}", quantity: "", care_instructions: "", how_to_wear: "",
+  images: [], devanagari_name: "", attrs: "{}", quantity: "", care_instructions: "", how_to_wear: "", benefits: "",
   groups: [], // option groups, seeded from the category template
   shipping_charges: [], // [{region, amount}] — USD, outside-India only
   hsn_code: "", gst_rate_bp: "", uqc: "", // gst_rate_bp is edited as a percentage here
@@ -137,6 +137,7 @@ export default function AdminProducts() {
       attrs: JSON.stringify(p.attrs || {}, null, 2),
       care_instructions: (p.care_instructions || []).join("\n"),
       how_to_wear: (p.how_to_wear || []).join("\n"),
+      benefits: (p.benefits || []).join("\n"),
       groups: groupsToForm(p.variant_options?.groups),
       shipping_charges: Object.entries(p.shipping_charges || {}).map(([region, amount]) => ({
         region, amount: amount.toString(),
@@ -224,6 +225,7 @@ export default function AdminProducts() {
         // One bullet point per line — shown on the product page under "Care & wear".
         care_instructions: form.care_instructions.split("\n").map((s) => s.trim()).filter(Boolean),
         how_to_wear: form.how_to_wear.split("\n").map((s) => s.trim()).filter(Boolean),
+        benefits: form.benefits.split("\n").map((s) => s.trim()).filter(Boolean),
         // The product page's selectors. Which groups exist came from the category
         // template; the admin sets each choice's ₹ surcharge. The first choice of a
         // group is the free default (the backend enforces that too). show_if/optional
@@ -577,6 +579,17 @@ export default function AdminProducts() {
               onChange={(e) => setForm({ ...form, how_to_wear: e.target.value })}
               placeholder={"e.g.\nWear on a Monday morning after a bath.\nChant the mantra 108 times before the first wear.\nKeep it against the skin."}
               data-testid="product-how-to-wear-input"
+              className="w-full gold-line px-3 py-2 outline-none focus:border-maroon"
+            />
+            <div className="text-[10px] text-ink-muted mt-1">Shown as bullet points on the product page.</div>
+          </label>
+          <label className="block md:col-span-2">
+            <div className="text-xs text-ink-muted mb-1">Benefits (one bullet point per line)</div>
+            <textarea
+              rows={4} value={form.benefits}
+              onChange={(e) => setForm({ ...form, benefits: e.target.value })}
+              placeholder={"e.g.\nStrengthens focus and clarity of mind.\nSupports a calmer, steadier practice.\nCarries the intention it was chosen for."}
+              data-testid="product-benefits-input"
               className="w-full gold-line px-3 py-2 outline-none focus:border-maroon"
             />
             <div className="text-[10px] text-ink-muted mt-1">Shown as bullet points on the product page.</div>
