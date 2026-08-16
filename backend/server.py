@@ -249,9 +249,14 @@ def _cashfree_kyb_base_url() -> str:
             else "https://sandbox.cashfree.com/verification")
 
 
-async def _cashfree_verify_gstin(gstin: str) -> dict:
-    """Calls Cashfree Secure ID's GSTIN KYB endpoint. Raises on any failure/timeout;
-    the caller (gstin_verify) treats that as verified=false rather than an outage."""
+async def _cashfree_verify_gstin(gstin: str) -> tuple[int, dict]:
+    """Calls Cashfree Secure ID's GSTIN KYB endpoint (VRS v2 — no x-api-version header,
+    unlike the Payment Gateway). Returns (http_status, body) for ANY response Cashfree
+    actually sends back — a 400/401/422 there is a structured business answer
+    ({"type","code","message"}), not a transport failure, so it's returned rather than
+    raised; only a real network/timeout error raises, which the caller treats as an
+    outage. Success shape is flat: {"valid": bool, "legal_name_of_business", ...} —
+    no "status"/"data" wrapper, unlike the older Payment Gateway APIs on this file."""
     client_id = os.environ.get("CASHFREE_VERIFICATION_CLIENT_ID", "").strip()
     secret = os.environ.get("CASHFREE_VERIFICATION_CLIENT_SECRET", "").strip()
     if not client_id or not secret:
@@ -262,10 +267,9 @@ async def _cashfree_verify_gstin(gstin: str) -> dict:
             resp = await client.post(
                 f"{_cashfree_kyb_base_url()}/gstin",
                 headers={"x-client-id": client_id, "x-client-secret": secret,
-                         "x-api-version": _CASHFREE_API_VERSION, "Content-Type": "application/json"},
+                         "Content-Type": "application/json"},
                 json={"GSTIN": gstin})
-            resp.raise_for_status()
-            return resp.json()
+            return resp.status_code, resp.json()
 
     return await _cashfree_kyb_circuit.call(_call)
 
@@ -4272,18 +4276,23 @@ async def gstin_verify(body: GstinVerifyIn, _rl: None = Depends(rate_limit(10, 6
                 "verificationId": cached["id"], "verifiedAt": cached["verified_at"]}
 
     try:
-        resp = await _cashfree_verify_gstin(gstin)
+        status, resp = await _cashfree_verify_gstin(gstin)
     except Exception as e:
-        log.warning("gstin verify failed for %s: %s", gstin, e)
+        log.warning("gstin verify: outage calling Cashfree for %s: %s", gstin, e)
         return {"verified": False, "reason": "VERIFICATION_FAILED",
                 "message": "We couldn't verify this GSTIN. You can retry, or continue checkout without it."}
 
-    data = resp.get("data") or {}
-    legal_name = (data.get("legal_name") or "").strip()
-    trade_name = (data.get("trade_name") or "").strip() or None
-    if resp.get("status") != "SUCCESS" or not legal_name:
-        return {"verified": False, "reason": resp.get("error_code") or "NOT_FOUND",
+    # VRS v2's success body is flat ({"valid": bool, "legal_name_of_business", ...}) —
+    # no "status"/"data" wrapper. A non-2xx is Cashfree's structured business-error
+    # shape ({"type","code","message"}) — e.g. auth failure or an unfunded Secure ID
+    # wallet — logged in full since that detail only ever shows up here, not in a
+    # generic exception message.
+    legal_name = (resp.get("legal_name_of_business") or "").strip()
+    if status != 200 or not resp.get("valid") or not legal_name:
+        log.info("gstin verify: not verified for %s (http %s): %s", gstin, status, resp)
+        return {"verified": False, "reason": resp.get("code") or "NOT_FOUND",
                 "message": resp.get("message") or "We couldn't verify this GSTIN."}
+    trade_name = (resp.get("trade_name_of_business") or "").strip() or None
 
     row_id = str(uuid.uuid4())
     verified_at = now()
@@ -4298,7 +4307,7 @@ async def gstin_verify(body: GstinVerifyIn, _rl: None = Depends(rate_limit(10, 6
                registration_status = EXCLUDED.registration_status,
                raw_response = EXCLUDED.raw_response, verified_at = EXCLUDED.verified_at,
                expires_at = EXCLUDED.expires_at""",
-        row_id, gstin, legal_name, trade_name, data.get("registration_status"),
+        row_id, gstin, legal_name, trade_name, resp.get("gst_in_status"),
         db.json_dumps(resp), verified_at, expires_at)
 
     return {"verified": True, "gstin": gstin, "businessName": trade_name or legal_name,
