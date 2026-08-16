@@ -105,6 +105,11 @@ export default function PhoneVerify({ open = true, onClose, onVerified, prefillP
     setCode("");
     startCooldown();
 
+    // A resend that ends up failing must not cost the user their still-valid
+    // earlier code — keep it around so a failed catch can restore it.
+    const prevTask = sendTaskRef.current;
+    const wasAlreadySent = sentOkRef.current;
+
     const t0 = performance.now();
     const task = (async () => {
       const auth = fbAuth();
@@ -132,11 +137,15 @@ export default function PhoneVerify({ open = true, onClose, onVerified, prefillP
       if (sendTaskRef.current !== task) return;
       toast.error(fbErrorMessage(e));
       // Nothing was ever sent, so the OTP screen is a dead end — walk it back.
-      // On a failed *resend* the earlier code is still valid, so stay put.
-      if (!sentOkRef.current) {
+      // On a failed *resend* the earlier code is still valid, so stay put and
+      // restore the reference verify() reads, or it would await this rejected
+      // resend instead of the still-good original confirmation.
+      if (!wasAlreadySent) {
         setStep(1);
         if (cdRef.current) clearInterval(cdRef.current);
         setCooldown(0);
+      } else {
+        sendTaskRef.current = prevTask;
       }
     });
   };

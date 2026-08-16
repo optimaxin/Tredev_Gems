@@ -2909,6 +2909,47 @@ def _line_flags(selected: Optional[dict], variant_options: Optional[dict]) -> li
     return flags
 
 
+# attrs.origin (rudraksha) was free text ("Nepal"); rudraksha_origin is an enum.
+_RUDRAKSHA_ORIGIN_TO_DB = {"Nepal": "nepal", "Indonesia": "indonesia_java", "Haridwar": "haridwar"}
+
+
+def _match_enum_token(raw: Optional[str], mapping: dict) -> Optional[str]:
+    """attrs values are admin-entered free text and often bilingual
+    ("Surya, Sun", "Nepal, India") — match any known English name as a substring
+    rather than requiring an exact match, or every bilingual product fails
+    to resolve to an enum value and stays unfiltered."""
+    if not raw:
+        return None
+    low = raw.lower()
+    return next((code for name, code in mapping.items() if name.lower() in low), None)
+
+
+async def _upsert_typed_details(execute, product_id: str, category_key: str, attrs: dict) -> None:
+    """Shop filters (`graha`, `mukhi`) read the typed columns on gemstone_details/
+    rudraksha_details, not the attrs jsonb (see list_products above) — keep those
+    columns in sync whenever a rudraksha/gemstone product is written, or the
+    Planet/Mukhi filters silently match nothing for every admin-created product."""
+    graha = _match_enum_token(attrs.get("graha"), db.GRAHA_TO_DB)
+    if category_key == "gemstone":
+        await execute(
+            """INSERT INTO gemstone_details (product_id, planet_graha, origin)
+               VALUES ($1::uuid, $2::planet_graha, $3)
+               ON CONFLICT (product_id) DO UPDATE
+                 SET planet_graha = EXCLUDED.planet_graha, origin = EXCLUDED.origin,
+                     updated_at = now()""",
+            product_id, graha, attrs.get("origin"))
+    elif category_key == "rudraksha":
+        mukhi = attrs.get("mukhi")
+        await execute(
+            """INSERT INTO rudraksha_details (product_id, mukhi, ruling_planet, origin)
+               VALUES ($1::uuid, $2, $3::planet_graha, $4::rudraksha_origin)
+               ON CONFLICT (product_id) DO UPDATE
+                 SET mukhi = EXCLUDED.mukhi, ruling_planet = EXCLUDED.ruling_planet,
+                     origin = EXCLUDED.origin, updated_at = now()""",
+            product_id, str(mukhi) if mukhi is not None else None, graha,
+            _match_enum_token(attrs.get("origin"), _RUDRAKSHA_ORIGIN_TO_DB))
+
+
 async def _resolve_category_id(ck: str, subcategory_id: Optional[str]) -> str:
     """The category row a product files under: the sub if given & valid, else the
     top-level. `ck` (the enum type) can match several rows now that subs share it, so
@@ -2961,6 +3002,7 @@ async def admin_create_product(p: ProductIn, user_id: str = Depends(require_admi
                     else _category_option_template(ck)),
                 (p.hsn_code or "").strip() or None, p.gst_rate_bp,
                 (p.uqc or "").strip().upper() or None)
+            await _upsert_typed_details(conn.execute, pid, ck, p.attrs or {})
             # cart_items/order_items require a variant, so every product needs one.
             variant_id = uuid.uuid4()
             await conn.execute(
@@ -6407,6 +6449,16 @@ async def admin_update_product(product_id: str, body: ProductUpdateIn, actor: st
             f"WHERE id = ${len(args)}::uuid AND deleted_at IS NULL RETURNING id::text", *args)
         if not got:
             raise HTTPException(404, "Product not found")
+    # The graha/mukhi filters read gemstone_details/rudraksha_details, not attrs —
+    # keep them in sync whenever attrs or the category placement changes.
+    if "attrs" in updates or "category" in sent or "subcategory_id" in sent:
+        cur_ck = ck if ("category" in sent or "subcategory_id" in sent) else await db.fetch_val(
+            "SELECT category_key::text FROM products WHERE id=$1::uuid", product_id)
+        cur_attrs = updates.get("attrs")
+        if cur_attrs is None:
+            cur_attrs = await db.fetch_val(
+                "SELECT attributes FROM products WHERE id=$1::uuid", product_id) or {}
+        await _upsert_typed_details(db.execute, product_id, cur_ck, cur_attrs)
     if "stock_qty" in updates:
         await db.execute(
             """UPDATE product_variants SET stock_qty = $2, updated_at = now()
