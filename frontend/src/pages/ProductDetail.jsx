@@ -18,6 +18,13 @@ const POOJA_VIDEO_CHOICES = [
   "SHUDH - Prana Pratishta Pooja with Video (Extra 2 Day)",
 ];
 
+// YouTube watch/share links don't embed directly — everything else (Drive
+// preview links, already-embed URLs) is used as-is.
+function toEmbedUrl(url) {
+  const m = url.match(/(?:youtu\.be\/|youtube\.com\/watch\?v=|youtube\.com\/shorts\/)([\w-]+)/);
+  return m ? `https://www.youtube.com/embed/${m[1]}` : url;
+}
+
 export default function ProductDetail() {
   const { slug } = useParams();
   const location = useLocation();
@@ -272,6 +279,19 @@ export default function ProductDetail() {
               </>
             );
           })()}
+
+          {p.video_url && (
+            <div className="mt-3 aspect-video gold-line-strong overflow-hidden bg-cream">
+              <iframe
+                src={toEmbedUrl(p.video_url)}
+                title={`${p.name} — video`}
+                data-testid="product-video"
+                className="w-full h-full"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+              />
+            </div>
+          )}
         </div>
 
         {/* Info */}

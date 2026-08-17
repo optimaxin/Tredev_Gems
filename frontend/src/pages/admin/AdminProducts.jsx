@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api, formatINR, mediaSrc } from "@/lib/api";
 import { toast } from "sonner";
-import { PencilSimple, PlusCircle, Trash, Stack, Prohibit, CheckCircle, Image as ImageIcon, Eye, EyeSlash } from "@phosphor-icons/react";
+import { PencilSimple, PlusCircle, Trash, Stack, Prohibit, CheckCircle, Image as ImageIcon, VideoCamera, LinkSimple, Eye, EyeSlash } from "@phosphor-icons/react";
 import SearchBar from "@/components/gemora/SearchBar";
 import ShippingChargesEditor from "@/components/gemora/ShippingChargesEditor";
 import AsyncButton from "@/components/gemora/AsyncButton";
@@ -10,7 +10,7 @@ import MediaPicker from "@/components/gemora/MediaPicker";
 const EMPTY = {
   name: "", slug: "", category: "gemstone", subcategory_id: "", description: "", price: "", mrp: "",
   price_usd: "", // shown/charged to visitors outside India
-  images: [], devanagari_name: "", attrs: "{}", quantity: "", care_instructions: "", how_to_wear: "", benefits: "",
+  images: [], video_url: "", devanagari_name: "", attrs: "{}", quantity: "", care_instructions: "", how_to_wear: "", benefits: "",
   groups: [], // option groups, seeded from the category template
   shipping_charges: [], // [{region, amount}] — USD, outside-India only
   hsn_code: "", gst_rate_bp: "", uqc: "", // gst_rate_bp is edited as a percentage here
@@ -40,6 +40,9 @@ export default function AdminProducts() {
   const [saving, setSaving] = useState(false);
   const [addingUnitsFor, setAddingUnitsFor] = useState(null);
   const [showPicker, setShowPicker] = useState(false);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [videoPromptOpen, setVideoPromptOpen] = useState(false);
+  const [videoDraft, setVideoDraft] = useState("");
 
   const refresh = () => {
     // The admin list, not the public /products — that one filters to status='active'
@@ -133,6 +136,7 @@ export default function AdminProducts() {
       hsn_code: p.hsn_code || "",
       gst_rate_bp: p.gst_rate_bp != null ? (p.gst_rate_bp / 100).toString() : "",
       uqc: p.uqc || "",
+      video_url: p.video_url || "",
       images: p.images || [],
       attrs: JSON.stringify(p.attrs || {}, null, 2),
       care_instructions: (p.care_instructions || []).join("\n"),
@@ -208,6 +212,7 @@ export default function AdminProducts() {
         hsn_code: form.hsn_code.trim() || null,
         gst_rate_bp: percentToBp(form.gst_rate_bp),
         uqc: form.uqc || null,
+        video_url: form.video_url.trim() || null,
         // Region label -> USD amount (major unit, dollars — this is jsonb on the
         // product row, not paise like price/mrp above).
         shipping_charges: Object.fromEntries(
@@ -549,12 +554,65 @@ export default function AdminProducts() {
                   {i === 0 && <div className="absolute bottom-0 inset-x-0 bg-maroon-deep/80 text-ivory text-[9px] text-center py-0.5">Cover</div>}
                 </div>
               ))}
-              <button type="button" onClick={() => setShowPicker(true)} data-testid="product-add-image"
-                className="w-24 h-24 border border-dashed border-gold/50 text-ink-muted hover:border-maroon hover:text-maroon flex flex-col items-center justify-center gap-1 shrink-0">
-                <ImageIcon size={20} />
-                <span className="text-[10px] uppercase tracking-widest">Add image</span>
-              </button>
+              {form.video_url && (
+                <div className="relative w-24 h-24 gold-line bg-maroon-deep/90 overflow-hidden group shrink-0 flex flex-col items-center justify-center gap-1 text-ivory">
+                  <VideoCamera size={22} weight="duotone" />
+                  <span className="text-[9px] uppercase tracking-widest">Video</span>
+                  <button type="button"
+                    onClick={() => setForm((f) => ({ ...f, video_url: "" }))}
+                    className="absolute top-1 right-1 bg-ivory/90 hover:bg-revoked hover:text-ivory text-revoked p-1 border border-gold/40 opacity-0 group-hover:opacity-100 transition"
+                    title="Remove video">
+                    <Trash size={11} weight="bold" />
+                  </button>
+                </div>
+              )}
+              <div className="relative shrink-0">
+                <button type="button" onClick={() => setAddMenuOpen((o) => !o)} data-testid="product-add-image"
+                  className="w-24 h-24 border border-dashed border-gold/50 text-ink-muted hover:border-maroon hover:text-maroon flex flex-col items-center justify-center gap-1">
+                  <PlusCircle size={20} />
+                  <span className="text-[10px] uppercase tracking-widest">Add</span>
+                </button>
+                {addMenuOpen && (
+                  <div className="absolute z-10 top-full left-0 mt-1 w-40 bg-ivory gold-line-strong shadow-lg py-1">
+                    <button type="button"
+                      onClick={() => { setAddMenuOpen(false); setShowPicker(true); }}
+                      data-testid="product-add-image-option"
+                      className="w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-cream text-ink">
+                      <ImageIcon size={14} /> Add image
+                    </button>
+                    <button type="button"
+                      onClick={() => { setAddMenuOpen(false); setVideoDraft(form.video_url || ""); setVideoPromptOpen(true); }}
+                      data-testid="product-add-video-option"
+                      className="w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-cream text-ink">
+                      <VideoCamera size={14} /> Add video
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
+            {videoPromptOpen && (
+              <div className="mt-2 flex items-center gap-2">
+                <LinkSimple size={14} className="text-ink-muted shrink-0" />
+                <input
+                  autoFocus
+                  value={videoDraft}
+                  onChange={(e) => setVideoDraft(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); setForm((f) => ({ ...f, video_url: videoDraft.trim() })); setVideoPromptOpen(false); } }}
+                  placeholder="Paste a video link — e.g. an unlisted YouTube URL"
+                  data-testid="product-video-link-input"
+                  className="flex-1 gold-line px-3 py-2 text-sm outline-none focus:border-maroon"
+                />
+                <button type="button"
+                  onClick={() => { setForm((f) => ({ ...f, video_url: videoDraft.trim() })); setVideoPromptOpen(false); }}
+                  data-testid="product-video-link-submit"
+                  className="brand-gradient text-ivory px-4 py-2 text-xs uppercase tracking-widest">
+                  Save
+                </button>
+                <button type="button" onClick={() => setVideoPromptOpen(false)} className="text-ink-muted hover:text-maroon px-2">
+                  Cancel
+                </button>
+              </div>
+            )}
             <div className="text-[10px] text-ink-muted mt-1">First image is the cover shown on product cards.</div>
           </div>
           <label className="block md:col-span-2">

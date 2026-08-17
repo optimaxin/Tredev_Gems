@@ -766,6 +766,7 @@ class ProductIn(BaseModel):
     price_usd: Optional[int] = None  # cents — shown/charged to visitors outside India
     mrp: Optional[int] = None
     images: List[str] = []
+    video_url: Optional[str] = None  # e.g. a YouTube (unlisted) or Google Drive preview link
     attrs: dict = {}  # carat, graha, mukhi, origin, rashi, purpose, etc.
     devanagari_name: Optional[str] = None
     shipping_charges: Dict[str, float] = {}  # region label -> USD amount; unlisted = free (India)
@@ -1618,6 +1619,7 @@ _PRODUCT_SELECT = """
            p.hsn_code                              AS hsn_code,
            p.gst_rate_bp                           AS gst_rate_bp,
            p.uqc                                   AS uqc,
+           p.video_url                             AS video_url,
            p.created_at                            AS created_at,
            COALESCE(p.shipping_charges, '{}'::jsonb) AS shipping_charges,
            COALESCE(m.urls, ARRAY[]::text[])       AS images,
@@ -3365,9 +3367,9 @@ async def admin_create_product(p: ProductIn, user_id: str = Depends(require_admi
                         compare_at_price, currency, is_serialized, attributes,
                         shipping_charges, care_instructions, how_to_wear, benefits,
                         variant_options, status, published_at,
-                        hsn_code, gst_rate_bp, uqc)
+                        hsn_code, gst_rate_bp, uqc, video_url)
                    VALUES ($1,$2::uuid,$3::category_key,$4,$5,$6::citext,$7,$8,$9,$10,'INR',$11,
-                           $12,$13,$14,$15,$16,$17,'active', now(),$18,$19,$20)""",
+                           $12,$13,$14,$15,$16,$17,'active', now(),$18,$19,$20,$21)""",
                 pid, cat_id, ck, p.name, p.devanagari_name, p.slug, p.description,
                 db.to_amount(p.price), db.to_amount(p.price_usd), db.to_amount(p.mrp), p.is_serialized,
                 p.attrs or {}, p.shipping_charges or {},
@@ -3382,7 +3384,7 @@ async def admin_create_product(p: ProductIn, user_id: str = Depends(require_admi
                     p.variant_options.model_dump() if p.variant_options is not None
                     else _category_option_template(ck)),
                 (p.hsn_code or "").strip() or None, p.gst_rate_bp,
-                (p.uqc or "").strip().upper() or None)
+                (p.uqc or "").strip().upper() or None, (p.video_url or "").strip() or None)
             await _upsert_typed_details(conn.execute, pid, ck, p.attrs or {})
             # cart_items/order_items require a variant, so every product needs one.
             variant_id = uuid.uuid4()
@@ -6157,6 +6159,7 @@ class ProductUpdateIn(BaseModel):
     price_usd: Optional[int] = None  # cents — shown/charged to visitors outside India
     mrp: Optional[int] = None
     images: Optional[List[str]] = None
+    video_url: Optional[str] = None
     attrs: Optional[dict] = None
     devanagari_name: Optional[str] = None
     is_active: Optional[bool] = None
@@ -6839,6 +6842,7 @@ _PRODUCT_PATCH_COLS = {
     "hsn_code": ("hsn_code", lambda v: (v or "").strip() or None),
     "gst_rate_bp": ("gst_rate_bp", lambda v: v),
     "uqc": ("uqc", lambda v: (v or "").strip().upper() or None),
+    "video_url": ("video_url", lambda v: (v or "").strip() or None),
 }
 
 
