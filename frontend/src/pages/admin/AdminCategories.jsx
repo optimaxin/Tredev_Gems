@@ -44,6 +44,7 @@ export default function AdminCategories() {
   useEffect(() => { refresh(); }, []);
 
   const startNew = () => { setEditing("new"); setForm(EMPTY); };
+  const startNewSub = (parent) => { setEditing("new"); setForm({ ...EMPTY, parent_id: parent.category_id }); };
   const startEdit = (c) => {
     setEditing(c);
     setForm({ ...EMPTY, ...c, parent_id: c.parent_category_id || "", banner: bannerToForm(c.banner) });
@@ -280,6 +281,13 @@ export default function AdminCategories() {
                 ))}
               </div>
             )}
+            <button
+              onClick={() => startNewSub(c)}
+              data-testid={`add-subcategory-${c.key}`}
+              className="mt-3 text-xs text-maroon underline inline-flex items-center gap-1"
+            >
+              <PlusCircle size={12} /> Add subcategory under {c.label}
+            </button>
           </div>
         ))}
       </div>

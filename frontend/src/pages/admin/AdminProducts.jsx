@@ -375,7 +375,7 @@ export default function AdminProducts() {
               {topCats.map((c) => <option key={c.category_id} value={c.key}>{c.label}</option>)}
             </select>
           </label>
-          {subCats.length > 0 && (
+          {subCats.length > 0 ? (
             <label className="block">
               <div className="text-xs text-ink-muted mb-1">Subcategory (optional)</div>
               <select value={form.subcategory_id} onChange={(e) => setForm({ ...form, subcategory_id: e.target.value })} data-testid="product-subcategory-select" className="w-full gold-line px-3 py-2 bg-ivory">
@@ -383,6 +383,10 @@ export default function AdminProducts() {
                 {subCats.map((c) => <option key={c.category_id} value={c.category_id}>{c.label}</option>)}
               </select>
             </label>
+          ) : (
+            <div className="text-xs text-ink-muted self-end pb-2">
+              No subcategories for {selectedTop?.label} yet — add one under Admin → Categories.
+            </div>
           )}
           {editing === "new" && (
             <label className="block">
