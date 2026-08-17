@@ -569,8 +569,8 @@ export default function AdminProducts() {
               <div className="relative shrink-0">
                 <button type="button" onClick={() => setAddMenuOpen((o) => !o)} data-testid="product-add-image"
                   className="w-24 h-24 border border-dashed border-gold/50 text-ink-muted hover:border-maroon hover:text-maroon flex flex-col items-center justify-center gap-1">
-                  <PlusCircle size={20} />
-                  <span className="text-[10px] uppercase tracking-widest">Add</span>
+                  <ImageIcon size={20} />
+                  <span className="text-[10px] uppercase tracking-widest">Add image</span>
                 </button>
                 {addMenuOpen && (
                   <div className="absolute z-10 top-full left-0 mt-1 w-40 bg-ivory gold-line-strong shadow-lg py-1">
