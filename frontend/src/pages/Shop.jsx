@@ -21,6 +21,7 @@ export default function Shop() {
   const rashi = sp.get("rashi") || "";
   const q = sp.get("q") || "";
   const price = sp.get("price") || "";
+  const mukhi = sp.get("mukhi") || "";
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [purposes, setPurposes] = useState(DEFAULT_PURPOSES);
@@ -42,8 +43,9 @@ export default function Shop() {
     if (rashi) p.set("rashi", rashi);
     if (q) p.set("q", q);
     if (price) p.set("price", price);
+    if (mukhi) p.set("mukhi", mukhi);
     return p.toString();
-  }, [category, graha, purpose, rashi, q, price]);
+  }, [category, graha, purpose, rashi, q, price, mukhi]);
 
   useEffect(() => {
     setLoading(true);

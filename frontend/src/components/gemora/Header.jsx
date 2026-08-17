@@ -202,17 +202,26 @@ export default function Header() {
           </Link>
 
           <nav className="hidden lg:flex items-center gap-4 xl:gap-6 ml-3">
-            {megaNav.map((m) => (
-              <button
-                key={m.key}
-                onMouseEnter={() => setMega(m.key)}
-                onClick={() => setMega(mega === m.key ? null : m.key)}
-                data-testid={`nav-mega-${m.key}`}
-                className={`flex items-center gap-1 shrink-0 whitespace-nowrap text-sm font-medium ${mega === m.key ? "text-maroon-deep" : "text-ink-soft hover:text-maroon"}`}
-              >
-                {m.label} <CaretDown size={10} weight="bold" className="shrink-0" />
-              </button>
-            ))}
+            {megaNav.map((m) => {
+              // Hovering previews the dropdown; clicking the label itself jumps straight
+              // to that section's landing page (its first sub-link) instead of just
+              // toggling the panel open with nowhere to go for a mouse click.
+              const viewAllHref = m.columns?.[0]?.items?.[0]?.href;
+              return (
+                <button
+                  key={m.key}
+                  onMouseEnter={() => setMega(m.key)}
+                  onClick={() => {
+                    setMega(null);
+                    if (viewAllHref) nav(viewAllHref);
+                  }}
+                  data-testid={`nav-mega-${m.key}`}
+                  className={`flex items-center gap-1 shrink-0 whitespace-nowrap text-sm font-medium ${mega === m.key ? "text-maroon-deep" : "text-ink-soft hover:text-maroon"}`}
+                >
+                  {m.label} <CaretDown size={10} weight="bold" className="shrink-0" />
+                </button>
+              );
+            })}
           </nav>
 
           <div className="flex items-center gap-4 ml-auto">
