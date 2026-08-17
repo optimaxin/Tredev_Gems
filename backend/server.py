@@ -6849,7 +6849,7 @@ _PRODUCT_PATCH_COLS = {
 @api.patch("/admin/products/{product_id}")
 async def admin_update_product(product_id: str, body: ProductUpdateIn, actor: str = Depends(require_perm("products"))):
     sent = body.model_dump(exclude_unset=True)  # keeps explicit nulls (e.g. clearing the sub)
-    updates = {k: v for k, v in sent.items() if v is not None}
+    updates = sent  # must keep explicit nulls too, else clearing a field (mrp, video_url, hsn_code…) silently no-ops
     if not sent:
         raise HTTPException(400, "Nothing to update")
     sets, args = [], []
