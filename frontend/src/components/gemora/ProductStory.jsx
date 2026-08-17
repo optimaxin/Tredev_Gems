@@ -700,6 +700,75 @@ function Policies() {
   );
 }
 
+/* ── 9b. Recommended, cross-category ──────────────────────────────────
+   Rule-based recommender: a curated "what completes the ritual" adjacency
+   table per category (e.g. a rudraksha buyer is offered bracelets/malas/gem
+   jewellery — pieces bought alongside it — rather than more rudrakshas).
+   Results are round-robin merged across the listed categories so no single
+   one dominates the 4 slots, then falls back to any other category if a
+   product's own category has no defined pairing. */
+const COMPLEMENTARY_CATEGORIES = {
+  rudraksha: ["bracelet", "mala", "gemstone_jewellery", "pooja_kit"],
+  gemstone: ["gemstone_jewellery", "bracelet", "rudraksha", "yantra"],
+  gemstone_jewellery: ["gemstone", "bracelet", "rudraksha"],
+  bracelet: ["rudraksha", "gemstone", "mala"],
+  mala: ["rudraksha", "pooja_kit", "gemstone_jewellery"],
+  yantra: ["pooja_kit", "idol", "gemstone"],
+  idol: ["pooja_kit", "yantra", "prashad"],
+  pooja_kit: ["idol", "yantra", "prashad"],
+  prashad: ["pooja_kit", "idol", "mala"],
+  book: ["yantra", "idol", "pooja_kit"],
+  digital: ["book", "pooja_kit", "yantra"],
+};
+function Recommended({ p }) {
+  const [items, setItems] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    const cats = COMPLEMENTARY_CATEGORIES[p.category]
+      || Object.keys(CATEGORY_LABEL).filter((c) => c !== p.category);
+    Promise.all(cats.map((c) =>
+      api.get(`/products?category=${encodeURIComponent(c)}&limit=6`).then((r) => r.data || []).catch(() => [])
+    )).then((lists) => {
+      if (!alive) return;
+      const seen = new Set([p.slug]);
+      const merged = [];
+      for (let i = 0; merged.length < 4 && lists.some((l) => i < l.length); i++) {
+        for (const list of lists) {
+          if (merged.length >= 4) break;
+          const x = list[i];
+          if (x && !seen.has(x.slug)) { merged.push(x); seen.add(x.slug); }
+        }
+      }
+      setItems(merged);
+    });
+    return () => { alive = false; };
+  }, [p.category, p.slug]);
+
+  if (!items.length) return null;
+  return (
+    <section className="mx-auto max-w-7xl px-6 lg:px-10 py-20">
+      <div className="text-center mb-10">
+        <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">Complete the ritual · संग्रह</div>
+        <h2 className="font-display text-4xl md:text-5xl text-ink mt-2">Recommended for you</h2>
+        <p className="text-sm text-ink-muted mt-2 max-w-lg mx-auto">
+          Pieces buyers of {(CATEGORY_LABEL[p.category] || "this").toLowerCase()} often add to their practice.
+        </p>
+      </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-5">
+        {items.map((x) => <ProductCard key={x.product_id} p={x} />)}
+      </div>
+      <div className="mt-10 text-center">
+        <Link
+          to="/shop"
+          className="inline-flex items-center gap-2 border border-gold text-maroon px-7 py-3.5 text-xs uppercase tracking-widest hover:bg-maroon hover:text-ivory transition-colors"
+        >
+          Explore more products <ArrowRight size={12} />
+        </Link>
+      </div>
+    </section>
+  );
+}
+
 /* ── 10. FAQ ───────────────────────────────────────────────────────── */
 function Faq({ p }) {
   const items = faqFor(p.category);
@@ -787,6 +856,7 @@ export default function ProductStory({ p, reviews = [], onReviewAdded }) {
       <CareGuide p={p} copy={copy} />
       <ProvenanceBand reduce={reduce} />
       <Policies />
+      <Recommended p={p} />
       <Faq p={p} />
       <Related p={p} />
     </>
