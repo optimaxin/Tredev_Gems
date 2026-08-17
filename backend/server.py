@@ -2094,6 +2094,14 @@ _DEFAULT_HOME = {
         {"name": "Myntra", "url": ""},
         {"name": "Blinkit", "url": ""},
     ],
+    "faq": [
+        {"q": "How can I verify a Tredev certificate is real?", "a": "Every certificate we issue is a canonical JSON payload signed with our Ed25519 private key. Our public key is published on our /api/ endpoint. Scan the QR on your certificate — it opens a verification page that recomputes the SHA-256 hash and checks the signature. You can independently verify the signature with any Ed25519 library."},
+        {"q": "Are the gemstones lab-certified?", "a": "Yes. Every gemstone we sell carries a lab report from a GJEPC-affiliated laboratory (GJEPC, GIL, GJC or equivalent). The report number is embedded in the certificate and attached to the item's QR page."},
+        {"q": "What is 'temple energisation'?", "a": "We take every high-value stone or rudraksha to a partner temple where a priest performs a puja on your item. We record the puja (audio) and the priest signs the energisation record. It's not required for authenticity — it's a service for buyers who want it done reverently."},
+        {"q": "Why is the QR sometimes 'SUSPICIOUS'?", "a": "Because we mint the QR when the certificate is issued but only ACTIVATE it once your order is marked delivered. If someone printed a fake label off the internet and you scanned it before then, it correctly reads suspicious. It's how a public scan can flag a fake before your parcel is even confirmed in your hands."},
+        {"q": "What if I return or cancel the order?", "a": "The certificate is revoked immediately. The QR then reads REVOKED forever, and the item drops off your Verified Items — so a cancelled or returned unit can never keep vouching for itself."},
+        {"q": "Do you ship internationally?", "a": "Yes, we ship worldwide via insured logistics. Duties and taxes are borne by the buyer. Certificates travel with the parcel; the QR activates once delivery is confirmed."},
+    ],
 }
 _DEFAULT_CONSULTATION = {"fee_paise": 39900}   # ₹399 — admin-editable via /admin/site-content/consultation
 

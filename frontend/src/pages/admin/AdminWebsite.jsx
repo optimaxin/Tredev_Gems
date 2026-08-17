@@ -531,6 +531,19 @@ export default function AdminWebsite() {
             {addBtn(["marketplaces"], { name: "", url: "" }, "Add marketplace")}
           </Section>
 
+          <Section title="FAQ" hint="The homepage 'Frequently asked' block.">
+            <div className="space-y-3">
+              {(home.faq || []).map((f, i) => (
+                <div key={i} className="gold-line bg-cream p-3 grid gap-3">
+                  {field("Question", ["faq", i, "q"])}
+                  {field("Answer", ["faq", i, "a"], { area: true })}
+                  <div className="flex justify-end">{rmBtn(["faq"], i)}</div>
+                </div>
+              ))}
+            </div>
+            {addBtn(["faq"], { q: "", a: "" }, "Add question")}
+          </Section>
+
           <div className="flex justify-end mb-10">{homeSave}</div>
         </>
       )}
