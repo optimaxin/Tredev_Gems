@@ -22,22 +22,33 @@ export default function Shop() {
   const q = sp.get("q") || "";
   const price = sp.get("price") || "";
   const mukhi = sp.get("mukhi") || "";
+  const subcategory = sp.get("subcategory") || "";
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [purposes, setPurposes] = useState(DEFAULT_PURPOSES);
   const [rashiList, setRashiList] = useState([]);
+  const [categories, setCategories] = useState([]);
 
   useEffect(() => {
-    // Purposes & Rashi are admin-editable (Admin → Website); load the current lists.
+    // Purposes, Rashi & the category tree (incl. subcategories) are admin-editable
+    // (Admin → Website / Admin → Categories); load the current lists.
     api.get("/categories").then(({ data }) => {
       if (data.purposes?.length) setPurposes(data.purposes);
       if (data.rashi?.length) setRashiList(data.rashi);
+      if (data.categories?.length) setCategories(data.categories);
     }).catch(() => {});
   }, []);
+
+  // Subcategories of the currently selected top-level category, if any exist.
+  const subcats = useMemo(
+    () => categories.filter((c) => c.category_key === category && c.parent_category_id),
+    [categories, category]
+  );
 
   const params = useMemo(() => {
     const p = new URLSearchParams();
     if (category) p.set("category", category);
+    if (subcategory) p.set("subcategory", subcategory);
     if (graha) p.set("graha", graha);
     if (purpose) p.set("purpose", purpose);
     if (rashi) p.set("rashi", rashi);
@@ -45,7 +56,7 @@ export default function Shop() {
     if (price) p.set("price", price);
     if (mukhi) p.set("mukhi", mukhi);
     return p.toString();
-  }, [category, graha, purpose, rashi, q, price, mukhi]);
+  }, [category, subcategory, graha, purpose, rashi, q, price, mukhi]);
 
   useEffect(() => {
     setLoading(true);
@@ -55,6 +66,7 @@ export default function Shop() {
   const setFilter = (k, v) => {
     const n = new URLSearchParams(sp);
     if (v) n.set(k, v); else n.delete(k);
+    if (k === "category") n.delete("subcategory"); // stale sub from a different category
     setSp(n);
   };
 
@@ -96,6 +108,23 @@ export default function Shop() {
                 ))}
               </div>
             </div>
+            {subcats.length > 0 && (
+              <div className="mt-7">
+                <div className="text-[11px] uppercase tracking-[0.2em] text-ink-muted mb-3">Type</div>
+                <div className="flex flex-wrap gap-2.5">
+                  {subcats.map((s) => (
+                    <button
+                      key={s.category_id}
+                      onClick={() => setFilter("subcategory", subcategory === s.slug ? "" : s.slug)}
+                      data-testid={`filter-subcat-${s.slug}`}
+                      className={`text-sm px-3.5 py-2 border transition-colors ${subcategory === s.slug ? "bg-maroon text-ivory border-maroon" : "border-gold/40 text-ink-soft hover:border-maroon"}`}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="mt-7">
               <div className="text-[11px] uppercase tracking-[0.2em] text-ink-muted mb-3">Planet</div>
               <div className="flex flex-wrap gap-2.5">

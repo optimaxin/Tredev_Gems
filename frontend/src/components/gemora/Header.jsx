@@ -167,6 +167,25 @@ export default function Header() {
     }).catch(() => {});
   }, []);
 
+  // Real subcategories (Admin → Categories), grouped by their parent's top-level
+  // key — appended as an extra "Shop by type" column so a newly-created
+  // subcategory shows up in the menu automatically, with no nav editing needed.
+  const [subcatColumns, setSubcatColumns] = useState({});
+  useEffect(() => {
+    api.get("/categories").then(({ data }) => {
+      const subs = (data?.categories || []).filter((c) => c.parent_category_id);
+      const byKey = {};
+      for (const s of subs) {
+        if (!byKey[s.category_key]) byKey[s.category_key] = { title: "Shop by type", items: [] };
+        byKey[s.category_key].items.push({
+          label: s.label,
+          href: `/shop?category=${s.category_key}&subcategory=${s.slug}`,
+        });
+      }
+      setSubcatColumns(byKey);
+    }).catch(() => {});
+  }, []);
+
   useEffect(() => {
     const on = () => setScrolled(window.scrollY > 30);
     window.addEventListener("scroll", on, { passive: true });
@@ -275,7 +294,10 @@ export default function Header() {
           >
             <div className="mx-auto max-w-7xl px-10 py-10 grid grid-cols-[1fr_360px] gap-10">
               <div className="grid grid-cols-3 gap-10">
-                {(megaNav.find((x) => x.key === mega)?.columns || []).map((col) => (
+                {[
+                  ...(megaNav.find((x) => x.key === mega)?.columns || []),
+                  ...(subcatColumns[mega] ? [subcatColumns[mega]] : []),
+                ].map((col) => (
                   <div key={col.title}>
                     <div className="text-[10px] uppercase tracking-[0.3em] text-gold-soft mb-4">{col.title}</div>
                     <ul className="space-y-2.5">
@@ -315,7 +337,8 @@ export default function Header() {
                     <span className="font-deva text-gold-soft text-xs">{m.hindi}</span>
                   </summary>
                   <ul className="mt-2 space-y-2 pl-1">
-                    {m.columns.flatMap((c) => c.items).map((it) => (
+                    {[...m.columns, ...(subcatColumns[m.key] ? [subcatColumns[m.key]] : [])]
+                      .flatMap((c) => c.items).map((it) => (
                       <li key={it.label}><Link to={it.href} onClick={() => setOpen(false)} className="text-sm text-ink-soft">{it.label}</Link></li>
                     ))}
                   </ul>

@@ -1695,6 +1695,7 @@ _PRICE_BUCKETS = {"lo": (None, 10_000), "md": (10_000, 100_000), "hi": (100_000,
 @api.get("/products")
 async def list_products(
     category: Optional[str] = None,
+    subcategory: Optional[str] = None,  # a child category's slug — narrower than `category`
     graha: Optional[str] = None,
     rashi: Optional[str] = None,
     purpose: Optional[str] = None,
@@ -1713,6 +1714,10 @@ async def list_products(
 
     if category:
         where.append(f"p.category_key = {_arg(db.CATEGORY_TO_DB.get(category, category))}::category_key")
+    if subcategory:
+        # exact child-category match (e.g. "1 Mukhi" under Rudraksha) — `category`
+        # above only narrows by the shared top-level type, not the specific child.
+        where.append(f"cat.slug = {_arg(subcategory)}::citext")
     if graha:
         # graha is typed on the detail tables, not in the attrs blob
         a = _arg(db.GRAHA_TO_DB.get(graha, graha.lower()))
