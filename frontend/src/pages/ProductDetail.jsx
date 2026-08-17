@@ -4,7 +4,7 @@ import { api, mediaSrc } from "@/lib/api";
 import { formatPrice } from "@/lib/currency";
 import { useCart } from "@/context/CartContext";
 import { toast } from "sonner";
-import { ShieldCheck, Certificate, ShoppingBag, Heart, Plus, Minus, CaretLeft, CaretRight, Star, Truck, ArrowsClockwise, FlowerLotus, Lightning } from "@phosphor-icons/react";
+import { ShieldCheck, Certificate, ShoppingBag, Heart, Plus, Minus, CaretLeft, CaretRight, Star, Truck, ArrowsClockwise, FlowerLotus, Lightning, PlayCircle } from "@phosphor-icons/react";
 import ProductStory from "@/components/gemora/ProductStory";
 import AsyncButton from "@/components/gemora/AsyncButton";
 import PoojaDetailsForm, { EMPTY_POOJA_DETAILS, validatePoojaDetails } from "@/components/gemora/PoojaDetailsForm";
@@ -20,9 +20,17 @@ const POOJA_VIDEO_CHOICES = [
 
 // YouTube watch/share links don't embed directly — everything else (Drive
 // preview links, already-embed URLs) is used as-is.
+function youtubeId(url) {
+  const m = url.match(/(?:youtu\.be\/|youtube\.com\/watch\?v=|youtube\.com\/shorts\/|youtube\.com\/embed\/)([\w-]+)/);
+  return m ? m[1] : null;
+}
 function toEmbedUrl(url) {
-  const m = url.match(/(?:youtu\.be\/|youtube\.com\/watch\?v=|youtube\.com\/shorts\/)([\w-]+)/);
-  return m ? `https://www.youtube.com/embed/${m[1]}` : url;
+  const id = youtubeId(url);
+  return id ? `https://www.youtube.com/embed/${id}` : url;
+}
+function youtubeThumbnail(url) {
+  const id = youtubeId(url);
+  return id ? `https://img.youtube.com/vi/${id}/hqdefault.jpg` : null;
 }
 
 export default function ProductDetail() {
@@ -212,30 +220,46 @@ export default function ProductDetail() {
         {/* Gallery */}
         <div className="lg:sticky lg:top-24 h-fit">
           {(() => {
-            const images = (p.images || []).filter(Boolean);
-            const idx = Math.min(active, Math.max(0, images.length - 1));
-            const go = (d) => setActive((images.length + idx + d) % images.length);
+            const slides = [
+              ...(p.images || []).filter(Boolean).map((url) => ({ type: "image", url })),
+              ...(p.video_url ? [{ type: "video", url: p.video_url }] : []),
+            ];
+            const idx = Math.min(active, Math.max(0, slides.length - 1));
+            const go = (d) => setActive((slides.length + idx + d) % slides.length);
+            const current = slides[idx];
             return (
               <>
                 <div className="relative aspect-square gold-line-strong overflow-hidden bg-cream group">
-                  {images.length > 0 ? (
-                    <img
-                      key={idx}
-                      src={mediaSrc(images[idx])}
-                      alt={`${p.name} — photo ${idx + 1}`}
-                      data-testid="product-main-image"
-                      className="w-full h-full object-cover img-hover fade-up"
-                    />
+                  {current ? (
+                    current.type === "image" ? (
+                      <img
+                        key={idx}
+                        src={mediaSrc(current.url)}
+                        alt={`${p.name} — photo ${idx + 1}`}
+                        data-testid="product-main-image"
+                        className="w-full h-full object-cover img-hover fade-up"
+                      />
+                    ) : (
+                      <iframe
+                        key={idx}
+                        src={toEmbedUrl(current.url)}
+                        title={`${p.name} — video`}
+                        data-testid="product-video"
+                        className="w-full h-full"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                        allowFullScreen
+                      />
+                    )
                   ) : (
                     <div className="w-full h-full flex items-center justify-center text-ink-muted">No image</div>
                   )}
 
-                  {images.length > 1 && (
+                  {slides.length > 1 && (
                     <>
                       <button
                         type="button"
                         onClick={() => go(-1)}
-                        aria-label="Previous photo"
+                        aria-label="Previous slide"
                         className="absolute left-3 top-1/2 -translate-y-1/2 w-10 h-10 bg-ivory/85 backdrop-blur border border-gold/40 text-maroon-deep flex items-center justify-center hover:bg-ivory transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
                       >
                         <CaretLeft size={18} weight="bold" />
@@ -243,35 +267,48 @@ export default function ProductDetail() {
                       <button
                         type="button"
                         onClick={() => go(1)}
-                        aria-label="Next photo"
+                        aria-label="Next slide"
                         className="absolute right-3 top-1/2 -translate-y-1/2 w-10 h-10 bg-ivory/85 backdrop-blur border border-gold/40 text-maroon-deep flex items-center justify-center hover:bg-ivory transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
                       >
                         <CaretRight size={18} weight="bold" />
                       </button>
                       <div className="absolute bottom-3 right-3 bg-maroon-deep/80 text-ivory text-[11px] font-mono px-2 py-1 tracking-widest">
-                        {idx + 1} / {images.length}
+                        {idx + 1} / {slides.length}
                       </div>
                     </>
                   )}
                 </div>
 
-                {images.length > 1 && (
+                {slides.length > 1 && (
                   <div className="mt-3 grid grid-cols-5 gap-3">
-                    {images.map((im, i) => (
+                    {slides.map((s, i) => (
                       <button
                         type="button"
                         key={i}
                         onClick={() => setActive(i)}
-                        aria-label={`View photo ${i + 1}`}
+                        aria-label={s.type === "image" ? `View photo ${i + 1}` : "Play video"}
                         aria-current={i === idx}
                         data-testid={`product-thumb-${i}`}
-                        className={`aspect-square overflow-hidden transition-all ${
+                        className={`relative aspect-square overflow-hidden transition-all ${
                           i === idx
                             ? "gold-line-strong ring-2 ring-maroon ring-offset-2 ring-offset-ivory"
                             : "gold-line opacity-60 hover:opacity-100"
                         }`}
                       >
-                        <img src={mediaSrc(im)} className="w-full h-full object-cover" alt="" loading="lazy" />
+                        {s.type === "image" ? (
+                          <img src={mediaSrc(s.url)} className="w-full h-full object-cover" alt="" loading="lazy" />
+                        ) : (
+                          <>
+                            {youtubeThumbnail(s.url) ? (
+                              <img src={youtubeThumbnail(s.url)} className="w-full h-full object-cover" alt="" loading="lazy" />
+                            ) : (
+                              <div className="w-full h-full bg-maroon-deep" />
+                            )}
+                            <div className="absolute inset-0 flex items-center justify-center bg-maroon-deep/30">
+                              <PlayCircle size={22} weight="fill" className="text-ivory" />
+                            </div>
+                          </>
+                        )}
                       </button>
                     ))}
                   </div>
@@ -279,19 +316,6 @@ export default function ProductDetail() {
               </>
             );
           })()}
-
-          {p.video_url && (
-            <div className="mt-3 aspect-video gold-line-strong overflow-hidden bg-cream">
-              <iframe
-                src={toEmbedUrl(p.video_url)}
-                title={`${p.name} — video`}
-                data-testid="product-video"
-                className="w-full h-full"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
-              />
-            </div>
-          )}
         </div>
 
         {/* Info */}
