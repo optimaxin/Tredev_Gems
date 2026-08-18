@@ -8702,6 +8702,55 @@ async def admin_coupon_user_search(q: str = "", _: str = Depends(require_perm("c
             ORDER BY full_name LIMIT 20""", f"%{term}%")
 
 
+# ── Meta WhatsApp Cloud API webhook ──────────────────────────────────────────
+# Just the App Dashboard's "Configure Webhooks" handshake + a logged receiver for
+# now. Mirroring inbound messages into the admin inbox (wa_chats/wa_messages,
+# below) is shaped around OpenWA's chat_id format (phone@c.us) — a Meta adapter
+# is its own follow-up once Cloud API send/receive is actually wired up.
+META_WA_VERIFY_TOKEN = os.environ.get("META_WHATSAPP_VERIFY_TOKEN", "").strip()
+META_WA_APP_SECRET = os.environ.get("META_WHATSAPP_APP_SECRET", "").strip()
+
+
+def _meta_wa_verify_signature(raw: bytes, header: Optional[str]) -> bool:
+    """HMAC-SHA256 over the raw body per X-Hub-Signature-256. Skipped (open) when no
+    App Secret is set yet, same soft-fail-open as the OpenWA webhook below — set
+    META_WHATSAPP_APP_SECRET (App Dashboard → Settings → Basic) to close it."""
+    if not META_WA_APP_SECRET:
+        return True
+    if not header or not header.startswith("sha256="):
+        return False
+    expected = hmac.new(META_WA_APP_SECRET.encode(), raw, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, header.split("=", 1)[1])
+
+
+@api.get("/webhooks/whatsapp")
+async def meta_whatsapp_verify(request: Request):
+    """Meta's one-time verification handshake for the Callback URL: echo hub.challenge
+    back once hub.verify_token matches, proving we control this endpoint."""
+    p = request.query_params
+    if (p.get("hub.mode") == "subscribe" and META_WA_VERIFY_TOKEN
+            and p.get("hub.verify_token") == META_WA_VERIFY_TOKEN):
+        return FastAPIResponse(content=p.get("hub.challenge", ""), media_type="text/plain")
+    raise HTTPException(403, "Verification failed")
+
+
+@api.post("/webhooks/whatsapp")
+async def meta_whatsapp_webhook(request: Request):
+    """Inbound Cloud API events (messages, delivery/read statuses). Always 200s on a
+    verified payload — Meta retries on anything else, and an event we only logged is
+    not a delivery failure."""
+    raw = await request.body()
+    if not _meta_wa_verify_signature(raw, request.headers.get("x-hub-signature-256")):
+        log.warning("Meta WhatsApp webhook rejected: bad signature")
+        raise HTTPException(401, "Invalid signature")
+    try:
+        body = json.loads(raw or b"{}")
+    except ValueError:
+        raise HTTPException(400, "Malformed payload")
+    log.info(f"Meta WhatsApp webhook event: {body}")
+    return {"ok": True}
+
+
 # ── OpenWA gateway: two-way WhatsApp ─────────────────────────────────────────
 # MIRRORING POLICY (deliberate, privacy-driven)
 # The connected number is a real WhatsApp account whose chat list also contains the
