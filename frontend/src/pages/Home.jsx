@@ -162,7 +162,9 @@ const CAT_IMGS = {
 };
 const CAT_IMG_FALLBACK = CAT_IMGS.gemstone;
 
-const PURPOSES = [
+// Curated art/Devanagari for the built-in five — also the fallback list until
+// the admin-editable taxonomy (Admin → Website → Purposes) loads from /categories.
+const PURPOSE_META = [
   { key: "wealth", label: "Wealth", hindi: "धन", img: "https://images.pexels.com/photos/9953656/pexels-photo-9953656.jpeg" },
   { key: "protection", label: "Protection", hindi: "रक्षा", img: "https://images.unsplash.com/photo-1609619385076-36a873425636?w=1000" },
   { key: "love", label: "Love", hindi: "प्रेम", img: "https://images.unsplash.com/photo-1611591437281-460bfbe1220a?w=1000" },
@@ -179,6 +181,7 @@ export default function Home() {
   const nav = useNavigate();
   const { getAsset } = useSiteAssets();
   const [home, setHome] = useState(DEFAULT_HOME);
+  const [purposeKV, setPurposeKV] = useState(null); // admin-editable purpose list, from /categories
 
   // Admin-edited homepage copy (Admin → Website); merged over the built-in defaults.
   useEffect(() => {
@@ -186,6 +189,21 @@ export default function Home() {
       if (data?.home) setHome((h) => ({ ...h, ...data.home }));
     }).catch(() => {});
   }, []);
+
+  // Purposes are admin-editable (Admin → Website → Purposes) — a purpose added there
+  // must show up here too, not just in the /shop filter chips.
+  useEffect(() => {
+    api.get("/categories").then(({ data }) => {
+      if (data?.purposes?.length) setPurposeKV(data.purposes);
+    }).catch(() => {});
+  }, []);
+
+  // Merge the admin's {key,label} list with the curated art/Devanagari where we
+  // have it; a newly-added purpose without curated art falls back to a generic image.
+  const purposeList = useMemo(() => (purposeKV || PURPOSE_META).map((p) => {
+    const meta = PURPOSE_META.find((m) => m.key === p.key);
+    return { key: p.key, label: p.label, hindi: meta?.hindi || "", img: meta?.img || CAT_IMG_FALLBACK };
+  }), [purposeKV]);
 
   // Apply admin-managed image slots on top of the edited copy.
   const heroSlides = useMemo(
@@ -197,8 +215,8 @@ export default function Home() {
     [home.categories, getAsset]
   );
   const purposes = useMemo(
-    () => PURPOSES.map((p) => ({ ...p, img: getAsset(`home_purpose_${p.key}`, p.img) })),
-    [getAsset]
+    () => purposeList.map((p) => ({ ...p, img: getAsset(`home_purpose_${p.key}`, p.img) })),
+    [purposeList, getAsset]
   );
   const posts = useMemo(
     () => (home.posts || []).map((p, i) => ({
@@ -417,7 +435,7 @@ export default function Home() {
               <div className="text-[10px] uppercase tracking-widest text-ink-muted mb-1">Purpose</div>
               <select value={finder.type} onChange={(e) => setFinder({ ...finder, type: e.target.value })} className="w-full gold-line px-3 py-2 bg-ivory">
                 <option value="">Any</option>
-                {PURPOSES.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
+                {purposeList.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
               </select>
             </label>
             <label className="block sm:col-span-1">

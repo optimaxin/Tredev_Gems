@@ -1,8 +1,12 @@
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { CurrencyInr, Shield, HeartStraight, Briefcase, FirstAid } from "@phosphor-icons/react";
+import { CurrencyInr, Shield, HeartStraight, Briefcase, FirstAid, Sparkle } from "@phosphor-icons/react";
+import { api } from "@/lib/api";
+import { useSiteAssets } from "@/context/SiteAssetsContext";
 
-const PURPOSES = [
+// Curated art/icon/copy for the built-in five — also the fallback list until the
+// admin-editable taxonomy (Admin → Website → Purposes) loads from /categories.
+const PURPOSE_META = [
   { key: "wealth", label: "Wealth", devanagari: "धन", Icon: CurrencyInr, tag: "Prosperity & abundance", img: "https://images.pexels.com/photos/9953656/pexels-photo-9953656.jpeg" },
   { key: "protection", label: "Protection", devanagari: "रक्षा", Icon: Shield, tag: "Against negative energy", img: "https://images.unsplash.com/photo-1609619385076-36a873425636?w=1200" },
   { key: "love", label: "Love", devanagari: "प्रेम", Icon: HeartStraight, tag: "Harmony & relationships", img: "https://images.unsplash.com/photo-1611591437281-460bfbe1220a?w=1200" },
@@ -11,13 +15,34 @@ const PURPOSES = [
 ];
 
 export default function ShopByPurpose() {
+  const { getAsset } = useSiteAssets();
+  const [purposeKV, setPurposeKV] = useState(null);
+
+  // Same admin-editable list Shop.jsx's filter chips use — so a purpose added in
+  // Admin → Website shows up here too, not just as a /shop filter.
+  useEffect(() => {
+    api.get("/categories").then(({ data }) => {
+      if (data?.purposes?.length) setPurposeKV(data.purposes);
+    }).catch(() => {});
+  }, []);
+
+  const purposes = useMemo(() => (purposeKV || PURPOSE_META).map((p) => {
+    const meta = PURPOSE_META.find((m) => m.key === p.key);
+    return {
+      key: p.key, label: p.label,
+      devanagari: meta?.devanagari || "", Icon: meta?.Icon || Sparkle, tag: meta?.tag || "",
+      // Same site-asset slot the homepage card uses, so an image change shows up in both places.
+      img: getAsset(`home_purpose_${p.key}`, meta?.img || PURPOSE_META[0].img),
+    };
+  }), [purposeKV, getAsset]);
+
   return (
     <div className="mx-auto max-w-7xl px-6 lg:px-10 py-14">
       <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">The five intents</div>
       <h1 className="font-display text-4xl md:text-5xl text-ink mt-3">Shop by Purpose</h1>
       <p className="mt-4 max-w-2xl text-ink-soft">Let the stone find you. Filter by intent.</p>
       <div className="mt-12 grid md:grid-cols-2 lg:grid-cols-3 gap-5">
-        {PURPOSES.map((p) => (
+        {purposes.map((p) => (
           <Link key={p.key} to={`/shop?purpose=${p.key}`} className="relative overflow-hidden gold-line hover-lift aspect-[4/5]">
             <img src={p.img} alt={p.label} className="w-full h-full object-cover img-hover" />
             <div className="absolute inset-0 bg-gradient-to-t from-maroon-deep/85 via-maroon-deep/20 to-transparent" />

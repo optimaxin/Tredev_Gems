@@ -25,33 +25,33 @@ export default function ProductCard({ p }) {
           className="w-full h-full object-cover img-hover"
           loading="lazy"
         />
-        <div className="absolute top-3 left-3 bg-ivory/90 backdrop-blur px-2 py-1 text-[10px] tracking-widest uppercase text-verified border border-gold/40 flex items-center gap-1">
-          <ShieldCheck size={12} weight="duotone" /> Certified
+        <div className="absolute top-2 left-2 sm:top-3 sm:left-3 bg-ivory/90 backdrop-blur px-1.5 py-1 sm:px-2 text-[10px] tracking-widest uppercase text-verified border border-gold/40 flex items-center gap-1">
+          <ShieldCheck size={12} weight="duotone" /> <span className="hidden sm:inline">Certified</span>
         </div>
         {off > 0 && (
-          <div className="absolute top-3 right-3 bg-maroon text-ivory text-[10px] px-2 py-1 font-mono">
+          <div className="absolute top-2 right-2 sm:top-3 sm:right-3 bg-maroon text-ivory text-[9px] sm:text-[10px] px-1.5 py-1 sm:px-2 font-mono">
             {off}% OFF
           </div>
         )}
       </div>
-      <div className="p-5 flex-1 flex flex-col">
+      <div className="p-3 sm:p-5 flex-1 flex flex-col">
         {p.devanagari_name && (
-          <div className="font-deva text-sm text-gold-soft">{p.devanagari_name}</div>
+          <div className="font-deva text-xs sm:text-sm text-gold-soft truncate">{p.devanagari_name}</div>
         )}
-        <h3 className="font-serifd text-xl text-ink mt-1 leading-snug">{p.name}</h3>
-        <div className="text-xs text-ink-muted mt-1 uppercase tracking-widest">{p.category}</div>
+        <h3 className="font-serifd text-base sm:text-xl text-ink mt-1 leading-snug line-clamp-2">{p.name}</h3>
+        <div className="text-[10px] sm:text-xs text-ink-muted mt-1 uppercase tracking-widest truncate">{p.category}</div>
         <div className="mt-2 flex items-center gap-1 text-xs text-gold-soft">
           {Array.from({ length: 5 }).map((_, k) => <Star key={k} size={11} weight="fill" />)}
           <span className="text-ink-muted ml-1">(4.9)</span>
         </div>
-        <div className="mt-auto pt-5 flex items-baseline gap-3">
-          <span className="font-display text-2xl text-maroon-deep">{formatPrice(p.price, p.currency)}</span>
+        <div className="mt-auto pt-3 sm:pt-5 flex items-baseline gap-2 sm:gap-3 flex-wrap">
+          <span className="font-display text-lg sm:text-2xl text-maroon-deep">{formatPrice(p.price, p.currency)}</span>
           {p.mrp && p.mrp > p.price && (
-            <span className="text-sm text-ink-muted line-through">{formatPrice(p.mrp, p.currency)}</span>
+            <span className="text-xs sm:text-sm text-ink-muted line-through">{formatPrice(p.mrp, p.currency)}</span>
           )}
         </div>
-        <div className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-mono text-verified uppercase tracking-widest">
-          <CreditCard size={13} weight="duotone" /> Prepaid 5% off
+        <div className="mt-2 inline-flex items-center gap-1.5 text-[10px] sm:text-[11px] font-mono text-verified uppercase tracking-widest">
+          <CreditCard size={13} weight="duotone" className="shrink-0" /> <span className="truncate">Prepaid 5% off</span>
         </div>
       </div>
     </Link>
