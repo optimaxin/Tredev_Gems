@@ -2067,6 +2067,7 @@ _DEFAULT_HOME = {
             "Serialised: every unit gets a fingerprint.",
             "Reverent: priests, not marketers, do the pooja.",
         ],
+        "video_url": "",
     },
     "mantras": [
         "सत्यम् एव जयते", "न हि सत्यात् परो धर्मः", "ॐ नमः शिवाय",

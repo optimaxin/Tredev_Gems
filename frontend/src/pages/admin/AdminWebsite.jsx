@@ -461,11 +461,12 @@ export default function AdminWebsite() {
             {addBtn(["planets"], { name: "", deva: "", stone: "" }, "Add planet")}
           </Section>
 
-          <Section title="House section" hint="The 'Sourced by hand. Signed by us.' block. Each bullet keeps its icon automatically.">
+          <Section title="House section" hint="The 'Sourced by hand. Signed by us.' block. Each bullet keeps its icon automatically. The poster image itself is set under Admin → Site Images ('Craftsmanship video poster').">
             <div className="grid md:grid-cols-2 gap-4 max-w-3xl">
               {field("Eyebrow", ["house", "eyebrow"])}
               {field("Title (use *…* and line breaks)", ["house", "title"], { area: true, rows: 2 })}
               {field("Body", ["house", "body"], { area: true, rows: 4, cls: " md:col-span-2" })}
+              {field("Video link (optional — YouTube unlisted, Drive preview, etc.)", ["house", "video_url"], { ph: "https://…", cls: " md:col-span-2 font-mono text-xs" })}
             </div>
             <div className="mt-3 space-y-2 max-w-2xl">
               {(home.house?.bullets || []).map((b, i) => (

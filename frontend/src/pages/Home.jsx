@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, formatINR, slugify } from "@/lib/api";
-import { ShieldCheck, QrCode, Certificate, Fingerprint, Sparkle, ArrowRight, Star, Truck, Package, HandHeart, CaretRight, CaretLeft, Play, ChatCircle, Calendar, Compass, MoonStars } from "@phosphor-icons/react";
+import { ShieldCheck, QrCode, Certificate, Fingerprint, Sparkle, ArrowRight, Star, Truck, Package, HandHeart, CaretRight, CaretLeft, Play, ChatCircle, Calendar, Compass, MoonStars, X } from "@phosphor-icons/react";
 import { HOME } from "@/constants/testIds";
 import ProductCard from "@/components/gemora/ProductCard";
 import CategoryRail from "@/components/gemora/CategoryRail"; // eslint-disable-line no-unused-vars
@@ -30,6 +30,13 @@ function renderRich(text) {
       )}
     </React.Fragment>
   ));
+}
+
+// YouTube watch/share links don't embed directly — everything else (Drive
+// preview links, already-embed URLs) is used as-is.
+function toEmbedUrl(url) {
+  const m = String(url || "").match(/(?:youtu\.be\/|youtube\.com\/watch\?v=|youtube\.com\/shorts\/)([\w-]+)/);
+  return m ? `https://www.youtube.com/embed/${m[1]}` : url;
 }
 
 // Built-in homepage copy — used until the admin-edited version (Admin → Website)
@@ -86,6 +93,7 @@ const DEFAULT_HOME = {
       "Serialised: every unit gets a fingerprint.",
       "Reverent: priests, not marketers, do the pooja.",
     ],
+    video_url: "",
   },
   mantras: ["सत्यम् एव जयते", "न हि सत्यात् परो धर्मः", "ॐ नमः शिवाय", "शुभम् भवतु", "असतो मा सद्गमय", "सर्वे भवन्तु सुखिनः"],
   testimonials: [
@@ -165,6 +173,7 @@ const PURPOSES = [
 export default function Home() {
   const [products, setProducts] = useState([]);
   const [heroIdx, setHeroIdx] = useState(0);
+  const [showHouseVideo, setShowHouseVideo] = useState(false);
   const [finder, setFinder] = useState({ category: "gemstone", type: "", price: "" });
   const [openFaq, setOpenFaq] = useState(0);
   const nav = useNavigate();
@@ -610,14 +619,18 @@ export default function Home() {
             <img src={craftPoster} alt="Artisan at work" className="w-full h-full object-cover" />
           </Parallax>
           <div className="absolute inset-0 bg-gradient-to-tr from-maroon-deep/40 to-transparent pointer-events-none" />
-          <button className="absolute inset-0 flex items-center justify-center text-ivory" aria-label="Play brand video">
-            <span className="w-16 h-16 bg-ivory/90 flex items-center justify-center text-maroon-deep border border-gold group-hover:scale-105 transition-transform duration-300">
-              <Play size={22} weight="fill" />
-            </span>
-          </button>
-          <figcaption className="absolute bottom-3 left-4 text-[10px] uppercase tracking-widest text-ivory/70 font-mono">
-            Plate {toDeva("01")} · Kanchi atelier
-          </figcaption>
+          {home.house?.video_url && (
+            <button
+              onClick={() => setShowHouseVideo(true)}
+              className="absolute inset-0 flex items-center justify-center text-ivory"
+              aria-label="Play brand video"
+              data-testid="house-play-video"
+            >
+              <span className="w-16 h-16 bg-ivory/90 flex items-center justify-center text-maroon-deep border border-gold group-hover:scale-105 transition-transform duration-300">
+                <Play size={22} weight="fill" />
+              </span>
+            </button>
+          )}
         </div>
         <Reveal>
           <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">{home.house?.eyebrow}</div>
@@ -633,6 +646,29 @@ export default function Home() {
           </ul>
         </Reveal>
       </section>
+
+      {showHouseVideo && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" onClick={() => setShowHouseVideo(false)}>
+          <div className="absolute inset-0 bg-maroon-deep/85 backdrop-blur-sm" />
+          <div className="relative w-full max-w-3xl aspect-video gold-line-strong bg-ink" onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => setShowHouseVideo(false)}
+              className="absolute -top-10 right-0 text-ivory hover:text-gold"
+              aria-label="Close video"
+              data-testid="house-video-close"
+            >
+              <X size={26} />
+            </button>
+            <iframe
+              src={toEmbedUrl(home.house?.video_url)}
+              title="Tredev — sourced by hand"
+              className="w-full h-full"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+            />
+          </div>
+        </div>
+      )}
 
       <MantraDivider mantras={home.mantras} />
 
