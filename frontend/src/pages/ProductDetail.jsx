@@ -222,7 +222,7 @@ export default function ProductDetail() {
           {(() => {
             const slides = [
               ...(p.images || []).filter(Boolean).map((url) => ({ type: "image", url })),
-              ...(p.video_url ? [{ type: "video", url: p.video_url }] : []),
+              ...(p.video_urls || []).filter(Boolean).map((url) => ({ type: "video", url })),
             ];
             const idx = Math.min(active, Math.max(0, slides.length - 1));
             const go = (d) => setActive((slides.length + idx + d) % slides.length);

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import { absolutize, useSiteAssets } from "@/context/SiteAssetsContext";
 import { toast } from "sonner";
@@ -26,6 +26,9 @@ export const SITE_SLOTS = [
     { key: "home_cat_idol", label: "Idols tile" },
     { key: "home_cat_prashad", label: "Temple Prashad tile" },
   ]},
+  // Fallback only — the live list is replaced at render time with whatever
+  // purposes exist in the admin-editable taxonomy (Admin → Website → Purposes),
+  // so a newly-added purpose gets an image slot here automatically.
   { group: "Homepage · Shop by purpose", items: [
     { key: "home_purpose_wealth", label: "Wealth" },
     { key: "home_purpose_protection", label: "Protection" },
@@ -53,7 +56,22 @@ export default function AdminSiteAssets() {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [clearingSlot, setClearingSlot] = useState(null);
+  const [purposes, setPurposes] = useState(null); // admin-editable taxonomy; null until loaded
   const { refresh: refreshPublic } = useSiteAssets();
+
+  // Purposes are admin-editable (Admin → Website → Purposes) — a newly-added one
+  // needs an image slot here too, not just the built-in five.
+  useEffect(() => {
+    api.get("/categories").then(({ data }) => {
+      if (data?.purposes?.length) setPurposes(data.purposes);
+    }).catch(() => {});
+  }, []);
+
+  const slotGroups = useMemo(() => SITE_SLOTS.map((g) =>
+    g.group === "Homepage · Shop by purpose" && purposes
+      ? { ...g, items: purposes.map((p) => ({ key: `home_purpose_${p.key}`, label: p.label })) }
+      : g
+  ), [purposes]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -96,7 +114,7 @@ export default function AdminSiteAssets() {
         <div className="text-ink-muted">Loading…</div>
       ) : (
         <div className="space-y-10">
-          {SITE_SLOTS
+          {slotGroups
             .map((group) => ({ ...group, items: group.items.filter((s) => matchesQuery(query, [s.label, s.key, group.group])) }))
             .filter((group) => group.items.length > 0)
             .map((group) => (

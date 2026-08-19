@@ -10,7 +10,7 @@ import MediaPicker from "@/components/gemora/MediaPicker";
 const EMPTY = {
   name: "", slug: "", category: "gemstone", subcategory_id: "", description: "", price: "", mrp: "",
   price_usd: "", // shown/charged to visitors outside India
-  images: [], video_url: "", devanagari_name: "", attrs: "{}", quantity: "", care_instructions: "", how_to_wear: "", benefits: "",
+  images: [], video_urls: [], devanagari_name: "", attrs: "{}", quantity: "", care_instructions: "", how_to_wear: "", benefits: "",
   groups: [], // option groups, seeded from the category template
   shipping_charges: [], // [{region, amount}] — USD, outside-India only
   hsn_code: "", gst_rate_bp: "", uqc: "", // gst_rate_bp is edited as a percentage here
@@ -136,7 +136,7 @@ export default function AdminProducts() {
       hsn_code: p.hsn_code || "",
       gst_rate_bp: p.gst_rate_bp != null ? (p.gst_rate_bp / 100).toString() : "",
       uqc: p.uqc || "",
-      video_url: p.video_url || "",
+      video_urls: p.video_urls || [],
       images: p.images || [],
       attrs: JSON.stringify(p.attrs || {}, null, 2),
       care_instructions: (p.care_instructions || []).join("\n"),
@@ -149,6 +149,14 @@ export default function AdminProducts() {
     });
   };
   const startNew = () => { setEditing("new"); setForm(EMPTY); loadTemplate(EMPTY.category); };
+
+  const addVideo = () => {
+    const url = videoDraft.trim();
+    if (!url) { setVideoPromptOpen(false); return; }
+    setForm((f) => ({ ...f, video_urls: [...f.video_urls, url] }));
+    setVideoDraft("");
+    setVideoPromptOpen(false);
+  };
 
   const changeCategory = (category) => {
     // Subcategories belong to one parent, so switching category clears the sub.
@@ -212,7 +220,7 @@ export default function AdminProducts() {
         hsn_code: form.hsn_code.trim() || null,
         gst_rate_bp: percentToBp(form.gst_rate_bp),
         uqc: form.uqc || null,
-        video_url: form.video_url.trim() || null,
+        video_urls: form.video_urls.filter(Boolean),
         // Region label -> USD amount (major unit, dollars — this is jsonb on the
         // product row, not paise like price/mrp above).
         shipping_charges: Object.fromEntries(
@@ -558,18 +566,18 @@ export default function AdminProducts() {
                   {i === 0 && <div className="absolute bottom-0 inset-x-0 bg-maroon-deep/80 text-ivory text-[9px] text-center py-0.5">Cover</div>}
                 </div>
               ))}
-              {form.video_url && (
-                <div className="relative w-24 h-24 gold-line bg-maroon-deep/90 overflow-hidden group shrink-0 flex flex-col items-center justify-center gap-1 text-ivory">
+              {form.video_urls.map((url, i) => (
+                <div key={i} className="relative w-24 h-24 gold-line bg-maroon-deep/90 overflow-hidden group shrink-0 flex flex-col items-center justify-center gap-1 text-ivory">
                   <VideoCamera size={22} weight="duotone" />
-                  <span className="text-[9px] uppercase tracking-widest">Video</span>
+                  <span className="text-[9px] uppercase tracking-widest px-1 text-center break-all">Video {i + 1}</span>
                   <button type="button"
-                    onClick={() => setForm((f) => ({ ...f, video_url: "" }))}
+                    onClick={() => setForm((f) => ({ ...f, video_urls: f.video_urls.filter((_, j) => j !== i) }))}
                     className="absolute top-1 right-1 bg-ivory/90 hover:bg-revoked hover:text-ivory text-revoked p-1 border border-gold/40 opacity-0 group-hover:opacity-100 transition"
                     title="Remove video">
                     <Trash size={11} weight="bold" />
                   </button>
                 </div>
-              )}
+              ))}
               <div className="relative shrink-0">
                 <button type="button" onClick={() => setAddMenuOpen((o) => !o)} data-testid="product-add-image"
                   className="w-24 h-24 border border-dashed border-gold/50 text-ink-muted hover:border-maroon hover:text-maroon flex flex-col items-center justify-center gap-1">
@@ -585,7 +593,7 @@ export default function AdminProducts() {
                       <ImageIcon size={14} /> Add image
                     </button>
                     <button type="button"
-                      onClick={() => { setAddMenuOpen(false); setVideoDraft(form.video_url || ""); setVideoPromptOpen(true); }}
+                      onClick={() => { setAddMenuOpen(false); setVideoDraft(""); setVideoPromptOpen(true); }}
                       data-testid="product-add-video-option"
                       className="w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-cream text-ink">
                       <VideoCamera size={14} /> Add video
@@ -601,13 +609,13 @@ export default function AdminProducts() {
                   autoFocus
                   value={videoDraft}
                   onChange={(e) => setVideoDraft(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); setForm((f) => ({ ...f, video_url: videoDraft.trim() })); setVideoPromptOpen(false); } }}
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addVideo(); } }}
                   placeholder="Paste a video link — e.g. an unlisted YouTube URL"
                   data-testid="product-video-link-input"
                   className="flex-1 gold-line px-3 py-2 text-sm outline-none focus:border-maroon"
                 />
                 <button type="button"
-                  onClick={() => { setForm((f) => ({ ...f, video_url: videoDraft.trim() })); setVideoPromptOpen(false); }}
+                  onClick={addVideo}
                   data-testid="product-video-link-submit"
                   className="brand-gradient text-ivory px-4 py-2 text-xs uppercase tracking-widest">
                   Save
