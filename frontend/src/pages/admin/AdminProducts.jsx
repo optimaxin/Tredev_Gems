@@ -43,6 +43,7 @@ export default function AdminProducts() {
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [videoPromptOpen, setVideoPromptOpen] = useState(false);
   const [videoDraft, setVideoDraft] = useState("");
+  const [categoryTemplate, setCategoryTemplate] = useState([]); // this category's full option groups, for re-adding one removed by mistake
 
   const refresh = () => {
     // The admin list, not the public /products — that one filters to status='active'
@@ -116,14 +117,28 @@ export default function AdminProducts() {
   const loadTemplate = async (category) => {
     try {
       const { data } = await api.get(`/admin/category-options/${category}`);
+      setCategoryTemplate(data.groups || []);
       setForm((f) => ({ ...f, groups: groupsToForm(data.groups) }));
     } catch (e) {
       toast.error("Could not load category options");
     }
   };
 
+  // Just for knowing which of the category's option groups (if any) this product is
+  // currently missing — e.g. one removed by mistake — without touching its own groups.
+  const loadCategoryTemplate = async (category) => {
+    try {
+      const { data } = await api.get(`/admin/category-options/${category}`);
+      setCategoryTemplate(data.groups || []);
+    } catch (e) { /* silent — the "add back a removed option" affordance just won't show */ }
+  };
+
+  const addGroup = (template) =>
+    setForm((f) => ({ ...f, groups: [...f.groups, groupsToForm([template])[0]] }));
+
   const startEdit = (p) => {
     setEditing(p);
+    loadCategoryTemplate(p.category);
     setForm({
       ...EMPTY,
       ...p,
@@ -168,6 +183,10 @@ export default function AdminProducts() {
   const topCats = cats.filter((c) => !c.parent_category_id);
   const selectedTop = topCats.find((c) => c.key === form.category);
   const subCats = selectedTop ? cats.filter((c) => c.parent_category_id === selectedTop.category_id) : [];
+
+  // Category-template groups this product doesn't currently have — lets the admin
+  // add back one removed by mistake (or one added to the category template since).
+  const missingGroups = categoryTemplate.filter((t) => !form.groups.some((g) => g.key === t.key));
 
   const save = async (e) => {
     e.preventDefault();
@@ -543,6 +562,23 @@ export default function AdminProducts() {
                     </div>
                   );
                 })}
+              </div>
+            )}
+
+            {missingGroups.length > 0 && (
+              <div className="mt-4 gold-line bg-ivory p-3">
+                <div className="text-[10px] text-ink-muted mb-2">
+                  Add back an option removed by mistake (or new to this category):
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {missingGroups.map((t) => (
+                    <button key={t.key} type="button" onClick={() => addGroup(t)}
+                      data-testid={`product-add-group-${t.key}`}
+                      className="text-xs border border-maroon text-maroon px-3 py-1.5 inline-flex items-center gap-1 hover:bg-maroon hover:text-ivory transition-colors">
+                      <PlusCircle size={12} /> {t.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
           </div>
