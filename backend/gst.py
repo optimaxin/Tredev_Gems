@@ -46,6 +46,14 @@ _STATE_ALIASES = {
     "nct of delhi": "07", "new delhi": "07", "delhi ncr": "07",
     "orissa": "21", "pondicherry": "34", "puduchery": "34",
     "uttaranchal": "05", "chattisgarh": "22",
+    # ISO 3166-2:IN two-letter codes — the PIN lookup (backend/geo.py) falls back to
+    # AWS Location's bare region Code (e.g. "UP") when it has no full state name.
+    "an": "35", "ap": "37", "ar": "12", "as": "18", "br": "10", "ch": "04",
+    "ct": "22", "dh": "26", "dl": "07", "ga": "30", "gj": "24", "hr": "06",
+    "hp": "02", "jk": "01", "jh": "20", "ka": "29", "kl": "32", "la": "38",
+    "ld": "31", "mp": "23", "mh": "27", "mn": "14", "ml": "17", "mz": "15",
+    "nl": "13", "or": "21", "py": "34", "pb": "03", "rj": "08", "sk": "11",
+    "tn": "33", "tg": "36", "tr": "16", "up": "09", "uk": "05", "wb": "19",
 }
 _BY_NAME = {name.lower(): code for code, (name, _) in STATES.items()}
 
@@ -392,6 +400,8 @@ def _demo() -> None:
     assert state_code_for("Uttar Pradesh") == "09"
     assert state_code_for("  delhi ") == "07"
     assert state_code_for("Orissa") == "21"
+    assert state_code_for("UP") == "09"  # AWS Location's bare region code fallback
+    assert state_code_for("mh") == "27"
     assert state_code_for("Atlantis") is None  # unresolvable must block, not guess
 
     # 13. Amount in words uses lakh/crore, not the Western short scale.
