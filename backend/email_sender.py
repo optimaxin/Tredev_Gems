@@ -83,48 +83,67 @@ def _send_sync(to: list[str], subject: str, html: str, text: str,
 async def log_email(*, type_: str, to: list[str], subject: str, status: str,
                     error: Optional[str] = None, message_id: Optional[str] = None,
                     sent_by: Optional[str] = None, campaign_id: Optional[str] = None,
-                    related_id: Optional[str] = None) -> None:
+                    related_id: Optional[str] = None, body_html: Optional[str] = None,
+                    log_id: Optional[str] = None) -> str:
+    """Inserts a new log row, unless `log_id` is given — then it updates that row
+    in place instead (used by the admin "Retry" action, so retrying a failed send
+    corrects its own row rather than piling up a new one every click). Returns the
+    row's id either way."""
+    row_id = log_id or str(uuid.uuid4())
     try:
-        await db.execute(
-            """INSERT INTO email_log (id, type, to_emails, subject, status, error,
-                    message_id, sent_by, campaign_id, related_id, sent_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8::uuid,$9::uuid,$10,
-                       CASE WHEN $5 = 'sent' THEN now() END)""",
-            uuid.uuid4(), type_, to, subject, status, error, message_id,
-            sent_by, campaign_id, related_id)
+        if log_id:
+            await db.execute(
+                """UPDATE email_log SET status=$2, error=$3, message_id=$4, sent_at=
+                       CASE WHEN $2 = 'sent' THEN now() ELSE sent_at END WHERE id=$1::uuid""",
+                log_id, status, error, message_id)
+        else:
+            await db.execute(
+                """INSERT INTO email_log (id, type, to_emails, subject, status, error,
+                        message_id, sent_by, campaign_id, related_id, body_html, sent_at)
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8::uuid,$9::uuid,$10,$11,
+                           CASE WHEN $5 = 'sent' THEN now() END)""",
+                row_id, type_, to, subject, status, error, message_id,
+                sent_by, campaign_id, related_id, body_html)
     except Exception as e:
         log.warning(f"email log_email failed: {e}")
+    return row_id
 
 
 async def send_email(to: list[str], subject: str, html: str, text: str, *,
                      type_: str = "custom", reply_to: Optional[str] = None,
                      list_unsubscribe: Optional[str] = None,
                      sent_by: Optional[str] = None, campaign_id: Optional[str] = None,
-                     related_id: Optional[str] = None) -> dict:
+                     related_id: Optional[str] = None, log_id: Optional[str] = None) -> dict:
     """Send one email. NEVER raises — a mail outage must not break the order/booking/
-    admin action that triggered it. Always logs the attempt either way."""
+    admin action that triggered it. Always logs the attempt either way.
+
+    `log_id`, when passed (only by the admin "Retry" endpoint), updates that
+    existing email_log row instead of inserting a new one."""
     if not to:
         return {"success": False, "error": "no recipients"}
     if not configured():
         log.warning(f"email not configured — skipping '{subject}' to {to}")
-        await log_email(type_=type_, to=to, subject=subject, status="failed",
-                        error="SMTP not configured", sent_by=sent_by,
-                        campaign_id=campaign_id, related_id=related_id)
-        return {"success": False, "error": "SMTP not configured"}
+        row_id = await log_email(type_=type_, to=to, subject=subject, status="failed",
+                                 error="SMTP not configured", sent_by=sent_by,
+                                 campaign_id=campaign_id, related_id=related_id,
+                                 body_html=html, log_id=log_id)
+        return {"success": False, "error": "SMTP not configured", "log_id": row_id}
     try:
         message_id = await asyncio.to_thread(
             _send_sync, to, subject, html, text, reply_to, list_unsubscribe)
-        await log_email(type_=type_, to=to, subject=subject, status="sent",
-                        message_id=message_id, sent_by=sent_by,
-                        campaign_id=campaign_id, related_id=related_id)
-        return {"success": True, "message_id": message_id}
+        row_id = await log_email(type_=type_, to=to, subject=subject, status="sent",
+                                 message_id=message_id, sent_by=sent_by,
+                                 campaign_id=campaign_id, related_id=related_id,
+                                 body_html=html, log_id=log_id)
+        return {"success": True, "message_id": message_id, "log_id": row_id}
     except Exception as e:
         error = str(e)
         log.warning(f"email send failed ({subject!r} -> {to}): {error}")
-        await log_email(type_=type_, to=to, subject=subject, status="failed",
-                        error=error[:500], sent_by=sent_by,
-                        campaign_id=campaign_id, related_id=related_id)
-        return {"success": False, "error": error}
+        row_id = await log_email(type_=type_, to=to, subject=subject, status="failed",
+                                 error=error[:500], sent_by=sent_by,
+                                 campaign_id=campaign_id, related_id=related_id,
+                                 body_html=html, log_id=log_id)
+        return {"success": False, "error": error, "log_id": row_id}
 
 
 async def send_with_admin_copy(customer_email: Optional[str], customer_render: tuple,

@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS email_log (
     sent_by      uuid REFERENCES users(id),
     campaign_id  uuid,
     related_id   text,                   -- order_id, booking_id, astrologer_id, etc.
+    body_html    text,                   -- the exact rendered email, so a failed send can be retried verbatim
     created_at   timestamptz NOT NULL DEFAULT now(),
     sent_at      timestamptz
 );

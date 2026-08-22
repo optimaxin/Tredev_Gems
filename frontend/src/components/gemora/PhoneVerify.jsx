@@ -97,6 +97,14 @@ export default function PhoneVerify({ open = true, onClose, onVerified, prefillP
       return;
     }
     const p = normalize(phone);
+    const digits = phone.replace(/\D/g, "");
+    const national = (digits.startsWith(dial) && digits.length > 10) ? digits.slice(dial.length) : digits;
+    // India's mobile numbers are always exactly 10 digits — catch a typo (like an
+    // extra digit) here instead of round-tripping to Firebase for a generic
+    // auth/invalid-phone-number every time "Send OTP" is clicked.
+    if (dial === "91" && national.length !== 10) {
+      toast.error("Enter a valid 10-digit mobile number"); return;
+    }
     const total = p.replace(/\D/g, "").length;
     if (total < dial.length + 6 || total > 15) { toast.error("Enter a valid mobile number"); return; }
 

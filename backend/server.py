@@ -9695,6 +9695,27 @@ async def admin_email_logs(limit: int = 50, offset: int = 0, status: Optional[st
     return {"rows": rows, "total": total}
 
 
+@api.post("/admin/emails/logs/{log_id}/retry")
+async def admin_email_log_retry(log_id: str, actor: str = Depends(require_perm("email")),
+                                _rl: None = Depends(rate_limit(20, 60))):
+    """Resends the EXACT email that was logged (its stored body_html), updating
+    this same row rather than inserting a new one — a retry corrects the
+    original attempt, it isn't a second send."""
+    row = await db.fetch_one(
+        "SELECT type, to_emails, subject, body_html FROM email_log WHERE id = $1::uuid", log_id)
+    if not row:
+        raise HTTPException(404, "Log entry not found")
+    if not row["body_html"]:
+        raise HTTPException(400, "This email predates retry support and has no stored content to resend")
+    res = await email_sender.send_email(
+        row["to_emails"], row["subject"], row["body_html"],
+        email_templates._to_text(row["body_html"]), type_=row["type"], sent_by=actor, log_id=log_id)
+    await audit_log(actor, "email.retry", log_id, {"success": res["success"]})
+    if not res["success"]:
+        raise HTTPException(502, res.get("error") or "Resend failed")
+    return {"ok": True}
+
+
 # ── Campaigns ────────────────────────────────────────────────────────────────
 _CAMPAIGN_AUDIENCE_CAP = 2000
 

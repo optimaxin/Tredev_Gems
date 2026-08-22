@@ -405,6 +405,7 @@ function Logs() {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(true);
+  const [retrying, setRetrying] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -426,6 +427,19 @@ function Logs() {
     : rows;
   const lastPage = Math.max(0, Math.ceil(total / PAGE_SIZE) - 1);
 
+  const retry = async (row) => {
+    setRetrying(row.id);
+    try {
+      await api.post(`/admin/emails/logs/${row.id}/retry`);
+      toast.success("Email resent");
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Resend failed");
+    } finally {
+      setRetrying(null);
+    }
+  };
+
   return (
     <div>
       <div className="flex gap-3 mb-4 flex-wrap items-center">
@@ -444,7 +458,7 @@ function Logs() {
         <table className="w-full text-sm">
           <thead className="bg-cream">
             <tr>
-              {["Type", "To", "Subject", "Status", "Sent"].map((h) => (
+              {["Type", "To", "Subject", "Status", "Sent", ""].map((h) => (
                 <th key={h} className="text-xs uppercase tracking-widest text-ink-muted text-left px-4 py-3">{h}</th>
               ))}
             </tr>
@@ -458,10 +472,18 @@ function Logs() {
                 <td className={`px-4 py-3 ${r.status === "sent" ? "text-verified" : "text-revoked"}`}
                   title={r.error || ""}>{r.status}</td>
                 <td className="px-4 py-3 text-ink-muted">{r.sent_at ? new Date(r.sent_at).toLocaleString() : "—"}</td>
+                <td className="px-4 py-3">
+                  {r.status === "failed" && (
+                    <AsyncButton onClick={() => retry(r)} loading={retrying === r.id} loadingText="Resending…"
+                      className="flex items-center gap-1 px-2.5 py-1 text-xs border border-gold/40 text-ink-soft hover:border-maroon hover:text-maroon disabled:opacity-50">
+                      <ArrowClockwise size={12} /> Retry
+                    </AsyncButton>
+                  )}
+                </td>
               </tr>
             ))}
             {!loading && filtered.length === 0 && (
-              <tr><td colSpan={5} className="px-4 py-12 text-center text-ink-muted">No emails logged yet.</td></tr>
+              <tr><td colSpan={6} className="px-4 py-12 text-center text-ink-muted">No emails logged yet.</td></tr>
             )}
           </tbody>
         </table>
