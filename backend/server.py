@@ -52,6 +52,8 @@ import rudraksha_calc  # Lucky Rudraksha calculator — Swiss Ephemeris + moon-s
 # shadow the module inside that function.
 import gst as gst_engine  # Pure GST tax engine — see .claude/invoice.md §5
 import invoice as invoicing  # Invoice numbering / persistence / HTML render
+import email_sender            # SMTP transport + fire-and-forget dispatch
+import email_templates         # Branded HTML templates — see .claude/.email_notification.md
 import image_tools  # Upload compression — shared with backfill_compress_media.py
 from circuit import CircuitOpenError, get_circuit
 import respcache
@@ -624,6 +626,9 @@ ALL_PERMISSIONS = [
     # Reading the support inbox exposes customer conversations, so it is its own
     # permission rather than being folded into a broader one.
     "whatsapp",
+    # Compose/campaign sends reach every customer's inbox — its own permission,
+    # not folded into "whatsapp" (different channel/gateway) or "orders".
+    "email",
 ]
 
 
@@ -1036,6 +1041,7 @@ async def _startup():
     # double-selling impossible, plus uniques on users.email, products.slug,
     # product_units.serial_no, qr_codes.token, user_sessions.session_token and
     # site_assets.slot.
+    asyncio.get_running_loop().create_task(_scheduled_email_campaigns_loop())
 
 
 
@@ -3799,6 +3805,7 @@ async def _cart_items(cart_id: str, conn=None) -> list[dict]:
                p.category_key::text              AS category_key,
                p.title                           AS name,
                p.shipping_charges                AS shipping_charges,
+               p.gst_rate_bp                     AS gst_rate_bp,
                (SELECT ma.object_key FROM product_media pm
                   JOIN media_assets ma ON ma.id = pm.media_id
                  WHERE pm.product_id = p.id ORDER BY pm.position LIMIT 1) AS image
@@ -4449,7 +4456,6 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
                 shipping_total += db.to_paise(str(charge))
 
     subtotal = sum(li["price"] * li["qty"] for li in items)
-    gst = 0  # prices are GST-inclusive — not added on top of the listed price
 
     # A paid consultation credits its fee toward the buyer's next purchase. Reserved
     # here by reference (not yet marked redeemed — that happens in _mark_paid, once
@@ -4472,6 +4478,28 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
     # Clamped as a whole: a consultation credit stacked on top of coupons must never
     # drive the payable amount below zero.
     discount = min(credit_discount + coupon_result["total_discount"], subtotal + shipping_total)
+
+    # Product prices are exclusive of GST — each product's own gst_rate_bp (set
+    # under Admin -> Products, alongside its HSN code) is added on top here, not
+    # backed out of the listed price. Routed through the same tax engine invoice.py
+    # uses (same discount/shipping inputs, prices_include_tax=False) so the invoice
+    # generated later recomputes this exact figure and never hits a §5.4 mismatch.
+    # Place of supply doesn't matter for the total: CGST+SGST and IGST are just two
+    # ways of labelling the same rate, so a fixed supplier state is fine here — the
+    # real place of supply is only resolved for the CGST/SGST-vs-IGST split at
+    # invoice time, once the shipping address is known.
+    tax_calc = gst_engine.compute_invoice(
+        [{"unit_price_paise": li["price"], "qty": li["qty"],
+          "gst_rate_bp": li.get("gst_rate_bp") or 0} for li in items],
+        supplier_state_code=invoicing.DEFAULT_SETTINGS["state_code"],
+        place_of_supply_code=None,
+        order_discount_paise=discount,
+        shipping_paise=shipping_total,
+        is_export=cart["currency"] != "INR",
+        prices_include_tax=False,
+    )
+    gst = (tax_calc["total_cgst_paise"] + tax_calc["total_sgst_paise"]
+           + tax_calc["total_igst_paise"])
     total = subtotal + gst + shipping_total - discount
     # orders.coupon_id keeps pointing at the single largest discount, so reporting
     # built before stacking existed still reads something sensible.
@@ -4717,7 +4745,181 @@ async def _mark_paid(order: dict, payment_id: str) -> dict:
                      "total": _rupees(result.get("total")),
                      "order_url": f"{os.environ.get('PUBLIC_APP_URL', '').rstrip('/')}/account",
                  })
+    _email_order_confirmation(result, buyer)
+    _email_affiliate_sale(order, result)
     return result
+
+
+# ── Email notifications ───────────────────────────────────────────────────────
+# Fired alongside the existing _wa_fire_event calls at the same trigger points —
+# see .claude/.email_notification.md and the "Email notification system" plan.
+# Every one of these is fire-and-forget (email_sender._email_fire_event): a mail
+# outage must never roll back or delay the order/booking/admin action itself.
+def _app_url(path: str = "") -> str:
+    return f"{os.environ.get('PUBLIC_APP_URL', '').rstrip('/')}{path}"
+
+
+def _order_line_items_for_email(order: dict) -> list[dict]:
+    return [{"name": li.get("name"), "image": _media_public_url(li["image"]) if li.get("image") else "",
+             "variant": ", ".join(f"{o.get('label') or o.get('key')}: {o.get('value')}"
+                                  for o in (li.get("options_list") or []) if o.get("value")),
+             "quantity": li.get("qty") or 1, "price": li.get("price") or 0}
+            for li in order.get("items", [])]
+
+
+def _email_order_confirmation(order: dict, buyer: Optional[dict]) -> None:
+    shipping = order.get("shipping") or {}
+    to_email = (buyer or {}).get("email") or shipping.get("email")
+    if not to_email and not email_sender.ADMIN_NOTIFICATION_EMAILS:
+        return
+
+    async def _send():
+        settings = await _invoice_settings()
+        payload = {
+            "customer_name": (buyer or {}).get("name") or shipping.get("shipping_name") or "there",
+            "order_id": order.get("order_no") or order.get("order_id"),
+            "order_date": order.get("created_at", ""), "items": _order_line_items_for_email(order),
+            "subtotal": order.get("subtotal", 0), "shipping": order.get("shipping_total", 0),
+            "discount": order.get("discount", 0), "total": order.get("total", 0),
+            "currency": order.get("currency", "INR"), "payment_method": "PREPAID",
+            "shipping_address": {"name": shipping.get("shipping_name"), "line1": shipping.get("shipping_address"),
+                                 "city": shipping.get("shipping_city"), "state": shipping.get("shipping_state"),
+                                 "pincode": shipping.get("shipping_pincode")},
+            "order_url": _app_url("/account"),
+        }
+        customer_render = email_templates.render_order_confirmation(payload, settings)
+        admin_render = email_templates.render_admin_order_notification(
+            {**payload, "customer_email": to_email or "",
+             "customer_phone": (buyer or {}).get("phone") or shipping.get("shipping_phone", ""),
+             "admin_url": _app_url(f"/admin/orders?order_id={order.get('order_id')}")}, settings)
+        await email_sender.send_with_admin_copy(to_email, customer_render, admin_render,
+                                                type_="order_confirmation", related_id=order.get("order_id"))
+    email_sender._email_fire_event("order.placed", _send)
+
+
+def _email_order_status_update(order: dict, buyer: Optional[dict], new_status: str) -> None:
+    shipping = order.get("shipping") or {}
+    to_email = (buyer or {}).get("email") or shipping.get("email")
+    if not to_email:
+        return
+
+    async def _send():
+        if buyer and buyer.get("user_id"):
+            allowed = await db.fetch_val(
+                "SELECT COALESCE((email->>'order_updates')::boolean, true) "
+                "FROM notification_preferences WHERE user_id=$1::uuid", buyer["user_id"])
+            if allowed is False:
+                return
+        settings = await _invoice_settings()
+        payload = {
+            "customer_name": (buyer or {}).get("name") or shipping.get("shipping_name") or "there",
+            "order_id": order.get("order_no") or order.get("order_id"), "new_status": new_status,
+            "tracking_number": order.get("tracking_number"), "courier_name": order.get("courier"),
+            "estimated_delivery": order.get("estimated_delivery_date"),
+            "items": [{"name": li.get("name"), "quantity": li.get("qty") or 1} for li in order.get("items", [])],
+            "delivery_address": ", ".join(filter(None, [shipping.get("shipping_address"),
+                                                         shipping.get("shipping_city"), shipping.get("shipping_state")])),
+            "order_url": _app_url("/account"),
+        }
+        subject, html_out, text_out = email_templates.render_order_status_update(payload, settings)
+        await email_sender.send_email([to_email], subject, html_out, text_out,
+                                      type_="order_status_update", related_id=order.get("order_id"))
+    email_sender._email_fire_event("order.status_changed", _send)
+
+
+def _email_consultation_booking(consult: dict) -> None:
+    if not consult.get("email"):
+        return
+
+    async def _send():
+        settings = await _invoice_settings()
+        payload = {
+            "customer_name": consult.get("name") or "there",
+            "consultation_type": consult.get("concern") or "Astrology Consultation",
+            "booking_id": consult.get("booking_id"), "booking_date": consult.get("created_at", ""),
+            "amount_paid": consult.get("amount", 0), "currency": consult.get("currency") or "INR",
+            "payment_method": "PREPAID", "bookings_url": _app_url("/account"),
+        }
+        subject, html_out, text_out = email_templates.render_consultation_booking(payload, settings)
+        await email_sender.send_email([consult["email"]], subject, html_out, text_out,
+                                      type_="consultation_booking", related_id=consult.get("booking_id"))
+    email_sender._email_fire_event("consultation.booked", _send)
+
+
+def _email_astrologer_assignment(consult: dict, astro: dict, when_dt: datetime) -> None:
+    if not consult.get("email"):
+        return
+
+    async def _send():
+        settings = await _invoice_settings()
+        payload = {
+            "customer_name": consult.get("name") or "there", "booking_id": consult.get("booking_id"),
+            "consultation_type": consult.get("concern") or "Astrology Consultation",
+            "astrologer_name": astro.get("name"), "astrologer_image": astro.get("picture") or "",
+            "astrologer_bio": astro.get("bio") or "", "astrologer_specialties": astro.get("expertise") or [],
+            "scheduled_date": when_dt.strftime("%a, %d %b %Y"), "scheduled_time": when_dt.strftime("%I:%M %p IST"),
+            "duration": f"{CONSULTATION_DURATION_MINUTES} minutes", "meeting_link": consult.get("meeting_link") or "",
+            "meeting_platform": "Google Meet",
+        }
+        subject, html_out, text_out = email_templates.render_astrologer_assignment(payload, settings)
+        await email_sender.send_email([consult["email"]], subject, html_out, text_out,
+                                      type_="astrologer_assignment", related_id=consult.get("booking_id"))
+    email_sender._email_fire_event("consultation.assigned", _send)
+
+
+def _email_astrologer_onboarding(astro_id: str, name: str, email_addr: str, welcome_url: str,
+                                 affiliate_code: str) -> None:
+    async def _send():
+        settings = await _invoice_settings()
+        payload = {
+            "astrologer_name": name, "email": email_addr, "login_url": welcome_url,
+            "affiliate_code": affiliate_code, "affiliate_link": f"{settings.get('store_url', '')}/?ref={affiliate_code}",
+        }
+        subject, html_out, text_out = email_templates.render_astrologer_onboarding(payload, settings)
+        await email_sender.send_email([email_addr], subject, html_out, text_out,
+                                      type_="astrologer_onboarding", related_id=astro_id)
+    email_sender._email_fire_event("astrologer.created", _send)
+
+
+def _email_affiliate_sale(order: dict, result: dict) -> None:
+    """Fires straight from _mark_paid (not a separate hook point): the commission
+    row is inserted inside that same transaction, so by the time this runs the
+    row is already committed and safe to read back."""
+    astro_id = order.get("affiliate_astrologer_id")
+    if not astro_id:
+        return
+
+    async def _send():
+        astro = await db.fetch_one(
+            "SELECT full_name, email, affiliate_code FROM astrologers WHERE id=$1::uuid", astro_id)
+        if not astro or not astro.get("email"):
+            return
+        commission = await db.fetch_one(
+            "SELECT commission_pct, commission_amount FROM affiliate_commissions WHERE order_id=$1::uuid",
+            order["order_id"])
+        if not commission:
+            return
+        total_earnings_rupees = await db.fetch_val(
+            "SELECT COALESCE(SUM(commission_amount), 0) FROM affiliate_commissions WHERE astrologer_id=$1::uuid",
+            astro_id)
+        settings = await _invoice_settings()
+        currency = result.get("currency", "INR")
+        buyer_name = ((await _load_user(user_id=order["user_id"])) or {}).get("name") if order.get("user_id") else None
+        payload = {
+            "astrologer_name": astro["full_name"], "order_id": result.get("order_no") or result.get("order_id"),
+            "order_date": result.get("created_at", ""),
+            "customer_first_name": (buyer_name or "A customer").split(" ")[0],
+            "items": [{"name": li.get("name"), "price": li.get("price") or 0} for li in result.get("items", [])],
+            "order_total": result.get("total", 0), "commission_rate": float(commission["commission_pct"]),
+            "commission_amount": db.to_paise(commission["commission_amount"]),
+            "total_earnings": db.to_paise(total_earnings_rupees), "currency": currency,
+            "affiliate_link": f"{settings.get('store_url', '')}/?ref={astro['affiliate_code']}",
+            "dashboard_url": _app_url("/astrologer/dashboard"),
+        }
+        subject, html_out, text_out = email_templates.render_affiliate_sale(payload, settings)
+        await email_sender.send_email([astro["email"]], subject, html_out, text_out,
+                                      type_="affiliate_sale", related_id=result.get("order_id"))
+    email_sender._email_fire_event("affiliate.commission", _send)
 
 
 class CashfreeVerifyIn(BaseModel):
@@ -5340,6 +5542,9 @@ async def admin_dispatch(body: DispatchIn, user_id: str = Depends(require_admin)
                      "tracking_number": body.tracking_number or "—",
                      "eta": body.estimated_delivery_date or "soon",
                  })
+    _email_order_status_update(
+        {**order, "tracking_number": body.tracking_number, "courier": body.courier,
+         "estimated_delivery_date": body.estimated_delivery_date}, buyer, "shipped")
     await audit_log(user_id, "order.dispatch", order["order_id"],
                     {"units": len(units), "eta": body.estimated_delivery_date})
     return {"ok": True, "units": len(units)}
@@ -6104,7 +6309,9 @@ async def _mark_consultation_paid(booking_id: str, payment_id: str) -> dict:
         _wa_fire_event("consultation.booked", phone=consult["phone"], name=consult["name"],
                       user_id=consult.get("user_id"),
                       variables={"amount": amount_label})
-    return await _load_consultation(booking_id)
+    consult = await _load_consultation(booking_id)
+    _email_consultation_booking(consult)
+    return consult
 
 
 async def _activate_consultation_credit(booking_id: str) -> None:
@@ -7311,6 +7518,8 @@ async def admin_create_astrologer(body: AstrologerIn, actor: str = Depends(requi
         if astro_phone:
             _wa_fire_event("astrologer.created", phone=astro_phone, name=payload["name"],
                      variables={"welcome_url": welcome_url})
+        _email_astrologer_onboarding(str(astro_id), payload["name"], payload["email"],
+                                     welcome_url, affiliate_code)
     doc = _shape_astro(await db.fetch_one(_ASTRO_SELECT + " WHERE a.id = $1::uuid", str(astro_id)))
     await audit_log(actor, "astrologer.create", target=str(astro_id), meta={"email": payload.get("email")})
     respcache.invalidate("astrologers")
@@ -7746,6 +7955,8 @@ async def admin_update_consultation(booking_id: str, body: dict, request: Reques
                           variables={"customer_name": consult["name"], "concern": consult.get("concern") or "",
                                      "date": when, "duration": f"{CONSULTATION_DURATION_MINUTES} minutes",
                                      "meeting_link": consult["meeting_link"]})
+        _email_astrologer_assignment(consult, astro,
+                                     datetime.fromisoformat(consult["slot_iso"]).astimezone(IST))
     return consult
 
 
@@ -7799,14 +8010,16 @@ async def admin_update_order_status(order_id: str, body: OrderStatusIn, actor: s
     # the dispatch flow (which carries tracking), so it is not duplicated here.
     _WA_STATUS_EVENT = {"delivered": "order.delivered", "cancelled": "order.cancelled"}
     event = _WA_STATUS_EVENT.get(body.status)
+    buyer = await _load_user(user_id=prev["user_id"]) if prev.get("user_id") else None
     if event and body.status != prev["status"]:
-        buyer = await _load_user(user_id=prev["user_id"]) if prev.get("user_id") else None
         to_phone = (buyer or {}).get("phone") or prev.get("shipping_phone")
         if to_phone:
             _wa_fire_event(event, phone=to_phone,
                            name=(buyer or {}).get("name") or prev.get("shipping_name") or "friend",
                            user_id=prev.get("user_id"),
                            variables={"order_id": order_id})
+    if body.status in ("delivered", "cancelled", "refunded") and body.status != prev["status"]:
+        _email_order_status_update(prev, buyer, body.status)
     return {**(await _load_order(order_id)), "invoice_error": invoice_error}
 
 
@@ -9394,6 +9607,319 @@ async def wa_admin_campaign_refresh(campaign_id: str,
                completed_at = CASE WHEN $5 THEN now() ELSE completed_at END
             WHERE id=$1::uuid""", campaign_id, sent, failed, status, done)
     return {"ok": True, "status": status, "sent": sent, "failed": failed}
+
+
+# ── Email: compose box, campaigns, logs ────────────────────────────────────────
+# See .claude/.email_notification.md §6-8 and the "Email notification system"
+# plan. Structurally parallel to the WhatsApp admin endpoints just above, but
+# email has no external gateway to delegate pacing/suppression to, so this
+# module owns both (see _run_email_campaign below).
+_SCRIPT_OR_HANDLER_RE = re.compile(r"<script[^>]*>.*?</script>|on\w+\s*=\s*(['\"]).*?\1|javascript:",
+                                   re.I | re.S)
+
+
+def _sanitize_email_html(raw: str) -> str:
+    """Strips <script> blocks, inline event handlers, and javascript: URIs from
+    admin-authored rich text before it's stored/sent. ponytail: a denylist, not a
+    real allowlist sanitizer (no bleach/nh3 in this project) — email clients don't
+    execute JS anyway, so this is defense-in-depth, not the only thing standing
+    between an admin account and an XSS. Upgrade to a real HTML sanitizer if this
+    editor is ever opened to less-trusted authors than admin/staff."""
+    return _SCRIPT_OR_HANDLER_RE.sub("", raw or "")
+
+
+class EmailSendIn(BaseModel):
+    to: List[EmailStr] = Field(min_length=1, max_length=50)
+    subject: str = Field(min_length=1, max_length=200)
+    content: str = Field(min_length=1, max_length=100_000)
+    template: str = "standard"  # standard | announcement | promotional
+
+
+@api.get("/admin/users/search")
+async def admin_users_search(q: str = "", limit: int = 10,
+                             _: str = Depends(require_perm("email"))):
+    """Recipient autocomplete for the compose box — name/email/phone, top N."""
+    q = (q or "").strip()
+    if not q:
+        return []
+    rows = await db.fetch_all(
+        """SELECT id::text AS user_id, full_name AS name, email::text AS email, phone
+             FROM users
+            WHERE deleted_at IS NULL AND email IS NOT NULL
+              AND (full_name ILIKE $1 OR email ILIKE $1 OR phone ILIKE $1)
+            ORDER BY full_name LIMIT $2""",
+        f"%{q}%", max(1, min(limit, 25)))
+    return rows
+
+
+@api.post("/admin/emails/send")
+async def admin_email_send(body: EmailSendIn, actor: str = Depends(require_perm("email")),
+                           _rl: None = Depends(rate_limit(20, 60))):
+    content = _sanitize_email_html(body.content)
+    if body.template not in ("standard", "announcement", "promotional"):
+        raise HTTPException(400, "Unknown template. Allowed: standard, announcement, promotional")
+    settings = await _invoice_settings()
+    sent = failed = 0
+    failures: list[dict] = []
+    for to_addr in body.to:
+        subject, html_out, text_out = email_templates.render_custom_email(
+            subject=body.subject, content_html=content, template=body.template, settings=settings)
+        res = await email_sender.send_email([to_addr], subject, html_out, text_out,
+                                            type_="custom", sent_by=actor)
+        if res["success"]:
+            sent += 1
+        else:
+            failed += 1
+            failures.append({"email": to_addr, "error": res.get("error")})
+    await audit_log(actor, "email.send", "", {"to": len(body.to), "subject": body.subject})
+    return {"success": failed == 0, "sentCount": sent, "failedCount": failed, "failures": failures}
+
+
+@api.get("/admin/emails/logs")
+async def admin_email_logs(limit: int = 50, offset: int = 0, status: Optional[str] = None,
+                           type: Optional[str] = None, _: str = Depends(require_perm("email"))):
+    where, args = [], []
+    if status:
+        args.append(status); where.append(f"status = ${len(args)}")
+    if type:
+        args.append(type); where.append(f"type = ${len(args)}")
+    clause = f"WHERE {' AND '.join(where)}" if where else ""
+    args_paged = args + [max(1, min(limit, 200)), max(0, offset)]
+    rows = await db.fetch_all(
+        f"""SELECT id::text AS id, type, to_emails, subject, status, error, message_id,
+                   campaign_id::text AS campaign_id, related_id, created_at, sent_at
+              FROM email_log {clause}
+             ORDER BY created_at DESC LIMIT ${len(args_paged) - 1} OFFSET ${len(args_paged)}""",
+        *args_paged)
+    total = await db.fetch_val(f"SELECT count(*) FROM email_log {clause}", *args)
+    return {"rows": rows, "total": total}
+
+
+# ── Campaigns ────────────────────────────────────────────────────────────────
+_CAMPAIGN_AUDIENCE_CAP = 2000
+
+
+async def _resolve_campaign_audience(audience_type: str, audience_filter: Optional[dict],
+                                     recipient_emails: Optional[list[str]]) -> list[dict]:
+    """Returns [{user_id, name, email}, ...], already excluding anyone in the
+    `email` channel of `suppressions` — the one mechanism every audience type
+    routes through, so an unsubscribe is honored no matter how a list was built."""
+    if audience_type in ("csv", "manual"):
+        emails = sorted({e.strip().lower() for e in (recipient_emails or []) if "@" in (e or "")})
+        if not emails:
+            return []
+        rows = await db.fetch_all(
+            """SELECT unnest($1::text[]) AS email
+               EXCEPT
+               SELECT identifier FROM suppressions WHERE channel = 'email'""", emails)
+        return [{"user_id": None, "name": "", "email": r["email"]} for r in rows][:_CAMPAIGN_AUDIENCE_CAP]
+
+    where = ["u.deleted_at IS NULL", "u.email IS NOT NULL",
+            "NOT EXISTS (SELECT 1 FROM suppressions s WHERE s.identifier = u.email::text AND s.channel = 'email')"]
+    args: list = []
+    f = audience_filter or {}
+    if audience_type == "segment":
+        if f.get("signup_after"):
+            args.append(f["signup_after"]); where.append(f"u.created_at >= ${len(args)}::date")
+        if f.get("signup_before"):
+            args.append(f["signup_before"]); where.append(f"u.created_at < ${len(args)}::date + 1")
+        if f.get("state"):
+            args.append(f["state"])
+            where.append(f"""EXISTS (SELECT 1 FROM addresses a WHERE a.user_id = u.id
+                                     AND a.state ILIKE ${len(args)})""")
+        if f.get("min_orders"):
+            args.append(int(f["min_orders"]))
+            where.append(f"""(SELECT count(*) FROM orders o WHERE o.user_id = u.id
+                             AND o.status != 'pending_payment') >= ${len(args)}""")
+    rows = await db.fetch_all(
+        f"""SELECT u.id::text AS user_id, u.full_name AS name, u.email::text AS email
+              FROM users u WHERE {' AND '.join(where)}
+             ORDER BY u.created_at DESC LIMIT {_CAMPAIGN_AUDIENCE_CAP}""", *args)
+    return rows
+
+
+async def _run_email_campaign(campaign_id: str, recipients: list[dict], subject: str,
+                              content_html: str, template: str) -> None:
+    """The one piece of 'queue' infra email needs: no external gateway to delegate
+    pacing to (unlike WhatsApp/OpenWA), so this loop paces itself. Runs as a
+    fire-and-forget asyncio task — see the campaign-create endpoint below."""
+    settings = await _invoice_settings()
+    await db.execute("UPDATE email_campaigns SET status='sending', started_at=now() WHERE id=$1::uuid",
+                     campaign_id)
+    sent = failed = 0
+    delay = 1.0 / email_sender.BULK_EMAIL_RATE_LIMIT
+    for r in recipients:
+        status = await db.fetch_val("SELECT status FROM email_campaigns WHERE id=$1::uuid", campaign_id)
+        while status == "paused":
+            await asyncio.sleep(2)
+            status = await db.fetch_val("SELECT status FROM email_campaigns WHERE id=$1::uuid", campaign_id)
+        if status == "cancelled":
+            break
+        unsub_url = _app_url(
+            f"/api/email/unsubscribe?token={email_sender.unsubscribe_token(r['email'])}")
+        _, html_out, text_out = email_templates.render_custom_email(
+            subject=subject, content_html=content_html, template=template, settings=settings,
+            recipient_name=r.get("name") or "", unsubscribe_url=unsub_url)
+        ok = False
+        for backoff in (0, 1, 5, 30):  # up to 3 retries: 1s / 5s / 30s backoff
+            if backoff:
+                await asyncio.sleep(backoff)
+            res = await email_sender.send_email(
+                [r["email"]], subject, html_out, text_out, type_="campaign",
+                campaign_id=campaign_id, list_unsubscribe=unsub_url)
+            if res["success"]:
+                ok = True
+                break
+        sent, failed = sent + (1 if ok else 0), failed + (0 if ok else 1)
+        await db.execute(
+            "UPDATE email_campaigns SET sent_count=$2, failed_count=$3, updated_at=now() WHERE id=$1::uuid",
+            campaign_id, sent, failed)
+        await asyncio.sleep(delay)
+    await db.execute(
+        """UPDATE email_campaigns SET status = CASE WHEN status = 'cancelled' THEN status ELSE 'sent' END,
+               completed_at = now() WHERE id = $1::uuid""", campaign_id)
+
+
+class EmailCampaignIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    subject: str = Field(min_length=1, max_length=200)
+    content: str = Field(min_length=1, max_length=200_000)
+    template: str = "newsletter"
+    audience_type: str  # all_users | segment | csv | manual
+    audience_filter: Optional[dict] = None
+    recipient_emails: Optional[List[str]] = None
+    scheduled_at: Optional[str] = None  # ISO datetime
+
+
+@api.post("/admin/emails/campaigns")
+async def admin_email_campaign_create(body: EmailCampaignIn, actor: str = Depends(require_perm("email"))):
+    if body.audience_type not in ("all_users", "segment", "csv", "manual"):
+        raise HTTPException(400, "Unknown audience_type")
+    content = _sanitize_email_html(body.content)
+    recipients = await _resolve_campaign_audience(body.audience_type, body.audience_filter,
+                                                  body.recipient_emails)
+    if not recipients:
+        raise HTTPException(400, "No eligible recipients for this audience")
+
+    scheduled_at = None
+    if body.scheduled_at:
+        try:
+            scheduled_at = datetime.fromisoformat(body.scheduled_at.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(400, "scheduled_at must be an ISO datetime")
+    status = "scheduled" if scheduled_at else "sending"
+
+    cid = await db.fetch_val(
+        """INSERT INTO email_campaigns (id, name, subject, content, template, audience_type,
+                audience_filter, recipient_emails, recipient_count, status, scheduled_at, created_by)
+           VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11::uuid)
+           RETURNING id::text""",
+        body.name, body.subject, content, body.template, body.audience_type,
+        db.json_dumps(body.audience_filter) if body.audience_filter else None,
+        [r["email"] for r in recipients] if body.audience_type in ("csv", "manual") else None,
+        len(recipients), status, scheduled_at, actor)
+    await audit_log(actor, "email.campaign.start", cid,
+                    {"name": body.name, "recipients": len(recipients), "scheduled": bool(scheduled_at)})
+    if not scheduled_at:
+        email_sender._email_fire_event(
+            "campaign", lambda: _run_email_campaign(cid, recipients, body.subject, content, body.template))
+    return {"ok": True, "campaign_id": cid, "recipients": len(recipients), "status": status}
+
+
+@api.get("/admin/emails/campaigns")
+async def admin_email_campaign_list(_: str = Depends(require_perm("email")), limit: int = 50):
+    return await db.fetch_all(
+        """SELECT c.id::text AS campaign_id, c.name, c.subject, c.template, c.audience_type,
+                  c.status, c.recipient_count, c.sent_count, c.failed_count, c.scheduled_at,
+                  c.started_at, c.completed_at, c.created_at, COALESCE(u.full_name, '') AS created_by_name
+             FROM email_campaigns c LEFT JOIN users u ON u.id = c.created_by
+            ORDER BY c.created_at DESC LIMIT $1""", max(1, min(limit, 200)))
+
+
+@api.get("/admin/emails/campaigns/{campaign_id}")
+async def admin_email_campaign_detail(campaign_id: str, _: str = Depends(require_perm("email"))):
+    """Doubles as the progress-poll endpoint: our own _run_email_campaign task
+    updates the row directly, so reading it back IS the refresh — no separate
+    gateway to poll, unlike the WhatsApp campaign's /refresh."""
+    row = await db.fetch_one(
+        """SELECT id::text AS campaign_id, name, subject, template, audience_type, status,
+                  recipient_count, sent_count, failed_count, scheduled_at, started_at,
+                  completed_at, created_at
+             FROM email_campaigns WHERE id = $1::uuid""", campaign_id)
+    if not row:
+        raise HTTPException(404, "Campaign not found")
+    return row
+
+
+@api.post("/admin/emails/campaigns/{campaign_id}/pause")
+async def admin_email_campaign_pause(campaign_id: str, actor: str = Depends(require_perm("email"))):
+    got = await db.fetch_val(
+        "UPDATE email_campaigns SET status='paused' WHERE id=$1::uuid AND status='sending' RETURNING id::text",
+        campaign_id)
+    if not got:
+        raise HTTPException(400, "Campaign is not currently sending")
+    await audit_log(actor, "email.campaign.pause", campaign_id)
+    return {"ok": True}
+
+
+@api.post("/admin/emails/campaigns/{campaign_id}/resume")
+async def admin_email_campaign_resume(campaign_id: str, actor: str = Depends(require_perm("email"))):
+    got = await db.fetch_val(
+        "UPDATE email_campaigns SET status='sending' WHERE id=$1::uuid AND status='paused' RETURNING id::text",
+        campaign_id)
+    if not got:
+        raise HTTPException(400, "Campaign is not currently paused")
+    await audit_log(actor, "email.campaign.resume", campaign_id)
+    return {"ok": True}
+
+
+@api.get("/email/unsubscribe")
+async def email_unsubscribe(token: str):
+    """Public — must work from a cold click in an email client, no auth. Verifies
+    the signed token and records the suppression in the pre-existing
+    `suppressions` table (channel='email'), the same list every campaign audience
+    query already excludes."""
+    address = email_sender.verify_unsubscribe_token(token)
+    if not address:
+        return FastAPIResponse(
+            content="<html><body style='font-family:sans-serif;padding:40px;text-align:center'>"
+                    "<h2>This unsubscribe link is invalid or has expired.</h2></body></html>",
+            status_code=400, media_type="text/html")
+    await db.execute(
+        """INSERT INTO suppressions (id, identifier, channel, reason, source)
+           VALUES (gen_random_uuid(), $1, 'email', 'unsubscribed', 'campaign')
+           ON CONFLICT (identifier, channel) DO NOTHING""", address)
+    return FastAPIResponse(
+        content="<html><body style='font-family:sans-serif;padding:40px;text-align:center'>"
+                "<h2>You've been unsubscribed from Tredeva Store marketing emails.</h2>"
+                "<p>You'll still receive emails about your own orders and bookings.</p></body></html>",
+        media_type="text/html")
+
+
+async def _scheduled_email_campaigns_loop() -> None:
+    """Started once at app startup (see _startup). No Redis/cron in this
+    deployment, so a due scheduled campaign is picked up by polling — the same
+    scale WhatsApp's bulk campaigns already prove works fine single-instance."""
+    while True:
+        try:
+            due = await db.fetch_all(
+                """SELECT id::text AS id, subject, content, template, audience_type,
+                          audience_filter, recipient_emails
+                     FROM email_campaigns
+                    WHERE status = 'scheduled' AND scheduled_at <= now()""")
+            for c in due:
+                recipients = await _resolve_campaign_audience(
+                    c["audience_type"], c.get("audience_filter"), c.get("recipient_emails"))
+                if not recipients:
+                    await db.execute(
+                        "UPDATE email_campaigns SET status='cancelled', completed_at=now() WHERE id=$1::uuid",
+                        c["id"])
+                    continue
+                asyncio.get_running_loop().create_task(
+                    _run_email_campaign(c["id"], recipients, c["subject"], c["content"], c["template"]))
+        except Exception as e:
+            log.warning(f"scheduled email campaign poll failed: {e}")
+        await asyncio.sleep(60)
 
 
 # ── Router wiring ─────────────────────────────────────────────────────────────

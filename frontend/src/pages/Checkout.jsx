@@ -127,7 +127,16 @@ export default function Checkout() {
   // and that figure, not this one, is what the gateway is asked to charge.
   const couponDiscount = coupons.total_discount || 0;
   const effectiveShipping = coupons.free_shipping ? 0 : shippingTotal;
-  const total = Math.max(0, subtotal + effectiveShipping - discount - couponDiscount);
+  // GST is added on top of each item's price using its own rate (set under
+  // Admin -> Products) — mirrors backend's /checkout, which is what actually
+  // charges the gateway. Exports (USD) are zero-rated, same as server-side.
+  // ponytail: not discount-apportioned like the invoice engine — a few paise off
+  // under a big coupon is fine for a live preview; /checkout's own total (and the
+  // gateway's own confirmation screen) is what's actually charged.
+  const gst = currency === "INR"
+    ? cart.items.reduce((sum, li) => sum + Math.round((li.price * li.qty * (li.gst_rate_bp || 0)) / 10000), 0)
+    : 0;
+  const total = Math.max(0, subtotal + gst + effectiveShipping - discount - couponDiscount);
   const DELIVER_MS = 4200; // matches the truck animation length
 
   // Payment is confirmed by here — play the delivery truck, then leave for the
@@ -379,6 +388,11 @@ export default function Checkout() {
               </div>
             )}
             <CouponLines currency={currency} />
+            {gst > 0 && (
+              <div className="flex justify-between text-sm text-ink-muted">
+                <span>GST</span><span>{formatPrice(gst, currency)}</span>
+              </div>
+            )}
             {discount > 0 && (
               <div className="flex justify-between text-sm text-verified">
                 <span>Consultation credit</span><span>−{formatPrice(discount, currency)}</span>

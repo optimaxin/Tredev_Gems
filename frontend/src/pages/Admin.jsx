@@ -7,6 +7,7 @@ import {
   ChartBar, Package, Stack, Certificate as CertIcon, Truck, SquaresFour, Sparkle, Calendar,
   ChatCircleDots, UsersFour, ShieldStar, ArrowLeft, WhatsappLogo, Image as ImageIcon, MegaphoneSimple, PaintBrush,
   ArrowsClockwise, Diamond, Browser, Star, Notebook, ClockCounterClockwise, Fire, Tag, Receipt, FileText,
+  EnvelopeSimple,
 } from "@phosphor-icons/react";
 
 import AdminDashboard from "@/pages/admin/AdminDashboard";
@@ -24,6 +25,7 @@ import AdminJournal from "@/pages/admin/AdminJournal";
 import AdminTeam from "@/pages/admin/AdminTeam";
 import AdminUsers from "@/pages/admin/AdminUsers";
 import AdminWhatsApp from "@/pages/admin/AdminWhatsApp";
+import AdminEmail from "@/pages/admin/AdminEmail";
 import AdminMedia from "@/pages/admin/AdminMedia";
 import AdminSiteAssets from "@/pages/admin/AdminSiteAssets";
 import AdminWebsite from "@/pages/admin/AdminWebsite";
@@ -59,6 +61,9 @@ const NAV_ITEMS = [
   // support inbox exposes customer conversations, so it is its own permission
   // rather than folded into "owner only" or an existing broader one.
   { to: "whatsapp", label: "WhatsApp", Icon: WhatsappLogo, perm: "whatsapp" },
+  // Compose/campaign sends reach every customer's inbox — its own permission,
+  // mirroring "whatsapp" above.
+  { to: "emails", label: "Emails", Icon: EnvelopeSimple, perm: "email" },
   { to: "team", label: "Team", Icon: UsersFour, ownerOnly: true },
   { to: "users", label: "Users", Icon: ShieldStar, ownerOnly: true },
   // Owner-only: it exposes every admin's and staff member's actions.
@@ -163,6 +168,7 @@ export default function Admin() {
           <Route path="queries" element={<AdminQueries />} />
           <Route path="reviews" element={<AdminReviews />} />
           <Route path="whatsapp" element={<AdminWhatsApp />} />
+          <Route path="emails" element={<AdminEmail />} />
           <Route path="team" element={<AdminTeam />} />
           <Route path="users" element={<AdminUsers />} />
           <Route path="logs" element={<AdminLogs />} />
