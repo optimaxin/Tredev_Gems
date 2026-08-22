@@ -74,9 +74,20 @@ def _send_sync(to: list[str], subject: str, html: str, text: str,
     msg.attach(MIMEText(text, "plain"))
     msg.attach(MIMEText(html, "html"))
 
-    with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=30) as server:
-        server.login(SMTP_USER, SMTP_PASSWORD)
-        server.sendmail(SMTP_FROM_EMAIL, to, msg.as_string())
+    # Port 465 is implicit TLS from the first byte (SMTP_SSL); everything else
+    # (587, 25) speaks plaintext until an explicit STARTTLS upgrade. Connecting
+    # the wrong way for the mailbox's actual port hangs until the socket times
+    # out rather than failing fast — indistinguishable from a network block, so
+    # this is worth getting right rather than assuming 465 always means SMTP_SSL.
+    if SMTP_PORT == 465:
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=30) as server:
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.sendmail(SMTP_FROM_EMAIL, to, msg.as_string())
+    else:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
+            server.starttls()
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.sendmail(SMTP_FROM_EMAIL, to, msg.as_string())
     return uuid.uuid4().hex  # smtplib gives no message-id back; this is our own log key
 
 

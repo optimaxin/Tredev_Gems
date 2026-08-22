@@ -8018,7 +8018,13 @@ async def admin_update_order_status(order_id: str, body: OrderStatusIn, actor: s
                            name=(buyer or {}).get("name") or prev.get("shipping_name") or "friend",
                            user_id=prev.get("user_id"),
                            variables={"order_id": order_id})
-    if body.status in ("delivered", "cancelled", "refunded") and body.status != prev["status"]:
+    # Unlike WhatsApp's _WA_STATUS_EVENT above, "shipped" IS included here: the
+    # comment's assumption (shipped always goes through admin_dispatch, which
+    # fires its own email) doesn't hold — AdminOrders.jsx's plain status dropdown
+    # lets an admin set "shipped" directly, bypassing dispatch/tracking entirely,
+    # and that path must still notify the buyer. No double-send risk: admin_dispatch
+    # writes status via its own raw UPDATE, never through this endpoint.
+    if body.status in ("shipped", "delivered", "cancelled", "refunded") and body.status != prev["status"]:
         _email_order_status_update(prev, buyer, body.status)
     return {**(await _load_order(order_id)), "invoice_error": invoice_error}
 
