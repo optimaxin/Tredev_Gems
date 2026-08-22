@@ -9722,6 +9722,45 @@ async def admin_email_log_retry(log_id: str, actor: str = Depends(require_perm("
     return {"ok": True}
 
 
+@api.get("/admin/emails/diagnose")
+async def admin_email_diagnose(_: str = Depends(require_perm("email"))):
+    """Raw TCP + TLS connectivity probe to SMTP_HOST:SMTP_PORT, run from wherever
+    this backend is actually deployed — the one way to tell 'Render can't reach
+    the mail server at all' (network/firewall block) apart from 'it connects but
+    something else is wrong' without shell access to the instance. Temporary
+    debugging aid, not a permanent feature — safe to delete once email is working."""
+    import socket
+    import ssl as ssl_mod
+
+    def _probe() -> dict:
+        host, port = email_sender.SMTP_HOST, email_sender.SMTP_PORT
+        t0 = time.time()
+        try:
+            raw = socket.create_connection((host, port), timeout=10)
+        except Exception as e:
+            return {"host": host, "port": port, "tcp_connected": False,
+                    "elapsed_ms": round((time.time() - t0) * 1000),
+                    "error": f"{type(e).__name__}: {e}"}
+        tcp_ms = round((time.time() - t0) * 1000)
+        try:
+            if port == 465:
+                sock = ssl_mod.create_default_context().wrap_socket(raw, server_hostname=host)
+            else:
+                sock = raw
+            banner = sock.recv(300).decode(errors="replace").strip()
+            sock.close()
+            return {"host": host, "port": port, "tcp_connected": True, "tls_ok": True,
+                    "elapsed_ms": round((time.time() - t0) * 1000), "tcp_elapsed_ms": tcp_ms,
+                    "banner": banner}
+        except Exception as e:
+            raw.close()
+            return {"host": host, "port": port, "tcp_connected": True, "tls_ok": False,
+                    "elapsed_ms": round((time.time() - t0) * 1000), "tcp_elapsed_ms": tcp_ms,
+                    "error": f"{type(e).__name__}: {e}"}
+
+    return await asyncio.to_thread(_probe)
+
+
 # ── Campaigns ────────────────────────────────────────────────────────────────
 _CAMPAIGN_AUDIENCE_CAP = 2000
 

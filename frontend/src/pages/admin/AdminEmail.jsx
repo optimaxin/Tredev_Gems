@@ -35,6 +35,26 @@ function Compose() {
   const [content, setContent] = useState("");
   const [template, setTemplate] = useState("standard");
   const [sending, setSending] = useState(false);
+  const [diagnosing, setDiagnosing] = useState(false);
+
+  const diagnose = async () => {
+    setDiagnosing(true);
+    try {
+      const { data } = await api.get("/admin/emails/diagnose");
+      if (data.tls_ok) {
+        toast.success(`Reached ${data.host}:${data.port} in ${data.elapsed_ms}ms — banner: ${data.banner}`);
+      } else if (data.tcp_connected) {
+        toast.error(`TCP connected but TLS/handshake failed (${data.tcp_elapsed_ms}ms): ${data.error}`);
+      } else {
+        toast.error(`Could not reach ${data.host}:${data.port} (${data.elapsed_ms}ms): ${data.error}`);
+      }
+      console.info("[email diagnose]", data);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Diagnose failed");
+    } finally {
+      setDiagnosing(false);
+    }
+  };
 
   useEffect(() => {
     const query = q.trim();
@@ -132,10 +152,16 @@ function Compose() {
         </div>
       </div>
 
-      <AsyncButton onClick={send} loading={sending} loadingText="Sending…"
-        className="brand-gradient text-white px-6 py-2.5 text-sm font-medium tracking-wide">
-        Send
-      </AsyncButton>
+      <div className="flex items-center gap-3">
+        <AsyncButton onClick={send} loading={sending} loadingText="Sending…"
+          className="brand-gradient text-white px-6 py-2.5 text-sm font-medium tracking-wide">
+          Send
+        </AsyncButton>
+        <AsyncButton onClick={diagnose} loading={diagnosing} loadingText="Testing…"
+          className="border border-gold/40 text-ink-soft px-4 py-2.5 text-sm hover:border-maroon hover:text-maroon">
+          Test SMTP connectivity
+        </AsyncButton>
+      </div>
     </div>
   );
 }
