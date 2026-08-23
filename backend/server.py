@@ -1151,8 +1151,12 @@ async def _create_or_get_user(*, email: str, name: str, picture: str = "", passw
             """INSERT INTO notification_preferences (user_id, whatsapp)
                VALUES ($1, $2) ON CONFLICT (user_id) DO NOTHING""",
             new_id, {"optin": bool(wa_optin)})
-        return _shape_user(db._row(await conn.fetchrow(
+        new_user = _shape_user(db._row(await conn.fetchrow(
             _USER_SELECT + " AND u.id = $1::uuid", str(new_id))))
+    # Fired after the transaction commits — same reasoning as every other email
+    # hook in this app: a mail outage must never roll back a real account.
+    _email_welcome_signup(new_user)
+    return new_user
 
 
 @api.post("/auth/firebase-verify")
@@ -4879,6 +4883,20 @@ def _email_astrologer_onboarding(astro_id: str, name: str, email_addr: str, welc
         await email_sender.send_email([email_addr], subject, html_out, text_out,
                                       type_="astrologer_onboarding", related_id=astro_id)
     email_sender._email_fire_event("astrologer.created", _send)
+
+
+def _email_welcome_signup(user: dict) -> None:
+    if not user.get("email"):
+        return
+
+    async def _send():
+        settings = await _invoice_settings()
+        payload = {"customer_name": user.get("name") or "there",
+                   "shop_url": settings.get("store_url") or _app_url()}
+        subject, html_out, text_out = email_templates.render_welcome_signup(payload, settings)
+        await email_sender.send_email([user["email"]], subject, html_out, text_out,
+                                      type_="welcome_signup", related_id=user.get("user_id"))
+    email_sender._email_fire_event("user.signup", _send)
 
 
 def _email_affiliate_sale(order: dict, result: dict) -> None:
@@ -9724,41 +9742,22 @@ async def admin_email_log_retry(log_id: str, actor: str = Depends(require_perm("
 
 @api.get("/admin/emails/diagnose")
 async def admin_email_diagnose(_: str = Depends(require_perm("email"))):
-    """Raw TCP + TLS connectivity probe to SMTP_HOST:SMTP_PORT, run from wherever
-    this backend is actually deployed — the one way to tell 'Render can't reach
-    the mail server at all' (network/firewall block) apart from 'it connects but
-    something else is wrong' without shell access to the instance. Temporary
-    debugging aid, not a permanent feature — safe to delete once email is working."""
-    import socket
-    import ssl as ssl_mod
-
-    def _probe() -> dict:
-        host, port = email_sender.SMTP_HOST, email_sender.SMTP_PORT
-        t0 = time.time()
-        try:
-            raw = socket.create_connection((host, port), timeout=10)
-        except Exception as e:
-            return {"host": host, "port": port, "tcp_connected": False,
-                    "elapsed_ms": round((time.time() - t0) * 1000),
-                    "error": f"{type(e).__name__}: {e}"}
-        tcp_ms = round((time.time() - t0) * 1000)
-        try:
-            if port == 465:
-                sock = ssl_mod.create_default_context().wrap_socket(raw, server_hostname=host)
-            else:
-                sock = raw
-            banner = sock.recv(300).decode(errors="replace").strip()
-            sock.close()
-            return {"host": host, "port": port, "tcp_connected": True, "tls_ok": True,
-                    "elapsed_ms": round((time.time() - t0) * 1000), "tcp_elapsed_ms": tcp_ms,
-                    "banner": banner}
-        except Exception as e:
-            raw.close()
-            return {"host": host, "port": port, "tcp_connected": True, "tls_ok": False,
-                    "elapsed_ms": round((time.time() - t0) * 1000), "tcp_elapsed_ms": tcp_ms,
-                    "error": f"{type(e).__name__}: {e}"}
-
-    return await asyncio.to_thread(_probe)
+    """Sends a real, tiny test email to EMAIL_FROM_ADDRESS itself (your own
+    inbox, not a customer's) via the exact same send_email() path everything
+    else in this app uses — the one honest way to confirm token auth, domain
+    verification AND network reachability together, rather than guessing at
+    parts of ZeptoMail's API surface this app doesn't otherwise call."""
+    if not email_sender.configured():
+        return {"ok": False, "error": "ZEPTOMAIL_TOKEN / EMAIL_FROM_ADDRESS not both set"}
+    t0 = time.time()
+    res = await email_sender.send_email(
+        [email_sender.EMAIL_FROM_ADDRESS], "Tredev Store — email connectivity test",
+        "<p>This is a test email from the admin “Send test email to self” button. "
+        "If you're reading this, sending works.</p>",
+        "This is a test email from the admin 'Send test email to self' button. If you're reading this, sending works.",
+        type_="diagnostic")
+    return {"ok": res["success"], "elapsed_ms": round((time.time() - t0) * 1000),
+            "from_address": email_sender.EMAIL_FROM_ADDRESS, "error": res.get("error")}
 
 
 # ── Campaigns ────────────────────────────────────────────────────────────────

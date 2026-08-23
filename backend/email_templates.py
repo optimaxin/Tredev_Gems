@@ -376,6 +376,29 @@ def render_astrologer_onboarding(d: dict, settings: dict) -> tuple[str, str, str
     return subject, html_out, text_out
 
 
+# ── Customer welcome email (new account created — signup, Google, or phone) ──
+def render_welcome_signup(d: dict, settings: dict) -> tuple[str, str, str]:
+    content = f"""
+      <p style="font-size:14px;color:{COLORS['text_body']}">Namaste {_e(d.get('customer_name'))},
+      welcome to Tredeva Store!</p>
+      <p style="font-size:13px;color:{COLORS['text_body']}">Your account is ready. Here's what you can do next:</p>
+      <div style="font-size:13px;color:{COLORS['text_body']};margin:12px 0">
+        &bull; Browse hallmark-certified gemstones and rudraksha<br>
+        &bull; Book an astrologer-guided consultation<br>
+        &bull; Track every order from purchase to delivery, end to end
+      </div>
+      <div style="text-align:center;margin:22px 0 8px">
+        {action_button("Start Shopping", d.get('shop_url') or '#')}
+      </div>
+      <p style="font-size:12px;color:{COLORS['text_muted']};text-align:center">
+        Questions? Reply to this email or contact us at {_e(settings.get('support_email', ''))}</p>
+    """
+    subject = "Welcome to Tredeva Store!"
+    html_out, text_out = _render(preheader="Your Tredeva Store account is ready",
+                                 heading="Welcome to Tredeva Store!", content_html=content, settings=settings)
+    return subject, html_out, text_out
+
+
 # ── §5.7 Affiliate sale notification ─────────────────────────────────────────
 def render_affiliate_sale(d: dict, settings: dict) -> tuple[str, str, str]:
     currency = d.get("currency", "INR")
@@ -481,6 +504,10 @@ def _demo() -> None:
         "login_url": "https://tredeva.com/astrologer/set-password?token=abc",
         "affiliate_code": "PANDIT10", "affiliate_link": "https://tredeva.com/?ref=PANDIT10"}, settings)
     assert "Astrologer Account is Ready" in subj and "PANDIT10" in h and "set-password" in h
+
+    subj, h, t = render_welcome_signup(
+        {"customer_name": "Lubhansh", "shop_url": "https://tredevastore.com"}, settings)
+    assert "Welcome to Tredeva Store" in subj and "Start Shopping" in h
 
     subj, h, t = render_affiliate_sale({
         "astrologer_name": "Pandit Sharma", "order_id": "TDV-1001", "order_date": "20/08/2026",

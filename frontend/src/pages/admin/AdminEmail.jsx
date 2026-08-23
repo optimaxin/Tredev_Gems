@@ -40,13 +40,11 @@ function Compose() {
   const diagnose = async () => {
     setDiagnosing(true);
     try {
-      const { data } = await api.get("/admin/emails/diagnose");
-      if (data.tls_ok) {
-        toast.success(`Reached ${data.host}:${data.port} in ${data.elapsed_ms}ms — banner: ${data.banner}`);
-      } else if (data.tcp_connected) {
-        toast.error(`TCP connected but TLS/handshake failed (${data.tcp_elapsed_ms}ms): ${data.error}`);
+      const { data } = await api.get("/admin/emails/diagnose", { timeout: 20000 });
+      if (data.ok) {
+        toast.success(`Sent to ${data.from_address} in ${data.elapsed_ms}ms — check that inbox`);
       } else {
-        toast.error(`Could not reach ${data.host}:${data.port} (${data.elapsed_ms}ms): ${data.error}`);
+        toast.error(data.error || "Test send failed");
       }
       console.info("[email diagnose]", data);
     } catch (e) {
@@ -79,7 +77,12 @@ function Compose() {
     if (!subject.trim() || !content.trim()) { toast.error("Subject and content are required"); return; }
     setSending(true);
     try {
-      const { data } = await api.post("/admin/emails/send", { to, subject, content, template });
+      // Backend processes recipients one at a time, each bounded at ~35s (see
+      // SEND_TIMEOUT in email_sender.py) — 45s covers a single test send with
+      // headroom; a multi-recipient compose could legitimately take longer than
+      // this and would need a background/async redesign, not a bigger timeout.
+      const { data } = await api.post("/admin/emails/send", { to, subject, content, template },
+        { timeout: 45000 });
       if (data.failedCount) {
         toast.warning(`Sent ${data.sentCount}, failed ${data.failedCount}`);
       } else {
@@ -159,7 +162,7 @@ function Compose() {
         </AsyncButton>
         <AsyncButton onClick={diagnose} loading={diagnosing} loadingText="Testing…"
           className="border border-gold/40 text-ink-soft px-4 py-2.5 text-sm hover:border-maroon hover:text-maroon">
-          Test SMTP connectivity
+          Send test email to self
         </AsyncButton>
       </div>
     </div>
