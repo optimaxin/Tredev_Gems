@@ -45,7 +45,7 @@ DEFAULT_SETTINGS: dict = {
     "state_code": "09",
     "support_email": "support@optimaxin.com",
     "support_phone": "",
-    "store_url": "https://tredev-gems.vercel.app",
+    "store_url": "https://tredevastore.com",
     "company_url": "https://optimaxin.com",
     "signatory_name": "Lubhansh Sharma",
     "signatory_designation": "Authorised Signatory",

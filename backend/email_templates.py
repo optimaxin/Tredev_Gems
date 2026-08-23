@@ -8,13 +8,19 @@ templates for the same result. Every render_* function returns
 hand-authored plain-text version (§4.4 asks for "a" plain-text alternative;
 this is the smallest thing that satisfies it).
 
-There is no "Brand Ambassador image" component here (spec §4.2/4.3): this store
-has no such asset — only a logo (`invoice_settings.logo_url`), which the header
-already uses. Skipped rather than inventing a placeholder image.
+Brand Ambassador: this store's actual ambassador is Shri Raghavendra (see
+frontend/src/components/gemora/AmbassadorHero.jsx's DEFAULT_AMBASSADOR and
+/ambassador/founder.v1.webp) — his portrait appears in every email (per the
+brand's own requirement), served as a resized PNG (WebP has spotty support in
+Outlook/older mail clients) copied to frontend/public/brand/ambassador-email.png,
+and the storefront logo similarly copied+resized to frontend/public/brand/logo.png
+(the live logo is a bundled webpack asset with a hashed build path — not a
+stable URL to hotlink, so a copy lives in `public/` instead). Both become
+real absolute URLs once the frontend redeploys, built from settings['store_url'].
 
-Colors/fonts are the spec's fallback palette (§1) — this store's brand tokens
-already line up closely with it (see backend/invoice.py's own maroon/gold
-palette), so no separate CSS-extraction step was needed.
+Colors/fonts are pulled directly from frontend/tailwind.config.js and
+public/index.html's Google Fonts link — the actual site tokens, not a generic
+placeholder palette — so these emails read as the same brand as tredevastore.com.
 """
 from __future__ import annotations
 
@@ -23,17 +29,33 @@ import re
 from datetime import datetime, timezone
 from typing import Optional
 
+# Pulled from frontend/tailwind.config.js — this store's real design tokens.
 COLORS = {
-    "primary": "#1A1A2E", "accent": "#7A1220", "gold": "#D4A843",
-    "background": "#F8F8FC", "text_body": "#333333", "text_muted": "#777777",
-    "success": "#27AE60", "warning": "#F39C12", "error": "#E74C3C",
+    "primary": "#4E1F26",       # maroon-deep — header/footer bands, headings
+    "accent": "#722F37",        # maroon — links, borders, secondary CTA
+    "gold": "#D4AF37", "gold_soft": "#C9A227", "gold_50": "#FBF6E4",
+    "saffron": "#F28C28",
+    "background": "#F3F0E6",    # cream — page background behind the card
+    "card_bg": "#FBFBF9",       # ivory — the card itself
+    "ink": "#1A1514", "text_body": "#4A423D", "text_muted": "#8A817C",
+    "success": "#2E7D32", "warning": "#F28C28", "error": "#B71C1C",
 }
-FONT_STACK = "'Poppins','Segoe UI',Helvetica,Arial,sans-serif"
+# Same Google Fonts as frontend/public/index.html (trimmed to what email needs).
+GOOGLE_FONTS_URL = ("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:"
+                    "ital,wght@0,400;0,500;0,600;0,700;1,400&family=Manrope:"
+                    "wght@400;500;600;700&family=Yatra+One&display=swap")
+FONT_DISPLAY = "'Yatra One',Georgia,'Cormorant Garamond',serif"
+FONT_HEADING = "'Cormorant Garamond',Georgia,serif"
+FONT_STACK = "'Manrope','Segoe UI',Helvetica,Arial,sans-serif"
+# The brand's own CTA gradient (frontend/src/index.css .brand-gradient), left to
+# right. Outlook's Word engine ignores background-image, so background-color
+# (gold) is the fallback for that one client.
+BRAND_GRADIENT = f"linear-gradient(90deg, {COLORS['saffron']} 0%, {COLORS['gold']} 50%, {COLORS['accent']} 100%)"
 
 STATUS_COLOR = {
-    "confirmed": "#2F6FDB", "processing": "#F39C12", "shipped": "#7B4FCE",
-    "out_for_delivery": "#1C9CA8", "delivered": "#27AE60", "cancelled": "#E74C3C",
-    "refunded": "#E74C3C", "pending": "#F39C12",
+    "confirmed": COLORS["gold_soft"], "processing": COLORS["saffron"], "shipped": COLORS["accent"],
+    "out_for_delivery": COLORS["saffron"], "delivered": COLORS["success"], "cancelled": COLORS["error"],
+    "refunded": COLORS["error"], "pending": COLORS["saffron"],
 }
 
 
@@ -66,35 +88,41 @@ def status_badge(status: str) -> str:
 
 
 def action_button(text: str, href: str, variant: str = "primary") -> str:
+    """Sharp corners + uppercase + wide tracking, matching the site's own
+    buttons (AsyncButton/OrderTruckButton use plain rectangular CTAs, not
+    pills — the temple-engraved-plate aesthetic runs through this whole brand)."""
     styles = {
-        "primary": f"background:{COLORS['accent']};color:#fff;border:2px solid {COLORS['accent']}",
-        "secondary": f"background:transparent;color:{COLORS['accent']};border:2px solid {COLORS['accent']}",
-        "success": f"background:{COLORS['success']};color:#fff;border:2px solid {COLORS['success']}",
-        "gold": f"background:{COLORS['gold']};color:#1A1A1A;border:2px solid {COLORS['gold']}",
+        "primary": (f"background-color:{COLORS['gold']};background-image:{BRAND_GRADIENT};"
+                   f"color:#fff;border:1px solid {COLORS['accent']}"),
+        "secondary": f"background:transparent;color:{COLORS['accent']};border:1px solid {COLORS['accent']}",
+        "success": f"background:{COLORS['success']};color:#fff;border:1px solid {COLORS['success']}",
+        "gold": f"background:{COLORS['gold_50']};color:{COLORS['ink']};border:1px solid {COLORS['gold']}",
     }
     style = styles.get(variant, styles["primary"])
     return (f'<a href="{_e(href)}" style="display:inline-block;{style};'
-            f'border-radius:25px;padding:14px 32px;font-weight:700;letter-spacing:.5px;'
-            f'text-decoration:none;font-size:14px" target="_blank" rel="noopener">{_e(text)}</a>')
+            f'padding:13px 30px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;'
+            f'text-decoration:none;font-size:12px;font-family:{FONT_STACK}" '
+            f'target="_blank" rel="noopener">{_e(text)}</a>')
 
 
 def info_card(rows: list[tuple[str, str]]) -> str:
     trs = "".join(
-        f'<tr style="background:{"#F8F5EE" if i % 2 else "#ffffff"}">'
-        f'<td style="padding:8px 12px;font-size:12px;color:{COLORS["text_muted"]};'
-        f'text-transform:uppercase;letter-spacing:.04em">{_e(k)}</td>'
-        f'<td style="padding:8px 12px;font-size:13px;font-weight:600;color:{COLORS["text_body"]};'
-        f'text-align:right">{_e(v)}</td></tr>'
+        f'<tr style="background:{COLORS["gold_50"] if i % 2 else COLORS["card_bg"]}">'
+        f'<td style="padding:8px 12px;font-size:11px;color:{COLORS["text_muted"]};'
+        f'text-transform:uppercase;letter-spacing:.06em;font-family:{FONT_STACK}">{_e(k)}</td>'
+        f'<td style="padding:8px 12px;font-size:13px;font-weight:600;color:{COLORS["ink"]};'
+        f'text-align:right;font-family:{FONT_STACK}">{_e(v)}</td></tr>'
         for i, (k, v) in enumerate(rows))
     return (f'<table role="presentation" width="100%" style="border-collapse:collapse;'
-            f'border:1px solid #E8E2D5;border-radius:8px;overflow:hidden">{trs}</table>')
+            f'border:1px solid rgba(212,175,55,.35)">{trs}</table>')
 
 
 def product_card(*, image: str, name: str, variant: str, quantity: int, price_paise: int,
                  currency: str = "INR") -> str:
     img = (f'<img src="{_e(image)}" width="60" height="60" alt="" '
-           f'style="border-radius:6px;object-fit:cover;display:block">'
-           if image else '<div style="width:60px;height:60px;border-radius:6px;background:#EEE"></div>')
+           f'style="object-fit:cover;display:block;border:1px solid rgba(212,175,55,.35)">'
+           if image else f'<div style="width:60px;height:60px;background:{COLORS["gold_50"]};'
+                         f'border:1px solid rgba(212,175,55,.35)"></div>')
     variant_line = f'<div style="font-size:11px;color:{COLORS["text_muted"]}">{_e(variant)}</div>' if variant else ""
     return f"""<table role="presentation" width="100%" style="border-collapse:collapse;margin-bottom:8px">
       <tr>
@@ -118,39 +146,73 @@ def callout(text: str, tone: str = "warning") -> str:
 
 
 # ── Shared shell ────────────────────────────────────────────────────────────
+def _brand_asset(settings: dict, path: str) -> str:
+    """Absolute URL for a file in frontend/public/ — logo.png and
+    ambassador-email.png live there specifically so emails have a stable URL to
+    hotlink (the live site's own logo import gets a hashed build path)."""
+    base = (settings.get("store_url") or "https://tredevastore.com").rstrip("/")
+    return f"{base}{path}"
+
+
 def _shell(*, preheader: str, heading: str, content_html: str, settings: dict,
           unsubscribe_url: Optional[str] = None) -> str:
-    logo = settings.get("logo_url") or ""
-    trade_name = _e(settings.get("trade_name") or "Tredeva Store")
+    logo = settings.get("logo_url") or _brand_asset(settings, "/brand/logo.png")
+    ambassador_img = _brand_asset(settings, "/brand/ambassador-email.png")
+    trade_name = _e(settings.get("trade_name") or "Tredev Store")
     support_email = _e(settings.get("support_email") or "")
     support_phone = _e(settings.get("support_phone") or "")
-    store_url = settings.get("store_url") or "#"
     year = datetime.now(timezone.utc).year
-    logo_html = (f'<img src="{_e(logo)}" alt="{trade_name}" height="36" style="display:block;margin:0 auto">'
-                if logo else f'<div style="font:700 20px {FONT_STACK};color:#fff;letter-spacing:.08em">{trade_name}</div>')
-    unsub_html = (f'<div style="margin-top:10px"><a href="{_e(unsubscribe_url)}" '
-                 f'style="color:#CFCFE0;font-size:11px;text-decoration:underline">Unsubscribe</a></div>'
-                 if unsubscribe_url else "")
+    unsub_html = (f'<div style="margin-top:12px"><a href="{_e(unsubscribe_url)}" '
+                 f'style="color:{COLORS["gold_soft"]};font-size:11px;text-decoration:underline">'
+                 f'Unsubscribe</a></div>' if unsubscribe_url else "")
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="{GOOGLE_FONTS_URL}" rel="stylesheet">
 <title>{_e(heading)}</title>
 </head>
 <body style="margin:0;padding:0;background:{COLORS['background']};font-family:{FONT_STACK}">
 <div style="display:none;max-height:0;overflow:hidden;opacity:0">{_e(preheader)}</div>
-<table role="presentation" width="100%" style="background:{COLORS['background']};padding:24px 0">
+<table role="presentation" width="100%" style="background:{COLORS['background']};padding:28px 0">
   <tr><td align="center">
-    <table role="presentation" width="600" style="max-width:600px;width:100%;background:#fff;
-           border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.06)">
-      <tr><td style="background:{COLORS['primary']};padding:22px;text-align:center">{logo_html}</td></tr>
-      <tr><td style="padding:28px 28px 8px">
-        <h1 style="font-size:19px;margin:0 0 16px;color:{COLORS['primary']};font-family:{FONT_STACK}">{_e(heading)}</h1>
+    <table role="presentation" width="600" style="max-width:600px;width:100%;background:{COLORS['card_bg']};
+           border:1px solid rgba(212,175,55,.45)">
+
+      <!-- Header: logo + wordmark, deep maroon band -->
+      <tr><td style="background:{COLORS['primary']};padding:26px 24px 20px;text-align:center">
+        <img src="{_e(logo)}" alt="{trade_name}" width="56" height="56"
+             style="display:block;margin:0 auto 8px;border-radius:50%;border:1px solid {COLORS['gold_soft']}">
+        <div style="font-family:{FONT_DISPLAY};font-size:22px;letter-spacing:.06em;color:{COLORS['gold_50']}">
+          {trade_name}</div>
+        <div style="font-family:{FONT_HEADING};font-style:italic;font-size:11px;color:{COLORS['gold_soft']};
+                    margin-top:2px;letter-spacing:.03em">रत्न &middot; प्रमाण</div>
+      </td></tr>
+
+      <!-- Brand Ambassador — same maroon band, portrait cut-out over it -->
+      <tr><td style="background:{COLORS['primary']};padding:0 24px 22px;text-align:center">
+        <img src="{_e(ambassador_img)}" alt="Shri Raghavendra, Tredev Store's founder and guide"
+             width="120" style="display:block;margin:0 auto;max-width:120px;height:auto">
+        <div style="font-family:{FONT_HEADING};font-style:italic;color:{COLORS['gold_50']};font-size:12px;
+                    margin-top:6px">&ldquo;Every stone we bless carries the same truth we live by.&rdquo;</div>
+        <div style="font-family:{FONT_STACK};color:{COLORS['gold_soft']};font-size:10px;text-transform:uppercase;
+                    letter-spacing:.1em;margin-top:4px">Shri Raghavendra &middot; The Face of Our Faith</div>
+      </td></tr>
+      <tr><td style="height:3px;background:{BRAND_GRADIENT}"></td></tr>
+
+      <!-- Content -->
+      <tr><td style="padding:30px 28px 10px">
+        <h1 style="font-family:{FONT_HEADING};font-weight:600;font-size:24px;margin:0 0 18px;
+                   color:{COLORS['primary']}">{_e(heading)}</h1>
         {content_html}
       </td></tr>
-      <tr><td style="background:{COLORS['primary']};padding:20px 28px;text-align:center;
-                     color:#CFCFE0;font-size:11px">
-        {f'{support_email} · {support_phone}' if support_phone else support_email}
-        <div style="margin-top:6px">Powered by {trade_name} · &copy; {year}</div>
+
+      <!-- Footer -->
+      <tr><td style="background:{COLORS['primary']};padding:22px 28px;text-align:center;
+                     color:{COLORS['gold_50']};font-size:11px;font-family:{FONT_STACK}">
+        {f'<a href="mailto:{support_email}" style="color:{COLORS["gold_50"]}">{support_email}</a> &middot; {support_phone}' if support_phone else f'<a href="mailto:{support_email}" style="color:{COLORS["gold_50"]}">{support_email}</a>'}
+        <div style="margin-top:8px;color:{COLORS['gold_soft']}">Powered by {trade_name} &middot; &copy; {year}</div>
         {unsub_html}
       </td></tr>
     </table>
@@ -200,7 +262,7 @@ def render_order_confirmation(d: dict, settings: dict) -> tuple[str, str, str]:
       <p style="font-size:12px;color:{COLORS['text_muted']};text-align:center">
         Questions? Reply to this email or contact us at {_e(settings.get('support_email', ''))}</p>
     """
-    subject = f"Order Confirmed! Your Tredeva Order #{d.get('order_id')}"
+    subject = f"Order Confirmed! Your Tredev Order #{d.get('order_id')}"
     html_out, text_out = _render(preheader=f"Your order #{d.get('order_id')} is confirmed",
                                  heading="Thank You For Your Order!", content_html=content, settings=settings)
     return subject, html_out, text_out
@@ -248,7 +310,7 @@ def render_consultation_booking(d: dict, settings: dict) -> tuple[str, str, str]
       <p style="font-size:12px;color:{COLORS['text_muted']};text-align:center">
         Questions? Reply to this email or contact us at {_e(settings.get('support_email', ''))}</p>
     """
-    subject = "Your Consultation is Booked! — Tredeva Store"
+    subject = "Your Consultation is Booked! — Tredev Store"
     html_out, text_out = _render(preheader="Your consultation booking is confirmed",
                                  heading="Consultation Booked!", content_html=content, settings=settings)
     return subject, html_out, text_out
@@ -280,7 +342,7 @@ def render_astrologer_assignment(d: dict, settings: dict) -> tuple[str, str, str
               "Find a quiet space for your session &middot; Prepare any specific questions", "warning")}
       <div style="text-align:center;margin:20px 0 8px">{join_btn}</div>
     """
-    subject = "Your Astrologer is Confirmed! — Tredeva Store"
+    subject = "Your Astrologer is Confirmed! — Tredev Store"
     html_out, text_out = _render(preheader="Your astrologer and session time are confirmed",
                                  heading="Your Astrologer is Confirmed!", content_html=content, settings=settings)
     return subject, html_out, text_out
@@ -349,7 +411,7 @@ def render_order_status_update(d: dict, settings: dict) -> tuple[str, str, str]:
 def render_astrologer_onboarding(d: dict, settings: dict) -> tuple[str, str, str]:
     content = f"""
       <p style="font-size:14px;color:{COLORS['text_body']}">Welcome aboard, {_e(d.get('astrologer_name'))}!
-      We're thrilled to have you join the Tredeva family.</p>
+      We're thrilled to have you join the Tredev family.</p>
       <div style="border:1px dashed {COLORS['gold']};border-radius:8px;padding:16px;margin:16px 0">
         <div style="font-size:12px;color:{COLORS['text_muted']}">Login Email</div>
         <div style="font-size:14px;font-weight:600;margin-bottom:10px">{_e(d.get('email'))}</div>
@@ -370,9 +432,9 @@ def render_astrologer_onboarding(d: dict, settings: dict) -> tuple[str, str, str
       <p style="font-size:12px;color:{COLORS['text_muted']};margin-top:16px">
         Support for astrologers: {_e(settings.get('support_email', ''))}</p>
     """
-    subject = "Welcome to Tredeva Store! Your Astrologer Account is Ready"
+    subject = "Welcome to Tredev Store! Your Astrologer Account is Ready"
     html_out, text_out = _render(preheader="Set your password to activate your astrologer account",
-                                 heading="Welcome to Tredeva Store!", content_html=content, settings=settings)
+                                 heading="Welcome to Tredev Store!", content_html=content, settings=settings)
     return subject, html_out, text_out
 
 
@@ -380,7 +442,7 @@ def render_astrologer_onboarding(d: dict, settings: dict) -> tuple[str, str, str
 def render_welcome_signup(d: dict, settings: dict) -> tuple[str, str, str]:
     content = f"""
       <p style="font-size:14px;color:{COLORS['text_body']}">Namaste {_e(d.get('customer_name'))},
-      welcome to Tredeva Store!</p>
+      welcome to Tredev Store!</p>
       <p style="font-size:13px;color:{COLORS['text_body']}">Your account is ready. Here's what you can do next:</p>
       <div style="font-size:13px;color:{COLORS['text_body']};margin:12px 0">
         &bull; Browse hallmark-certified gemstones and rudraksha<br>
@@ -393,9 +455,9 @@ def render_welcome_signup(d: dict, settings: dict) -> tuple[str, str, str]:
       <p style="font-size:12px;color:{COLORS['text_muted']};text-align:center">
         Questions? Reply to this email or contact us at {_e(settings.get('support_email', ''))}</p>
     """
-    subject = "Welcome to Tredeva Store!"
-    html_out, text_out = _render(preheader="Your Tredeva Store account is ready",
-                                 heading="Welcome to Tredeva Store!", content_html=content, settings=settings)
+    subject = "Welcome to Tredev Store!"
+    html_out, text_out = _render(preheader="Your Tredev Store account is ready",
+                                 heading="Welcome to Tredev Store!", content_html=content, settings=settings)
     return subject, html_out, text_out
 
 
@@ -427,7 +489,7 @@ def render_affiliate_sale(d: dict, settings: dict) -> tuple[str, str, str]:
       </div>
       <p style="font-size:12px;color:{COLORS['text_muted']};text-align:center">Keep sharing your link to earn more!</p>
     """
-    subject = "You Earned a Commission! — Tredeva Store"
+    subject = "You Earned a Commission! — Tredev Store"
     html_out, text_out = _render(preheader=f"You earned {money(d.get('commission_amount', 0), currency)}",
                                  heading="You Earned a Commission!", content_html=content, settings=settings)
     return subject, html_out, text_out
@@ -435,10 +497,12 @@ def render_affiliate_sale(d: dict, settings: dict) -> tuple[str, str, str]:
 
 # ── §6.5/§7.6 Custom / campaign email (compose box + bulk campaigns) ─────────
 _VARIANT_BANNER = {
-    "announcement": lambda s: f'<div style="background:{COLORS["gold"]};color:#1A1A1A;padding:10px 16px;' \
-                              f'border-radius:8px;font-weight:700;text-align:center;margin-bottom:14px">{_e(s)}</div>',
-    "promotional": lambda s: f'<div style="background:{COLORS["accent"]};color:#fff;padding:14px 16px;' \
-                             f'border-radius:8px;font-weight:800;font-size:16px;text-align:center;margin-bottom:14px">{_e(s)}</div>',
+    "announcement": lambda s: f'<div style="background:{COLORS["gold"]};color:{COLORS["ink"]};padding:10px 16px;' \
+                              f'font-weight:700;text-align:center;margin-bottom:14px;'
+                              f'border:1px solid {COLORS["accent"]}">{_e(s)}</div>',
+    "promotional": lambda s: f'<div style="background-color:{COLORS["gold"]};background-image:{BRAND_GRADIENT};' \
+                             f'color:#fff;padding:16px;font-weight:800;font-size:17px;text-align:center;'
+                             f'margin-bottom:14px;font-family:{FONT_HEADING}">{_e(s)}</div>',
 }
 
 
@@ -458,7 +522,7 @@ def render_custom_email(*, subject: str, content_html: str, template: str, setti
 def _demo() -> None:
     """Self-check: `python email_templates.py`. Renders every template with dummy
     data and asserts key content made it through — same convention as invoice.py."""
-    settings = {"trade_name": "Tredeva Store", "logo_url": "", "support_email": "support@tredeva.com",
+    settings = {"trade_name": "Tredev Store", "logo_url": "", "support_email": "support@tredeva.com",
                "support_phone": "", "store_url": "https://tredeva.com"}
     items = [{"name": "Ceylon Blue Sapphire", "image": "", "variant": "Loose Gemstone",
              "quantity": 1, "price": 200000}]
@@ -507,7 +571,7 @@ def _demo() -> None:
 
     subj, h, t = render_welcome_signup(
         {"customer_name": "Lubhansh", "shop_url": "https://tredevastore.com"}, settings)
-    assert "Welcome to Tredeva Store" in subj and "Start Shopping" in h
+    assert "Welcome to Tredev Store" in subj and "Start Shopping" in h
 
     subj, h, t = render_affiliate_sale({
         "astrologer_name": "Pandit Sharma", "order_id": "TDV-1001", "order_date": "20/08/2026",

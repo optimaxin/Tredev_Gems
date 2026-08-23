@@ -34,7 +34,7 @@ CONFIG (backend/.env)
     EMAIL_FROM_ADDRESS    no-reply@optimaxin.com — must be a verified sending
                           domain in ZeptoMail (Mail Agent -> Domains -> add
                           optimaxin.com, then add its SPF/DKIM records to DNS)
-    EMAIL_FROM_NAME       defaults to "Tredeva Store"
+    EMAIL_FROM_NAME       defaults to "Tredev Store"
     ADMIN_NOTIFICATION_EMAILS   comma-separated, for the admin order copy
     BULK_EMAIL_RATE_LIMIT       emails/second for campaign sends (default 5)
 """
@@ -58,7 +58,7 @@ log = logging.getLogger("gemora.email")
 ZEPTOMAIL_TOKEN = os.environ.get("ZEPTOMAIL_TOKEN", "").strip()
 ZEPTOMAIL_API_URL = os.environ.get("ZEPTOMAIL_API_URL", "https://api.zeptomail.in/v1.1/email").strip()
 EMAIL_FROM_ADDRESS = os.environ.get("EMAIL_FROM_ADDRESS", "").strip()
-EMAIL_FROM_NAME = os.environ.get("EMAIL_FROM_NAME", "Tredeva Store").strip()
+EMAIL_FROM_NAME = os.environ.get("EMAIL_FROM_NAME", "Tredev Store").strip()
 # Hard ceiling on the whole request (connect+send+response) — see the wait_for in
 # send_email(). Unlike the old raw-socket SMTP path, this wraps a real coroutine
 # (httpx.AsyncClient), so wait_for genuinely cancels it on timeout rather than

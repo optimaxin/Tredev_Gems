@@ -2732,6 +2732,19 @@ async def _invoice_settings() -> dict:
     return {**invoicing.DEFAULT_SETTINGS, **(stored or {})}
 
 
+async def _email_branding() -> dict:
+    """invoice_settings, but with trade_name overridden to EMAIL_FROM_NAME.
+
+    Emails and tax invoices intentionally show different names: an invoice is a
+    legal document and keeps trade_name ("Tredev Gems") as registered; customer
+    emails use whatever the storefront is actually branded as (EMAIL_FROM_NAME,
+    "Tredev Store") — same knob that already controls the email's From header,
+    so there's one source of truth for "what recipients see this store called
+    as" instead of two settings drifting apart."""
+    settings = await _invoice_settings()
+    return {**settings, "trade_name": email_sender.EMAIL_FROM_NAME or settings["trade_name"]}
+
+
 @api.get("/admin/invoice-settings")
 async def admin_get_invoice_settings(_: str = Depends(require_perm("orders"))):
     return await _invoice_settings()
@@ -4778,7 +4791,7 @@ def _email_order_confirmation(order: dict, buyer: Optional[dict]) -> None:
         return
 
     async def _send():
-        settings = await _invoice_settings()
+        settings = await _email_branding()
         payload = {
             "customer_name": (buyer or {}).get("name") or shipping.get("shipping_name") or "there",
             "order_id": order.get("order_no") or order.get("order_id"),
@@ -4814,7 +4827,7 @@ def _email_order_status_update(order: dict, buyer: Optional[dict], new_status: s
                 "FROM notification_preferences WHERE user_id=$1::uuid", buyer["user_id"])
             if allowed is False:
                 return
-        settings = await _invoice_settings()
+        settings = await _email_branding()
         payload = {
             "customer_name": (buyer or {}).get("name") or shipping.get("shipping_name") or "there",
             "order_id": order.get("order_no") or order.get("order_id"), "new_status": new_status,
@@ -4836,7 +4849,7 @@ def _email_consultation_booking(consult: dict) -> None:
         return
 
     async def _send():
-        settings = await _invoice_settings()
+        settings = await _email_branding()
         payload = {
             "customer_name": consult.get("name") or "there",
             "consultation_type": consult.get("concern") or "Astrology Consultation",
@@ -4855,7 +4868,7 @@ def _email_astrologer_assignment(consult: dict, astro: dict, when_dt: datetime) 
         return
 
     async def _send():
-        settings = await _invoice_settings()
+        settings = await _email_branding()
         payload = {
             "customer_name": consult.get("name") or "there", "booking_id": consult.get("booking_id"),
             "consultation_type": consult.get("concern") or "Astrology Consultation",
@@ -4874,7 +4887,7 @@ def _email_astrologer_assignment(consult: dict, astro: dict, when_dt: datetime) 
 def _email_astrologer_onboarding(astro_id: str, name: str, email_addr: str, welcome_url: str,
                                  affiliate_code: str) -> None:
     async def _send():
-        settings = await _invoice_settings()
+        settings = await _email_branding()
         payload = {
             "astrologer_name": name, "email": email_addr, "login_url": welcome_url,
             "affiliate_code": affiliate_code, "affiliate_link": f"{settings.get('store_url', '')}/?ref={affiliate_code}",
@@ -4890,7 +4903,7 @@ def _email_welcome_signup(user: dict) -> None:
         return
 
     async def _send():
-        settings = await _invoice_settings()
+        settings = await _email_branding()
         payload = {"customer_name": user.get("name") or "there",
                    "shop_url": settings.get("store_url") or _app_url()}
         subject, html_out, text_out = email_templates.render_welcome_signup(payload, settings)
@@ -4920,7 +4933,7 @@ def _email_affiliate_sale(order: dict, result: dict) -> None:
         total_earnings_rupees = await db.fetch_val(
             "SELECT COALESCE(SUM(commission_amount), 0) FROM affiliate_commissions WHERE astrologer_id=$1::uuid",
             astro_id)
-        settings = await _invoice_settings()
+        settings = await _email_branding()
         currency = result.get("currency", "INR")
         buyer_name = ((await _load_user(user_id=order["user_id"])) or {}).get("name") if order.get("user_id") else None
         payload = {
@@ -9682,7 +9695,7 @@ async def admin_email_send(body: EmailSendIn, actor: str = Depends(require_perm(
     content = _sanitize_email_html(body.content)
     if body.template not in ("standard", "announcement", "promotional"):
         raise HTTPException(400, "Unknown template. Allowed: standard, announcement, promotional")
-    settings = await _invoice_settings()
+    settings = await _email_branding()
     sent = failed = 0
     failures: list[dict] = []
     for to_addr in body.to:
@@ -9808,7 +9821,7 @@ async def _run_email_campaign(campaign_id: str, recipients: list[dict], subject:
     """The one piece of 'queue' infra email needs: no external gateway to delegate
     pacing to (unlike WhatsApp/OpenWA), so this loop paces itself. Runs as a
     fire-and-forget asyncio task — see the campaign-create endpoint below."""
-    settings = await _invoice_settings()
+    settings = await _email_branding()
     await db.execute("UPDATE email_campaigns SET status='sending', started_at=now() WHERE id=$1::uuid",
                      campaign_id)
     sent = failed = 0
@@ -9956,7 +9969,7 @@ async def email_unsubscribe(token: str):
            ON CONFLICT (identifier, channel) DO NOTHING""", address)
     return FastAPIResponse(
         content="<html><body style='font-family:sans-serif;padding:40px;text-align:center'>"
-                "<h2>You've been unsubscribed from Tredeva Store marketing emails.</h2>"
+                "<h2>You've been unsubscribed from Tredev Store marketing emails.</h2>"
                 "<p>You'll still receive emails about your own orders and bookings.</p></body></html>",
         media_type="text/html")
 
