@@ -4411,6 +4411,16 @@ async def checkout(body: CheckoutIn, request: Request, user_id: str = Depends(re
     # Buying requires an account — the frontend hides the total and gates this call
     # behind login/signup, and require_user enforces it here too so the rule holds
     # even for a direct API call.
+    #
+    # A verified phone is separately required — an account created via Google
+    # sign-in never collects/verifies one at all, and delivery, shipment tracking,
+    # and certificate re-issuance all depend on a real number (same reasoning the
+    # Account page's "verify your phone" banner gives). Checked here, at order
+    # creation, since this is the only path that creates a new order — nothing
+    # downstream (payment capture, webhooks) creates one bypassing this.
+    buyer = await _load_user(user_id=user_id)
+    if not buyer or not buyer.get("phone_verified"):
+        raise HTTPException(400, "Please verify your mobile number before placing an order.")
     anon_key = request.cookies.get("gemora_anon")
     cart = await _get_or_create_cart(user_id, anon_key)
     items = cart.get("items", [])
