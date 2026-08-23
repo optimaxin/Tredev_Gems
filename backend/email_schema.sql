@@ -51,6 +51,30 @@ CREATE TABLE IF NOT EXISTS email_campaigns (
 );
 CREATE INDEX IF NOT EXISTS ix_email_campaigns_status ON email_campaigns (status);
 
+-- Admin/staff-editable templates (Admin -> Emails -> Templates). System
+-- templates (is_system=true) override specific copy fields on the 8 fixed
+-- transactional emails (see email_templates.py's SYSTEM_TEMPLATES catalogue) —
+-- their structural layout stays code-rendered; only `fields`/`enabled` matter.
+-- Custom templates (is_system=false) are full subject+body_html canned
+-- messages usable from the Compose tab's template picker; never auto-fires.
+CREATE TABLE IF NOT EXISTS email_templates (
+    id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    key           text        UNIQUE NOT NULL,
+    name          text        NOT NULL,
+    is_system     boolean     NOT NULL DEFAULT false,
+    category      text        NOT NULL DEFAULT 'transactional',
+    trigger_event text        NOT NULL DEFAULT 'manual',
+    subject       text,                       -- custom templates only
+    body_html     text,                       -- custom templates only
+    fields        jsonb       NOT NULL DEFAULT '{}'::jsonb,  -- system templates only
+    enabled       boolean     NOT NULL DEFAULT true,
+    variables     text[],
+    updated_by    uuid REFERENCES users(id),
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ix_email_templates_is_system ON email_templates (is_system);
+
 -- No new notification_preferences column needed — it already has an `email jsonb`
 -- column (default '{"marketing": false, "order_updates": true, "review_prompts":
 -- true}'), predating this feature but never wired to any code. This is exactly

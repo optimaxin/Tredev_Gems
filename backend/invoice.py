@@ -244,7 +244,7 @@ async def generate_for_order(order_id: str, settings: dict, *, force: bool = Fal
         "SELECT * FROM tax_invoices WHERE order_id = $1::uuid AND status = 'issued'"
         " ORDER BY created_at LIMIT 1", order_id)
     if existing:
-        return dict(existing)
+        return {**dict(existing), "_newly_issued": False}
 
     pre = await _prepare_invoice(order_id, settings)
     order = pre["order"]
@@ -325,8 +325,8 @@ async def generate_for_order(order_id: str, settings: dict, *, force: bool = Fal
                 li["line_total_paise"])
 
     log.info("invoice %s issued for order %s", number, order_id)
-    return dict(await db.fetch_one(
-        "SELECT * FROM tax_invoices WHERE id = $1::uuid", str(invoice_id)))
+    return {**dict(await db.fetch_one(
+        "SELECT * FROM tax_invoices WHERE id = $1::uuid", str(invoice_id))), "_newly_issued": True}
 
 
 def _line_attributes(item: dict) -> dict:

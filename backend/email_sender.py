@@ -202,17 +202,18 @@ async def send_email(to: list[str], subject: str, html: str, text: str, *,
         return {"success": False, "error": error, "log_id": row_id}
 
 
-async def send_with_admin_copy(customer_email: Optional[str], customer_render: tuple,
-                               admin_render: tuple, *, type_: str, related_id: str) -> None:
+async def send_with_admin_copy(customer_email: Optional[str], customer_render: Optional[tuple],
+                               admin_render: Optional[tuple], *, type_: str, related_id: str) -> None:
     """Order confirmation to the buyer + a copy to every ADMIN_NOTIFICATION_EMAILS
     address, mirroring the spec's sendWithAdminCopy — fired in parallel, one
-    failing never blocks the other."""
+    failing never blocks the other. Either render may be None (its template was
+    disabled by an admin in Admin -> Emails -> Templates) — skipped, not an error."""
     tasks = []
-    if customer_email:
+    if customer_email and customer_render:
         subject, html, text = customer_render
         tasks.append(send_email([customer_email], subject, html, text,
                                 type_=type_, related_id=related_id))
-    if ADMIN_NOTIFICATION_EMAILS:
+    if ADMIN_NOTIFICATION_EMAILS and admin_render:
         subject, html, text = admin_render
         tasks.append(send_email(ADMIN_NOTIFICATION_EMAILS, subject, html, text,
                                 type_=f"{type_}.admin_copy", related_id=related_id))

@@ -180,24 +180,35 @@ def _shell(*, preheader: str, heading: str, content_html: str, settings: dict,
     <table role="presentation" width="600" style="max-width:600px;width:100%;background:{COLORS['card_bg']};
            border:1px solid rgba(212,175,55,.45)">
 
-      <!-- Header: logo + wordmark, deep maroon band -->
-      <tr><td style="background:{COLORS['primary']};padding:26px 24px 20px;text-align:center">
-        <img src="{_e(logo)}" alt="{trade_name}" width="56" height="56"
-             style="display:block;margin:0 auto 8px;border-radius:50%;border:1px solid {COLORS['gold_soft']}">
-        <div style="font-family:{FONT_DISPLAY};font-size:22px;letter-spacing:.06em;color:{COLORS['gold_50']}">
-          {trade_name}</div>
-        <div style="font-family:{FONT_HEADING};font-style:italic;font-size:11px;color:{COLORS['gold_soft']};
-                    margin-top:2px;letter-spacing:.03em">रत्न &middot; प्रमाण</div>
-      </td></tr>
-
-      <!-- Brand Ambassador — same maroon band, portrait cut-out over it -->
-      <tr><td style="background:{COLORS['primary']};padding:0 24px 22px;text-align:center">
-        <img src="{_e(ambassador_img)}" alt="Shri Raghavendra, Tredev Store's founder and guide"
-             width="120" style="display:block;margin:0 auto;max-width:120px;height:auto">
-        <div style="font-family:{FONT_HEADING};font-style:italic;color:{COLORS['gold_50']};font-size:12px;
-                    margin-top:6px">&ldquo;Every stone we bless carries the same truth we live by.&rdquo;</div>
-        <div style="font-family:{FONT_STACK};color:{COLORS['gold_soft']};font-size:10px;text-transform:uppercase;
-                    letter-spacing:.1em;margin-top:4px">Shri Raghavendra &middot; The Face of Our Faith</div>
+      <!-- Header: ONE row, logo+wordmark left, Brand Ambassador portrait right —
+           same deep-maroon band, not two stacked bands. -->
+      <tr><td style="background:{COLORS['primary']};padding:22px 24px 0">
+        <table role="presentation" width="100%">
+          <tr>
+            <td width="60%" valign="middle" style="text-align:left">
+              <table role="presentation"><tr>
+                <td valign="middle">
+                  <img src="{_e(logo)}" alt="{trade_name}" width="48" height="48"
+                       style="display:block;border-radius:50%;border:1px solid {COLORS['gold_soft']}">
+                </td>
+                <td valign="middle" style="padding-left:12px">
+                  <div style="font-family:{FONT_DISPLAY};font-size:19px;letter-spacing:.05em;color:{COLORS['gold_50']}">
+                    {trade_name}</div>
+                  <div style="font-family:{FONT_HEADING};font-style:italic;font-size:10px;color:{COLORS['gold_soft']};
+                              margin-top:1px;letter-spacing:.03em">रत्न &middot; प्रमाण</div>
+                </td>
+              </tr></table>
+            </td>
+            <td width="40%" valign="bottom" style="text-align:right">
+              <img src="{_e(ambassador_img)}" alt="Shri Raghavendra, Tredev Store's founder and guide"
+                   width="92" style="display:inline-block;max-width:92px;height:auto;margin-bottom:-2px">
+            </td>
+          </tr>
+        </table>
+        <div style="text-align:center;border-top:1px solid rgba(212,175,55,.3);margin-top:14px;padding:10px 0">
+          <div style="font-family:{FONT_STACK};color:{COLORS['gold_soft']};font-size:10px;text-transform:uppercase;
+                      letter-spacing:.1em">Shri Raghavendra &middot; The Face of Our Faith</div>
+        </div>
       </td></tr>
       <tr><td style="height:3px;background:{BRAND_GRADIENT}"></td></tr>
 
@@ -227,8 +238,129 @@ def _render(*, preheader, heading, content_html, settings, unsubscribe_url=None)
     return html_out, _to_text(html_out)
 
 
+# ── Admin-editable copy fields — see AdminEmail.jsx "Templates" tab ──────────
+# Each system template's structural layout (item tables, timelines, cards) is
+# fixed code below; only these specific text fields are admin-overridable
+# (server.py fetches the `fields` jsonb override from the email_templates
+# table and passes it as `overrides`). {{var}}-style merge tags pull from the
+# same payload dict the render_* function itself receives.
+_VAR_RE = re.compile(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}")
+
+
+def _merge(template: str, ctx: dict, *, escape: bool = True) -> str:
+    base = _e(template) if escape else (template or "")
+    def _sub(m):
+        v = ctx.get(m.group(1))
+        val = "" if v is None else str(v)
+        return _e(val) if escape else val
+    return _VAR_RE.sub(_sub, base)
+
+
+def extract_variables(text: str) -> list[str]:
+    """Distinct {{placeholders}} a field references, in first-seen order — shown
+    in the admin editor so staff know what's available, same convention as
+    wa_openwa.extract_variables."""
+    seen: list[str] = []
+    for name in _VAR_RE.findall(text or ""):
+        if name not in seen:
+            seen.append(name)
+    return seen
+
+
+SYSTEM_TEMPLATES: dict[str, dict] = {
+    "order_confirmation": {
+        "name": "Order Confirmation", "category": "transactional", "trigger_event": "order.placed",
+        "to": "The buyer, right after payment", "fields": {
+            "subject": "Order Confirmed! Your Tredev Store Order #{{order_id}}",
+            "greeting": "Hi {{customer_name}}, thank you for your order!",
+            "button_label": "View My Orders",
+            "footer_note": "Questions? Reply to this email or contact us at {{support_email}}",
+        },
+    },
+    "admin_order_notification": {
+        "name": "Admin Order Notification", "category": "transactional", "trigger_event": "order.placed",
+        "to": "ADMIN_NOTIFICATION_EMAILS, alongside the buyer's copy", "fields": {
+            "subject": "New Order Received — #{{order_id}} from {{customer_name}}",
+            "greeting": "A new order was just placed.",
+            "button_label": "View in Admin Panel",
+        },
+    },
+    "consultation_booking": {
+        "name": "Consultation Booking", "category": "consultation", "trigger_event": "consultation.booked",
+        "to": "The customer, right after payment", "fields": {
+            "subject": "Your Consultation is Booked! — Tredev Store",
+            "greeting": "Namaste {{customer_name}}! Your consultation has been booked.",
+            "body_note": "Our team will assign an expert astrologer and schedule your session. "
+                        "You'll receive another email with your astrologer's details and the session time.",
+            "button_label": "View My Bookings",
+            "footer_note": "Questions? Reply to this email or contact us at {{support_email}}",
+        },
+    },
+    "astrologer_assignment": {
+        "name": "Astrologer Assignment", "category": "consultation", "trigger_event": "consultation.assigned",
+        "to": "The customer, once an astrologer + time are set", "fields": {
+            "subject": "Your Astrologer is Confirmed! — Tredev Store",
+            "greeting": "Great news, {{customer_name}}! Your astrologer has been assigned.",
+            "prep_tips": "Have your birth date, time, and place of birth ready · "
+                        "Find a quiet space for your session · Prepare any specific questions",
+            "button_label": "Join Meeting",
+        },
+    },
+    "order_status_update": {
+        "name": "Order Status Update", "category": "transactional", "trigger_event": "order.status_changed",
+        "to": "The buyer, on shipped/delivered/cancelled/refunded", "fields": {
+            "greeting": "Hi {{customer_name}}, your order status has been updated!",
+            "button_label": "View Order Details",
+        },
+        "note": "Subject line changes automatically per status and isn't editable here.",
+    },
+    "astrologer_onboarding": {
+        "name": "Astrologer Onboarding", "category": "astrologer", "trigger_event": "astrologer.created",
+        "to": "A newly created astrologer", "fields": {
+            "subject": "Welcome to Tredev Store! Your Astrologer Account is Ready",
+            "greeting": "Welcome aboard, {{astrologer_name}}! We're thrilled to have you join the Tredev family.",
+            "affiliate_intro": "Share your unique link and earn commissions on every purchase made through it!",
+            "button_label": "Set Your Password & Log In",
+        },
+    },
+    "welcome_signup": {
+        "name": "Welcome Email", "category": "transactional", "trigger_event": "user.signup",
+        "to": "A brand-new customer account", "fields": {
+            "subject": "Welcome to Tredev Store!",
+            "greeting": "Namaste {{customer_name}}, welcome to Tredev Store!",
+            "intro": "Your account is ready. Here's what you can do next:",
+            "button_label": "Start Shopping",
+            "footer_note": "Questions? Reply to this email or contact us at {{support_email}}",
+        },
+    },
+    "affiliate_sale": {
+        "name": "Affiliate Sale Notification", "category": "astrologer", "trigger_event": "affiliate.commission",
+        "to": "The referring astrologer, when their link earns a commission", "fields": {
+            "subject": "You Earned a Commission! — Tredev Store",
+            "greeting": "Congratulations, {{astrologer_name}}! You just earned a commission!",
+            "footer_note": "Keep sharing your link to earn more!",
+        },
+    },
+    "invoice_generated": {
+        "name": "Invoice Generated", "category": "transactional", "trigger_event": "invoice.generated",
+        "to": "The buyer, once their tax invoice is issued (on delivery, or a manual re-issue)", "fields": {
+            "subject": "Your Tax Invoice for Order #{{order_id}} is Ready",
+            "greeting": "Hi {{customer_name}}, your tax invoice has been generated.",
+            "button_label": "View My Orders",
+            "footer_note": "Questions? Reply to this email or contact us at {{support_email}}",
+        },
+    },
+}
+
+
+def _fields(key: str, overrides: Optional[dict]) -> dict:
+    return {**SYSTEM_TEMPLATES[key]["fields"], **(overrides or {})}
+
+
 # ── §5.1 Order confirmation ──────────────────────────────────────────────────
-def render_order_confirmation(d: dict, settings: dict) -> tuple[str, str, str]:
+def render_order_confirmation(d: dict, settings: dict, overrides: Optional[dict] = None) -> tuple[str, str, str]:
+    f = _fields("order_confirmation", overrides)
+    ctx = {**d, "support_email": settings.get("support_email", "")}
     currency = d.get("currency", "INR")
     items_html = "".join(product_card(
         image=i.get("image", ""), name=i.get("name", ""), variant=i.get("variant", ""),
@@ -240,10 +372,9 @@ def render_order_confirmation(d: dict, settings: dict) -> tuple[str, str, str]:
     address_html = "<br>".join(_e(l) for l in addr_lines if l)
     delivery_html = (callout(f"Estimated delivery: <b>{_e(d.get('estimated_delivery'))}</b>", "success")
                      if d.get("estimated_delivery") else "")
-    cta = (action_button("Track Your Order", d.get("tracking_url") or "#") if d.get("tracking_url")
-          else action_button("View My Orders", d.get("order_url") or "#"))
+    cta_href = d.get("tracking_url") or d.get("order_url") or "#"
     content = f"""
-      <p style="font-size:14px;color:{COLORS['text_body']}">Hi {_e(d.get('customer_name'))}, thank you for your order!</p>
+      <p style="font-size:14px;color:{COLORS['text_body']}">{_merge(f['greeting'], ctx)}</p>
       {info_card([("Order ID", d.get('order_id', '')), ("Date", d.get('order_date', '')),
                  ("Payment method", d.get('payment_method', ''))])}
       <h3 style="font-size:13px;margin:20px 0 8px;color:{COLORS['text_muted']};text-transform:uppercase">Items</h3>
@@ -258,25 +389,26 @@ def render_order_confirmation(d: dict, settings: dict) -> tuple[str, str, str]:
       <h3 style="font-size:13px;margin:20px 0 8px;color:{COLORS['text_muted']};text-transform:uppercase">Shipping Address</h3>
       <div style="font-size:13px;color:{COLORS['text_body']}">{address_html}</div>
       {delivery_html}
-      <div style="text-align:center;margin:24px 0 8px">{cta}</div>
-      <p style="font-size:12px;color:{COLORS['text_muted']};text-align:center">
-        Questions? Reply to this email or contact us at {_e(settings.get('support_email', ''))}</p>
+      <div style="text-align:center;margin:24px 0 8px">{action_button(_merge(f['button_label'], ctx, escape=False), cta_href)}</div>
+      <p style="font-size:12px;color:{COLORS['text_muted']};text-align:center">{_merge(f['footer_note'], ctx)}</p>
     """
-    subject = f"Order Confirmed! Your Tredev Order #{d.get('order_id')}"
+    subject = _merge(f['subject'], ctx, escape=False)
     html_out, text_out = _render(preheader=f"Your order #{d.get('order_id')} is confirmed",
                                  heading="Thank You For Your Order!", content_html=content, settings=settings)
     return subject, html_out, text_out
 
 
 # ── §5.2 Admin order notification ────────────────────────────────────────────
-def render_admin_order_notification(d: dict, settings: dict) -> tuple[str, str, str]:
+def render_admin_order_notification(d: dict, settings: dict, overrides: Optional[dict] = None) -> tuple[str, str, str]:
+    f = _fields("admin_order_notification", overrides)
+    ctx = dict(d)
     currency = d.get("currency", "INR")
     items_html = "".join(product_card(
         image=i.get("image", ""), name=i.get("name", ""), variant=i.get("variant", ""),
         quantity=i.get("quantity", 1), price_paise=i.get("price", 0), currency=currency)
         for i in d.get("items", []))
     content = f"""
-      <p style="font-size:14px;color:{COLORS['text_body']}">A new order was just placed.</p>
+      <p style="font-size:14px;color:{COLORS['text_body']}">{_merge(f['greeting'], ctx)}</p>
       {info_card([("Order ID", d.get('order_id', '')), ("Date", d.get('order_date', '')),
                  ("Customer", d.get('customer_name', '')), ("Email", d.get('customer_email', '')),
                  ("Phone", d.get('customer_phone', '')), ("Payment method", d.get('payment_method', '')),
@@ -284,40 +416,41 @@ def render_admin_order_notification(d: dict, settings: dict) -> tuple[str, str, 
       <h3 style="font-size:13px;margin:20px 0 8px;color:{COLORS['text_muted']};text-transform:uppercase">Items</h3>
       {items_html}
       <div style="text-align:center;margin:24px 0 8px">
-        {action_button("View in Admin Panel", d.get('admin_url') or '#')}
+        {action_button(_merge(f['button_label'], ctx, escape=False), d.get('admin_url') or '#')}
       </div>
     """
-    subject = f"New Order Received — #{d.get('order_id')} from {d.get('customer_name')}"
+    subject = _merge(f['subject'], ctx, escape=False)
     html_out, text_out = _render(preheader=f"New order #{d.get('order_id')}", heading="New Order Received",
                                  content_html=content, settings=settings)
     return subject, html_out, text_out
 
 
 # ── §5.3 Consultation booking confirmation ───────────────────────────────────
-def render_consultation_booking(d: dict, settings: dict) -> tuple[str, str, str]:
+def render_consultation_booking(d: dict, settings: dict, overrides: Optional[dict] = None) -> tuple[str, str, str]:
+    f = _fields("consultation_booking", overrides)
+    ctx = {**d, "support_email": settings.get("support_email", "")}
     currency = d.get("currency", "INR")
     content = f"""
-      <p style="font-size:14px;color:{COLORS['text_body']}">Namaste {_e(d.get('customer_name'))}!
-      Your consultation has been booked.</p>
+      <p style="font-size:14px;color:{COLORS['text_body']}">{_merge(f['greeting'], ctx)}</p>
       {info_card([("Booking ID", d.get('booking_id', '')), ("Type", d.get('consultation_type', '')),
                  ("Date", d.get('booking_date', '')), ("Amount paid", money(d.get('amount_paid', 0), currency)),
                  ("Payment method", d.get('payment_method', ''))])}
       <div style="margin:14px 0">{status_badge("pending")} <span style="font-size:12px;color:{COLORS['text_muted']}">
         Pending astrologer assignment</span></div>
-      <p style="font-size:13px;color:{COLORS['text_body']}">Our team will assign an expert astrologer and
-        schedule your session. You'll receive another email with your astrologer's details and the session time.</p>
-      <div style="text-align:center;margin:24px 0 8px">{action_button("View My Bookings", d.get('bookings_url') or '#')}</div>
-      <p style="font-size:12px;color:{COLORS['text_muted']};text-align:center">
-        Questions? Reply to this email or contact us at {_e(settings.get('support_email', ''))}</p>
+      <p style="font-size:13px;color:{COLORS['text_body']}">{_merge(f['body_note'], ctx)}</p>
+      <div style="text-align:center;margin:24px 0 8px">{action_button(_merge(f['button_label'], ctx, escape=False), d.get('bookings_url') or '#')}</div>
+      <p style="font-size:12px;color:{COLORS['text_muted']};text-align:center">{_merge(f['footer_note'], ctx)}</p>
     """
-    subject = "Your Consultation is Booked! — Tredev Store"
+    subject = _merge(f['subject'], ctx, escape=False)
     html_out, text_out = _render(preheader="Your consultation booking is confirmed",
                                  heading="Consultation Booked!", content_html=content, settings=settings)
     return subject, html_out, text_out
 
 
 # ── §5.4 Astrologer & time assignment ────────────────────────────────────────
-def render_astrologer_assignment(d: dict, settings: dict) -> tuple[str, str, str]:
+def render_astrologer_assignment(d: dict, settings: dict, overrides: Optional[dict] = None) -> tuple[str, str, str]:
+    f = _fields("astrologer_assignment", overrides)
+    ctx = dict(d)
     img = (f'<img src="{_e(d.get("astrologer_image"))}" width="90" height="90" '
            f'style="border-radius:50%;border:3px solid {COLORS["gold"]};object-fit:cover;display:block;margin:0 auto 10px">'
           if d.get("astrologer_image") else "")
@@ -326,10 +459,10 @@ def render_astrologer_assignment(d: dict, settings: dict) -> tuple[str, str, str
         f'border:1px solid {COLORS["gold"]};border-radius:999px;padding:3px 10px;font-size:11px;'
         f'margin:2px">{_e(s)}</span>'
         for s in (d.get("astrologer_specialties") or []))
-    join_btn = action_button("Join Meeting", d.get("meeting_link"), "primary") if d.get("meeting_link") else ""
+    join_btn = (action_button(_merge(f['button_label'], ctx, escape=False), d.get("meeting_link"), "primary")
+               if d.get("meeting_link") else "")
     content = f"""
-      <p style="font-size:14px;color:{COLORS['text_body']}">Great news, {_e(d.get('customer_name'))}!
-      Your astrologer has been assigned.</p>
+      <p style="font-size:14px;color:{COLORS['text_body']}">{_merge(f['greeting'], ctx)}</p>
       <div style="text-align:center;border:1px solid #E8E2D5;border-radius:10px;padding:18px;margin:16px 0">
         {img}
         <div style="font-weight:700;font-size:15px;color:{COLORS['primary']}">{_e(d.get('astrologer_name'))}</div>
@@ -338,11 +471,10 @@ def render_astrologer_assignment(d: dict, settings: dict) -> tuple[str, str, str
       </div>
       {info_card([("Date", d.get('scheduled_date', '')), ("Time", d.get('scheduled_time', '')),
                  ("Duration", d.get('duration', '')), ("Platform", d.get('meeting_platform', 'Google Meet'))])}
-      {callout("Have your birth date, time, and place of birth ready &middot; "
-              "Find a quiet space for your session &middot; Prepare any specific questions", "warning")}
+      {callout(_merge(f['prep_tips'], ctx), "warning")}
       <div style="text-align:center;margin:20px 0 8px">{join_btn}</div>
     """
-    subject = "Your Astrologer is Confirmed! — Tredev Store"
+    subject = _merge(f['subject'], ctx, escape=False)
     html_out, text_out = _render(preheader="Your astrologer and session time are confirmed",
                                  heading="Your Astrologer is Confirmed!", content_html=content, settings=settings)
     return subject, html_out, text_out
@@ -377,7 +509,9 @@ def _status_timeline(new_status: str) -> str:
     return f'<table role="presentation" width="100%"><tr>{"".join(cells)}</tr></table>'
 
 
-def render_order_status_update(d: dict, settings: dict) -> tuple[str, str, str]:
+def render_order_status_update(d: dict, settings: dict, overrides: Optional[dict] = None) -> tuple[str, str, str]:
+    f = _fields("order_status_update", overrides)
+    ctx = dict(d)
     new_status = d.get("new_status", "")
     items_html = "".join(
         f'<div style="font-size:12px;color:{COLORS["text_muted"]}">&bull; {_e(i.get("name"))} x{i.get("quantity", 1)}</div>'
@@ -388,18 +522,16 @@ def render_order_status_update(d: dict, settings: dict) -> tuple[str, str, str]:
                                    ("Tracking No.", d.get("tracking_number", "")),
                                    ("Estimated delivery", d.get("estimated_delivery", ""))])
     msg_html = callout(_e(d.get("status_message")), "warning") if d.get("status_message") else ""
-    cta = (action_button("Track Your Order", d.get("tracking_url"))
-          if d.get("tracking_url") else action_button("View Order Details", d.get("order_url") or "#"))
+    cta_href = d.get("tracking_url") or d.get("order_url") or "#"
     content = f"""
-      <p style="font-size:14px;color:{COLORS['text_body']}">Hi {_e(d.get('customer_name'))},
-      your order status has been updated!</p>
+      <p style="font-size:14px;color:{COLORS['text_body']}">{_merge(f['greeting'], ctx)}</p>
       <div style="margin:18px 0">{_status_timeline(new_status)}</div>
       <div style="text-align:center;margin:10px 0">{status_badge(new_status)}</div>
       {tracking_html}
       {msg_html}
       <h3 style="font-size:12px;margin:18px 0 6px;color:{COLORS['text_muted']};text-transform:uppercase">Items</h3>
       {items_html}
-      <div style="text-align:center;margin:22px 0 8px">{cta}</div>
+      <div style="text-align:center;margin:22px 0 8px">{action_button(_merge(f['button_label'], ctx, escape=False), cta_href)}</div>
       {f'<p style="font-size:12px;color:{COLORS["text_muted"]}">Delivering to: {_e(d.get("delivery_address"))}</p>' if d.get('delivery_address') else ''}
     """
     subject = _STATUS_SUBJECT.get(new_status, f"Your Order #{d.get('order_id')} Update").format(oid=d.get("order_id"))
@@ -408,21 +540,21 @@ def render_order_status_update(d: dict, settings: dict) -> tuple[str, str, str]:
 
 
 # ── §5.6 Astrologer onboarding ───────────────────────────────────────────────
-def render_astrologer_onboarding(d: dict, settings: dict) -> tuple[str, str, str]:
+def render_astrologer_onboarding(d: dict, settings: dict, overrides: Optional[dict] = None) -> tuple[str, str, str]:
+    f = _fields("astrologer_onboarding", overrides)
+    ctx = {**d, "support_email": settings.get("support_email", "")}
     content = f"""
-      <p style="font-size:14px;color:{COLORS['text_body']}">Welcome aboard, {_e(d.get('astrologer_name'))}!
-      We're thrilled to have you join the Tredev family.</p>
+      <p style="font-size:14px;color:{COLORS['text_body']}">{_merge(f['greeting'], ctx)}</p>
       <div style="border:1px dashed {COLORS['gold']};border-radius:8px;padding:16px;margin:16px 0">
         <div style="font-size:12px;color:{COLORS['text_muted']}">Login Email</div>
         <div style="font-size:14px;font-weight:600;margin-bottom:10px">{_e(d.get('email'))}</div>
         <div style="font-size:12px;color:{COLORS['text_muted']}">Set your password using the button below —
           the link expires in 7 days.</div>
       </div>
-      <div style="text-align:center;margin:20px 0">{action_button("Set Your Password &amp; Log In", d.get('login_url') or '#')}</div>
+      <div style="text-align:center;margin:20px 0">{action_button(_merge(f['button_label'], ctx, escape=False), d.get('login_url') or '#')}</div>
       <h3 style="font-size:13px;margin:24px 0 8px;color:{COLORS['text_muted']};text-transform:uppercase">
         Your Affiliate Program</h3>
-      <p style="font-size:13px;color:{COLORS['text_body']}">Share your unique link and earn commissions on
-        every purchase made through it!</p>
+      <p style="font-size:13px;color:{COLORS['text_body']}">{_merge(f['affiliate_intro'], ctx)}</p>
       {info_card([("Affiliate code", d.get('affiliate_code', '')), ("Affiliate link", d.get('affiliate_link', ''))])}
       <h3 style="font-size:13px;margin:24px 0 8px;color:{COLORS['text_muted']};text-transform:uppercase">
         Getting Started</h3>
@@ -432,45 +564,46 @@ def render_astrologer_onboarding(d: dict, settings: dict) -> tuple[str, str, str
       <p style="font-size:12px;color:{COLORS['text_muted']};margin-top:16px">
         Support for astrologers: {_e(settings.get('support_email', ''))}</p>
     """
-    subject = "Welcome to Tredev Store! Your Astrologer Account is Ready"
+    subject = _merge(f['subject'], ctx, escape=False)
     html_out, text_out = _render(preheader="Set your password to activate your astrologer account",
                                  heading="Welcome to Tredev Store!", content_html=content, settings=settings)
     return subject, html_out, text_out
 
 
 # ── Customer welcome email (new account created — signup, Google, or phone) ──
-def render_welcome_signup(d: dict, settings: dict) -> tuple[str, str, str]:
+def render_welcome_signup(d: dict, settings: dict, overrides: Optional[dict] = None) -> tuple[str, str, str]:
+    f = _fields("welcome_signup", overrides)
+    ctx = {**d, "support_email": settings.get("support_email", "")}
     content = f"""
-      <p style="font-size:14px;color:{COLORS['text_body']}">Namaste {_e(d.get('customer_name'))},
-      welcome to Tredev Store!</p>
-      <p style="font-size:13px;color:{COLORS['text_body']}">Your account is ready. Here's what you can do next:</p>
+      <p style="font-size:14px;color:{COLORS['text_body']}">{_merge(f['greeting'], ctx)}</p>
+      <p style="font-size:13px;color:{COLORS['text_body']}">{_merge(f['intro'], ctx)}</p>
       <div style="font-size:13px;color:{COLORS['text_body']};margin:12px 0">
         &bull; Browse hallmark-certified gemstones and rudraksha<br>
         &bull; Book an astrologer-guided consultation<br>
         &bull; Track every order from purchase to delivery, end to end
       </div>
       <div style="text-align:center;margin:22px 0 8px">
-        {action_button("Start Shopping", d.get('shop_url') or '#')}
+        {action_button(_merge(f['button_label'], ctx, escape=False), d.get('shop_url') or '#')}
       </div>
-      <p style="font-size:12px;color:{COLORS['text_muted']};text-align:center">
-        Questions? Reply to this email or contact us at {_e(settings.get('support_email', ''))}</p>
+      <p style="font-size:12px;color:{COLORS['text_muted']};text-align:center">{_merge(f['footer_note'], ctx)}</p>
     """
-    subject = "Welcome to Tredev Store!"
+    subject = _merge(f['subject'], ctx, escape=False)
     html_out, text_out = _render(preheader="Your Tredev Store account is ready",
                                  heading="Welcome to Tredev Store!", content_html=content, settings=settings)
     return subject, html_out, text_out
 
 
 # ── §5.7 Affiliate sale notification ─────────────────────────────────────────
-def render_affiliate_sale(d: dict, settings: dict) -> tuple[str, str, str]:
+def render_affiliate_sale(d: dict, settings: dict, overrides: Optional[dict] = None) -> tuple[str, str, str]:
+    f = _fields("affiliate_sale", overrides)
+    ctx = dict(d)
     currency = d.get("currency", "INR")
     items_html = "".join(
         f'<div style="font-size:12px;color:{COLORS["text_muted"]}">&bull; {_e(i.get("name"))} '
         f'&mdash; {money(i.get("price", 0), currency)}</div>'
         for i in d.get("items", []))
     content = f"""
-      <p style="font-size:14px;color:{COLORS['text_body']}">Congratulations, {_e(d.get('astrologer_name'))}!
-      You just earned a commission!</p>
+      <p style="font-size:14px;color:{COLORS['text_body']}">{_merge(f['greeting'], ctx)}</p>
       <div style="text-align:center;border:1px solid #E8E2D5;border-radius:10px;padding:20px;margin:16px 0">
         <div style="font-size:28px;font-weight:800;color:{COLORS['gold']}">
           {money(d.get('commission_amount', 0), currency)}</div>
@@ -487,11 +620,35 @@ def render_affiliate_sale(d: dict, settings: dict) -> tuple[str, str, str]:
         &nbsp;&nbsp;
         {action_button("Share Your Link", d.get('affiliate_link') or '#', 'secondary')}
       </div>
-      <p style="font-size:12px;color:{COLORS['text_muted']};text-align:center">Keep sharing your link to earn more!</p>
+      <p style="font-size:12px;color:{COLORS['text_muted']};text-align:center">{_merge(f['footer_note'], ctx)}</p>
     """
-    subject = "You Earned a Commission! — Tredev Store"
+    subject = _merge(f['subject'], ctx, escape=False)
     html_out, text_out = _render(preheader=f"You earned {money(d.get('commission_amount', 0), currency)}",
                                  heading="You Earned a Commission!", content_html=content, settings=settings)
+    return subject, html_out, text_out
+
+
+# ── Invoice generated ─────────────────────────────────────────────────────────
+def render_invoice_generated(d: dict, settings: dict, overrides: Optional[dict] = None) -> tuple[str, str, str]:
+    f = _fields("invoice_generated", overrides)
+    ctx = {**d, "support_email": settings.get("support_email", "")}
+    currency = d.get("currency", "INR")
+    items_html = "".join(product_card(
+        image=i.get("image", ""), name=i.get("name", ""), variant=i.get("variant", ""),
+        quantity=i.get("quantity", 1), price_paise=i.get("price", 0), currency=currency)
+        for i in d.get("items", []))
+    content = f"""
+      <p style="font-size:14px;color:{COLORS['text_body']}">{_merge(f['greeting'], ctx)}</p>
+      {info_card([("Invoice Number", d.get('invoice_number', '')), ("Order ID", d.get('order_id', '')),
+                 ("Date", d.get('invoice_date', '')), ("Total", money(d.get('total', 0), currency))])}
+      <h3 style="font-size:13px;margin:20px 0 8px;color:{COLORS['text_muted']};text-transform:uppercase">Items</h3>
+      {items_html}
+      <div style="text-align:center;margin:24px 0 8px">{action_button(_merge(f['button_label'], ctx, escape=False), d.get('order_url') or '#')}</div>
+      <p style="font-size:12px;color:{COLORS['text_muted']};text-align:center">{_merge(f['footer_note'], ctx)}</p>
+    """
+    subject = _merge(f['subject'], ctx, escape=False)
+    html_out, text_out = _render(preheader=f"Invoice {d.get('invoice_number')} for order #{d.get('order_id')}",
+                                 heading="Your Tax Invoice is Ready", content_html=content, settings=settings)
     return subject, html_out, text_out
 
 
@@ -580,6 +737,12 @@ def _demo() -> None:
         "currency": "INR", "affiliate_link": "https://tredeva.com/?ref=PANDIT10",
         "dashboard_url": "https://tredeva.com/astrologer/dashboard"}, settings)
     assert "Earned a Commission" in subj and "200.00" in h
+
+    subj, h, t = render_invoice_generated({
+        "customer_name": "Lubhansh", "order_id": "TDV-1001", "invoice_number": "TRE/2627/000123",
+        "invoice_date": "23/08/2026", "items": items, "total": 200000, "currency": "INR",
+        "order_url": "https://tredevastore.com/account"}, settings)
+    assert "Tax Invoice" in subj and "TRE/2627/000123" in h and "2,000.00" in h
 
     subj, h, t = render_custom_email(subject="Diwali Sale!", content_html="<p>50% off everything.</p>",
                                      template="promotional", settings=settings, recipient_name="Lubhansh",

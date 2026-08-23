@@ -4776,6 +4776,17 @@ def _app_url(path: str = "") -> str:
     return f"{os.environ.get('PUBLIC_APP_URL', '').rstrip('/')}{path}"
 
 
+async def _render_system_email(key: str, payload: dict, settings: dict, render_fn):
+    """Looks up any admin override (Admin -> Emails -> Templates) for a system
+    template before rendering. Returns None when the admin has disabled this
+    specific email — callers must treat that as 'don't send', not an error."""
+    row = await db.fetch_one(
+        "SELECT fields, enabled FROM email_templates WHERE key = $1 AND is_system", key)
+    if row and not row["enabled"]:
+        return None
+    return render_fn(payload, settings, (row or {}).get("fields"))
+
+
 def _order_line_items_for_email(order: dict) -> list[dict]:
     return [{"name": li.get("name"), "image": _media_public_url(li["image"]) if li.get("image") else "",
              "variant": ", ".join(f"{o.get('label') or o.get('key')}: {o.get('value')}"
@@ -4804,13 +4815,17 @@ def _email_order_confirmation(order: dict, buyer: Optional[dict]) -> None:
                                  "pincode": shipping.get("shipping_pincode")},
             "order_url": _app_url("/account"),
         }
-        customer_render = email_templates.render_order_confirmation(payload, settings)
-        admin_render = email_templates.render_admin_order_notification(
+        customer_render = await _render_system_email(
+            "order_confirmation", payload, settings, email_templates.render_order_confirmation)
+        admin_render = await _render_system_email(
+            "admin_order_notification",
             {**payload, "customer_email": to_email or "",
              "customer_phone": (buyer or {}).get("phone") or shipping.get("shipping_phone", ""),
-             "admin_url": _app_url(f"/admin/orders?order_id={order.get('order_id')}")}, settings)
-        await email_sender.send_with_admin_copy(to_email, customer_render, admin_render,
-                                                type_="order_confirmation", related_id=order.get("order_id"))
+             "admin_url": _app_url(f"/admin/orders?order_id={order.get('order_id')}")},
+            settings, email_templates.render_admin_order_notification)
+        await email_sender.send_with_admin_copy(
+            to_email, customer_render, admin_render,
+            type_="order_confirmation", related_id=order.get("order_id"))
     email_sender._email_fire_event("order.placed", _send)
 
 
@@ -4838,7 +4853,11 @@ def _email_order_status_update(order: dict, buyer: Optional[dict], new_status: s
                                                          shipping.get("shipping_city"), shipping.get("shipping_state")])),
             "order_url": _app_url("/account"),
         }
-        subject, html_out, text_out = email_templates.render_order_status_update(payload, settings)
+        rendered = await _render_system_email(
+            "order_status_update", payload, settings, email_templates.render_order_status_update)
+        if not rendered:
+            return
+        subject, html_out, text_out = rendered
         await email_sender.send_email([to_email], subject, html_out, text_out,
                                       type_="order_status_update", related_id=order.get("order_id"))
     email_sender._email_fire_event("order.status_changed", _send)
@@ -4857,7 +4876,11 @@ def _email_consultation_booking(consult: dict) -> None:
             "amount_paid": consult.get("amount", 0), "currency": consult.get("currency") or "INR",
             "payment_method": "PREPAID", "bookings_url": _app_url("/account"),
         }
-        subject, html_out, text_out = email_templates.render_consultation_booking(payload, settings)
+        rendered = await _render_system_email(
+            "consultation_booking", payload, settings, email_templates.render_consultation_booking)
+        if not rendered:
+            return
+        subject, html_out, text_out = rendered
         await email_sender.send_email([consult["email"]], subject, html_out, text_out,
                                       type_="consultation_booking", related_id=consult.get("booking_id"))
     email_sender._email_fire_event("consultation.booked", _send)
@@ -4878,7 +4901,11 @@ def _email_astrologer_assignment(consult: dict, astro: dict, when_dt: datetime) 
             "duration": f"{CONSULTATION_DURATION_MINUTES} minutes", "meeting_link": consult.get("meeting_link") or "",
             "meeting_platform": "Google Meet",
         }
-        subject, html_out, text_out = email_templates.render_astrologer_assignment(payload, settings)
+        rendered = await _render_system_email(
+            "astrologer_assignment", payload, settings, email_templates.render_astrologer_assignment)
+        if not rendered:
+            return
+        subject, html_out, text_out = rendered
         await email_sender.send_email([consult["email"]], subject, html_out, text_out,
                                       type_="astrologer_assignment", related_id=consult.get("booking_id"))
     email_sender._email_fire_event("consultation.assigned", _send)
@@ -4892,7 +4919,11 @@ def _email_astrologer_onboarding(astro_id: str, name: str, email_addr: str, welc
             "astrologer_name": name, "email": email_addr, "login_url": welcome_url,
             "affiliate_code": affiliate_code, "affiliate_link": f"{settings.get('store_url', '')}/?ref={affiliate_code}",
         }
-        subject, html_out, text_out = email_templates.render_astrologer_onboarding(payload, settings)
+        rendered = await _render_system_email(
+            "astrologer_onboarding", payload, settings, email_templates.render_astrologer_onboarding)
+        if not rendered:
+            return
+        subject, html_out, text_out = rendered
         await email_sender.send_email([email_addr], subject, html_out, text_out,
                                       type_="astrologer_onboarding", related_id=astro_id)
     email_sender._email_fire_event("astrologer.created", _send)
@@ -4906,7 +4937,11 @@ def _email_welcome_signup(user: dict) -> None:
         settings = await _email_branding()
         payload = {"customer_name": user.get("name") or "there",
                    "shop_url": settings.get("store_url") or _app_url()}
-        subject, html_out, text_out = email_templates.render_welcome_signup(payload, settings)
+        rendered = await _render_system_email(
+            "welcome_signup", payload, settings, email_templates.render_welcome_signup)
+        if not rendered:
+            return
+        subject, html_out, text_out = rendered
         await email_sender.send_email([user["email"]], subject, html_out, text_out,
                                       type_="welcome_signup", related_id=user.get("user_id"))
     email_sender._email_fire_event("user.signup", _send)
@@ -4947,10 +4982,47 @@ def _email_affiliate_sale(order: dict, result: dict) -> None:
             "affiliate_link": f"{settings.get('store_url', '')}/?ref={astro['affiliate_code']}",
             "dashboard_url": _app_url("/astrologer/dashboard"),
         }
-        subject, html_out, text_out = email_templates.render_affiliate_sale(payload, settings)
+        rendered = await _render_system_email(
+            "affiliate_sale", payload, settings, email_templates.render_affiliate_sale)
+        if not rendered:
+            return
+        subject, html_out, text_out = rendered
         await email_sender.send_email([astro["email"]], subject, html_out, text_out,
                                       type_="affiliate_sale", related_id=result.get("order_id"))
     email_sender._email_fire_event("affiliate.commission", _send)
+
+
+def _email_invoice_generated(order: dict, buyer: Optional[dict], invoice: dict) -> None:
+    """Only fires when `invoice` is a genuinely NEW document (invoice.py tags
+    this via _newly_issued) — generate_for_order is idempotent and both call
+    sites (auto on delivery, manual re-issue) may just return an existing one,
+    which must never re-notify the buyer."""
+    if not invoice.get("_newly_issued"):
+        return
+    shipping = order.get("shipping") or {}
+    to_email = (buyer or {}).get("email") or shipping.get("email")
+    if not to_email:
+        return
+
+    async def _send():
+        settings = await _email_branding()
+        payload = {
+            "customer_name": (buyer or {}).get("name") or shipping.get("shipping_name") or "there",
+            "order_id": order.get("order_no") or order.get("order_id"),
+            "invoice_number": invoice.get("invoice_number"), "invoice_date": invoice.get("issued_at", ""),
+            "items": _order_line_items_for_email(order),
+            "total": invoice.get("grand_total_paise", 0),
+            "currency": invoice.get("currency") or order.get("currency", "INR"),
+            "order_url": _app_url("/account"),
+        }
+        rendered = await _render_system_email(
+            "invoice_generated", payload, settings, email_templates.render_invoice_generated)
+        if not rendered:
+            return
+        subject, html_out, text_out = rendered
+        await email_sender.send_email([to_email], subject, html_out, text_out,
+                                      type_="invoice_generated", related_id=order.get("order_id"))
+    email_sender._email_fire_event("invoice.generated", _send)
 
 
 class CashfreeVerifyIn(BaseModel):
@@ -8022,6 +8094,8 @@ async def admin_update_order_status(order_id: str, body: OrderStatusIn, actor: s
     await audit_log(actor, "order.status_change", order_id,
                     {"from": prev["status"], "to": body.status})
 
+    buyer = await _load_user(user_id=prev["user_id"]) if prev.get("user_id") else None
+
     # Delivery is what triggers the tax invoice. Deliberately OUTSIDE the status
     # transaction: a blocked invoice (missing HSN, unresolvable state) must not
     # roll back a delivery that genuinely happened. The reason is surfaced to the
@@ -8029,7 +8103,8 @@ async def admin_update_order_status(order_id: str, body: OrderStatusIn, actor: s
     invoice_error = None
     if body.status == "delivered":
         try:
-            await invoicing.generate_for_order(order_id, await _invoice_settings())
+            invoice = await invoicing.generate_for_order(order_id, await _invoice_settings())
+            _email_invoice_generated(prev, buyer, invoice)
         except invoicing.InvoiceBlocked as e:
             invoice_error = str(e)
             log.warning("invoice blocked for order %s: %s", order_id, e)
@@ -8041,7 +8116,6 @@ async def admin_update_order_status(order_id: str, body: OrderStatusIn, actor: s
     # the dispatch flow (which carries tracking), so it is not duplicated here.
     _WA_STATUS_EVENT = {"delivered": "order.delivered", "cancelled": "order.cancelled"}
     event = _WA_STATUS_EVENT.get(body.status)
-    buyer = await _load_user(user_id=prev["user_id"]) if prev.get("user_id") else None
     if event and body.status != prev["status"]:
         to_phone = (buyer or {}).get("phone") or prev.get("shipping_phone")
         if to_phone:
@@ -8160,6 +8234,9 @@ async def admin_generate_invoice(order_id: str, body: InvoiceGenerateIn = Invoic
                                                  force=body.force)
     except invoicing.InvoiceBlocked as e:
         raise HTTPException(400, str(e))
+    order = await _load_order(order_id)
+    buyer = await _load_user(user_id=order["user_id"]) if order and order.get("user_id") else None
+    _email_invoice_generated(order, buyer, inv)
     await audit_log(actor, "invoice.generate_forced" if body.force else "invoice.generate",
                     order_id, {"invoice_number": inv["invoice_number"], "forced": body.force})
     return _invoice_summary(inv)
@@ -9771,6 +9848,227 @@ async def admin_email_diagnose(_: str = Depends(require_perm("email"))):
         type_="diagnostic")
     return {"ok": res["success"], "elapsed_ms": round((time.time() - t0) * 1000),
             "from_address": email_sender.EMAIL_FROM_ADDRESS, "error": res.get("error")}
+
+
+# ── Email templates (Admin -> Emails -> Templates) ──────────────────────────
+# System templates (the 8 real trigger points) only ever override specific
+# copy fields — see email_templates.SYSTEM_TEMPLATES — never the structural
+# layout. Custom templates are full subject+body canned messages for Compose.
+_EMAIL_TEMPLATE_CATEGORIES = {"transactional", "consultation", "astrologer", "marketing"}
+
+# Minimal realistic payloads for the "Test" button — same shape _email_* hooks
+# build for real sends, trimmed to what each template actually reads.
+_SAMPLE_EMAIL_PAYLOADS = {
+    "order_confirmation": {"customer_name": "Test User", "order_id": "TDV-1001", "order_date": "01/01/2026",
+        "items": [{"name": "Ceylon Blue Sapphire", "image": "", "variant": "Loose Gemstone", "quantity": 1, "price": 200000}],
+        "subtotal": 200000, "shipping": 0, "discount": 0, "total": 200000, "currency": "INR",
+        "payment_method": "PREPAID", "shipping_address": {"name": "Test User", "line1": "123 Test Road",
+        "city": "Hathras", "state": "Uttar Pradesh", "pincode": "204101"}, "order_url": "#"},
+    "admin_order_notification": {"customer_name": "Test User", "customer_email": "test@example.com",
+        "customer_phone": "+919999999999", "order_id": "TDV-1001", "order_date": "01/01/2026",
+        "items": [{"name": "Ceylon Blue Sapphire", "image": "", "variant": "", "quantity": 1, "price": 200000}],
+        "total": 200000, "currency": "INR", "payment_method": "PREPAID", "admin_url": "#"},
+    "consultation_booking": {"customer_name": "Test User", "consultation_type": "Birth Chart Reading",
+        "booking_id": "CB-1", "booking_date": "01/01/2026", "amount_paid": 39900, "currency": "INR",
+        "payment_method": "PREPAID", "bookings_url": "#"},
+    "astrologer_assignment": {"customer_name": "Test User", "booking_id": "CB-1", "astrologer_name": "Pandit Sharma",
+        "astrologer_specialties": ["Vedic", "Tarot"], "scheduled_date": "02 Jan 2026", "scheduled_time": "5:00 PM IST",
+        "duration": "30 minutes", "meeting_link": "#", "meeting_platform": "Google Meet"},
+    "order_status_update": {"customer_name": "Test User", "order_id": "TDV-1001", "new_status": "shipped",
+        "tracking_number": "TRK123", "courier_name": "Delhivery",
+        "items": [{"name": "Ceylon Blue Sapphire", "quantity": 1}], "order_url": "#"},
+    "astrologer_onboarding": {"astrologer_name": "Pandit Sharma", "email": "pandit@example.com",
+        "login_url": "#", "affiliate_code": "PANDIT10", "affiliate_link": "#"},
+    "welcome_signup": {"customer_name": "Test User", "shop_url": "#"},
+    "affiliate_sale": {"astrologer_name": "Pandit Sharma", "order_id": "TDV-1001", "order_date": "01/01/2026",
+        "customer_first_name": "Test", "items": [{"name": "Ceylon Blue Sapphire", "price": 200000}],
+        "order_total": 200000, "commission_rate": 10, "commission_amount": 20000, "total_earnings": 150000,
+        "currency": "INR", "affiliate_link": "#", "dashboard_url": "#"},
+    "invoice_generated": {"customer_name": "Test User", "order_id": "TDV-1001",
+        "invoice_number": "TRE/2627/000123", "invoice_date": "01/01/2026",
+        "items": [{"name": "Ceylon Blue Sapphire", "image": "", "variant": "", "quantity": 1, "price": 200000}],
+        "total": 200000, "currency": "INR", "order_url": "#"},
+}
+
+
+@api.get("/admin/emails/meta")
+async def admin_email_templates_meta(_: str = Depends(require_perm("email"))):
+    """Feeds the Templates tab: which system templates exist, their editable
+    field keys/defaults, and the category catalogue for new custom templates."""
+    return {
+        "system_templates": [
+            {"key": k, "name": v["name"], "category": v["category"], "trigger_event": v["trigger_event"],
+             "to": v.get("to", ""), "note": v.get("note", ""), "field_defaults": v["fields"]}
+            for k, v in email_templates.SYSTEM_TEMPLATES.items()],
+        "categories": sorted(_EMAIL_TEMPLATE_CATEGORIES),
+    }
+
+
+@api.get("/admin/emails/templates")
+async def admin_email_templates_list(_: str = Depends(require_perm("email"))):
+    rows = await db.fetch_all("SELECT * FROM email_templates ORDER BY name")
+    by_key = {r["key"]: r for r in rows}
+    out = []
+    for key, sys_tpl in email_templates.SYSTEM_TEMPLATES.items():
+        row = by_key.pop(key, None)
+        out.append({
+            "key": key, "name": sys_tpl["name"], "is_system": True,
+            "category": sys_tpl["category"], "trigger_event": sys_tpl["trigger_event"],
+            "to": sys_tpl.get("to", ""), "note": sys_tpl.get("note", ""),
+            "field_defaults": sys_tpl["fields"], "fields": (row["fields"] if row else {}) or {},
+            "enabled": row["enabled"] if row else True,
+            "updated_at": row["updated_at"] if row else None,
+        })
+    for row in by_key.values():
+        out.append({"key": row["key"], "name": row["name"], "is_system": False,
+                    "category": row["category"], "trigger_event": row["trigger_event"],
+                    "subject": row["subject"], "body_html": row["body_html"],
+                    "enabled": row["enabled"], "updated_at": row["updated_at"]})
+    return out
+
+
+class EmailTemplateIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    category: str = "transactional"
+    subject: str = Field(min_length=1, max_length=200)
+    body_html: str = Field(min_length=1, max_length=100_000)
+
+
+class EmailTemplateUpdateIn(BaseModel):
+    name: Optional[str] = None
+    category: Optional[str] = None
+    subject: Optional[str] = None
+    body_html: Optional[str] = None
+    fields: Optional[dict] = None
+    enabled: Optional[bool] = None
+
+
+class EmailTemplateTestIn(BaseModel):
+    email: EmailStr
+
+
+@api.post("/admin/emails/templates")
+async def admin_email_template_create(body: EmailTemplateIn, actor: str = Depends(require_perm("email"))):
+    """Custom templates only — system templates already exist and are edited
+    via PUT, never created/deleted (there's no code path to fire an arbitrary
+    9th trigger, so a truly new *auto-sent* template isn't possible; a new
+    template here is a reusable canned message for Compose)."""
+    if body.category not in _EMAIL_TEMPLATE_CATEGORIES:
+        raise HTTPException(400, f"Unknown category. Allowed: {sorted(_EMAIL_TEMPLATE_CATEGORIES)}")
+    content = _sanitize_email_html(body.body_html)
+    variables = email_templates.extract_variables(f"{body.subject} {content}")
+    base_key = re.sub(r"[^a-z0-9]+", "_", body.name.strip().lower()).strip("_") or "template"
+    key = base_key
+    if key in email_templates.SYSTEM_TEMPLATES or await db.fetch_val(
+            "SELECT 1 FROM email_templates WHERE key = $1", key):
+        key = f"{base_key}_{uuid.uuid4().hex[:6]}"
+    await db.execute(
+        """INSERT INTO email_templates (id, key, name, is_system, category, trigger_event,
+                subject, body_html, variables, updated_by)
+           VALUES (gen_random_uuid(),$1,$2,false,$3,'manual',$4,$5,$6,$7::uuid)""",
+        key, body.name, body.category, body.subject, content, variables, actor)
+    await audit_log(actor, "email.template.create", key, {"name": body.name})
+    return await db.fetch_one("SELECT * FROM email_templates WHERE key = $1", key)
+
+
+@api.put("/admin/emails/templates/{key}")
+async def admin_email_template_update(key: str, body: EmailTemplateUpdateIn,
+                                      actor: str = Depends(require_perm("email"))):
+    fields_in = body.model_dump(exclude_unset=True)
+    if not fields_in:
+        raise HTTPException(400, "Nothing to update")
+
+    if key in email_templates.SYSTEM_TEMPLATES:
+        disallowed = set(fields_in) - {"fields", "enabled"}
+        if disallowed:
+            raise HTTPException(400, f"System templates only support 'fields' and 'enabled', not {sorted(disallowed)}")
+        sys_tpl = email_templates.SYSTEM_TEMPLATES[key]
+        if "fields" in fields_in:
+            unknown = set(fields_in["fields"]) - set(sys_tpl["fields"])
+            if unknown:
+                raise HTTPException(400, f"Unknown field(s) for '{key}': {sorted(unknown)}")
+        existing = await db.fetch_one("SELECT fields, enabled FROM email_templates WHERE key = $1", key)
+        new_fields = fields_in.get("fields", (existing["fields"] if existing else {}) or {})
+        new_enabled = fields_in.get("enabled", existing["enabled"] if existing else True)
+        await db.execute(
+            """INSERT INTO email_templates (id, key, name, is_system, category, trigger_event,
+                    fields, enabled, updated_by)
+               VALUES (gen_random_uuid(),$1,$2,true,$3,$4,$5::jsonb,$6,$7::uuid)
+               ON CONFLICT (key) DO UPDATE SET
+                   fields = $5::jsonb, enabled = $6, updated_by = $7::uuid, updated_at = now()""",
+            key, sys_tpl["name"], sys_tpl["category"], sys_tpl["trigger_event"],
+            db.json_dumps(new_fields), new_enabled, actor)
+    else:
+        existing = await db.fetch_one(
+            "SELECT id FROM email_templates WHERE key = $1 AND NOT is_system", key)
+        if not existing:
+            raise HTTPException(404, "Template not found")
+        if "category" in fields_in and fields_in["category"] not in _EMAIL_TEMPLATE_CATEGORIES:
+            raise HTTPException(400, f"Unknown category. Allowed: {sorted(_EMAIL_TEMPLATE_CATEGORIES)}")
+        if "body_html" in fields_in:
+            fields_in["body_html"] = _sanitize_email_html(fields_in["body_html"])
+        sets, args = [], []
+        for col in ("name", "category", "subject", "body_html", "enabled"):
+            if col in fields_in:
+                args.append(fields_in[col]); sets.append(f"{col} = ${len(args)}")
+        if "subject" in fields_in or "body_html" in fields_in:
+            merged_row = await db.fetch_one("SELECT subject, body_html FROM email_templates WHERE key = $1", key)
+            subj = fields_in.get("subject", merged_row["subject"])
+            body_h = fields_in.get("body_html", merged_row["body_html"])
+            args.append(email_templates.extract_variables(f"{subj} {body_h}"))
+            sets.append(f"variables = ${len(args)}")
+        args.append(actor); sets.append(f"updated_by = ${len(args)}::uuid")
+        args.append(key)
+        await db.execute(f"UPDATE email_templates SET {', '.join(sets)}, updated_at = now() "
+                         f"WHERE key = ${len(args)}", *args)
+    await audit_log(actor, "email.template.update", key, {k: v for k, v in fields_in.items() if k != "body_html"})
+    return await db.fetch_one("SELECT * FROM email_templates WHERE key = $1", key)
+
+
+@api.delete("/admin/emails/templates/{key}")
+async def admin_email_template_delete(key: str, actor: str = Depends(require_perm("email"))):
+    """System templates: deletes the override row, reverting to the built-in
+    default (there's always a code default, so this can't leave the email
+    unsendable). Custom templates: gone for good, no longer usable from Compose."""
+    is_system = key in email_templates.SYSTEM_TEMPLATES
+    if not is_system:
+        got = await db.fetch_val(
+            "DELETE FROM email_templates WHERE key = $1 AND NOT is_system RETURNING key", key)
+        if not got:
+            raise HTTPException(404, "Template not found")
+    else:
+        await db.execute("DELETE FROM email_templates WHERE key = $1", key)
+    await audit_log(actor, "email.template.delete", key, {"is_system": is_system})
+    return {"ok": True, "reverted_to_default": is_system}
+
+
+@api.post("/admin/emails/templates/{key}/test")
+async def admin_email_template_test(key: str, body: EmailTemplateTestIn,
+                                    actor: str = Depends(require_perm("email")),
+                                    _rl: None = Depends(rate_limit(20, 60))):
+    settings = await _email_branding()
+    if key in email_templates.SYSTEM_TEMPLATES:
+        row = await db.fetch_one("SELECT fields FROM email_templates WHERE key = $1", key)
+        overrides = (row or {}).get("fields") or {}
+        render_fn = getattr(email_templates, f"render_{key}")
+        sample = _SAMPLE_EMAIL_PAYLOADS.get(key, {})
+        subject, html_out, text_out = render_fn(sample, settings, overrides)
+    else:
+        row = await db.fetch_one(
+            "SELECT subject, body_html FROM email_templates WHERE key = $1 AND NOT is_system", key)
+        if not row:
+            raise HTTPException(404, "Template not found")
+        ctx = {"name": "Test User", "email": body.email}
+        subject = email_templates._merge(row["subject"], ctx, escape=False)
+        _, html_out, text_out = email_templates.render_custom_email(
+            subject=subject, content_html=row["body_html"], template="standard",
+            settings=settings, recipient_name="Test User")
+    res = await email_sender.send_email([body.email], subject, html_out, text_out,
+                                        type_="template_test", sent_by=actor)
+    await audit_log(actor, "email.template.test", key, {"to": body.email})
+    if not res["success"]:
+        raise HTTPException(502, res.get("error") or "Test send failed")
+    return {"ok": True}
 
 
 # ── Campaigns ────────────────────────────────────────────────────────────────

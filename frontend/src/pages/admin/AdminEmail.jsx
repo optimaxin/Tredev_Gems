@@ -4,14 +4,15 @@ import { toast } from "sonner";
 import ReactQuill from "react-quill-new";
 import "react-quill-new/dist/quill.snow.css";
 import {
-  EnvelopeSimple, PaperPlaneTilt, MegaphoneSimple, ClockCounterClockwise,
-  CaretLeft, CaretRight, X, ArrowClockwise, Pause, Play,
+  EnvelopeSimple, PaperPlaneTilt, MegaphoneSimple, ClockCounterClockwise, Notepad,
+  CaretLeft, CaretRight, X, ArrowClockwise, Pause, Play, PlusCircle, Trash, PencilSimple,
 } from "@phosphor-icons/react";
 import SearchBar from "@/components/gemora/SearchBar";
 import AsyncButton from "@/components/gemora/AsyncButton";
 
 const TABS = [
   { key: "compose", label: "Compose", Icon: PaperPlaneTilt },
+  { key: "templates", label: "Templates", Icon: Notepad },
   { key: "campaigns", label: "Campaigns", Icon: MegaphoneSimple },
   { key: "logs", label: "Logs", Icon: ClockCounterClockwise },
 ];
@@ -358,6 +359,227 @@ function CampaignWizard({ onCreated }) {
   );
 }
 
+// ── Templates ────────────────────────────────────────────────────────────────
+function fieldLabel(key) {
+  return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function TemplateEditModal({ tpl, meta, onClose, onSaved }) {
+  const isSystem = tpl.is_system;
+  const [fields, setFields] = useState(() => ({ ...(tpl.field_defaults || {}), ...(tpl.fields || {}) }));
+  const [name, setName] = useState(tpl.name || "");
+  const [category, setCategory] = useState(tpl.category || "transactional");
+  const [subject, setSubject] = useState(tpl.subject || "");
+  const [bodyHtml, setBodyHtml] = useState(tpl.body_html || "");
+  const [enabled, setEnabled] = useState(tpl.enabled !== false);
+  const [testEmail, setTestEmail] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const isNew = tpl.key == null;
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      if (isNew) {
+        await api.post("/admin/emails/templates", { name, category, subject, body_html: bodyHtml });
+        toast.success("Template created");
+      } else if (isSystem) {
+        await api.put(`/admin/emails/templates/${tpl.key}`, { fields, enabled });
+        toast.success("Template updated");
+      } else {
+        await api.put(`/admin/emails/templates/${tpl.key}`, { name, category, subject, body_html: bodyHtml, enabled });
+        toast.success("Template updated");
+      }
+      onSaved();
+      onClose();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Could not save template");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const sendTest = async () => {
+    if (!testEmail.includes("@")) { toast.error("Enter a valid email"); return; }
+    setTesting(true);
+    try {
+      await api.post(`/admin/emails/templates/${tpl.key}/test`, { email: testEmail });
+      toast.success(`Test sent to ${testEmail}`);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Test send failed");
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-ink/40" onClick={onClose} />
+      <div className="relative gold-line-strong bg-ivory p-6 max-w-2xl w-full max-h-[85vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-display text-2xl text-ink">{isNew ? "New Template" : tpl.name}</h2>
+          <button onClick={onClose} className="text-ink-muted hover:text-maroon"><X size={18} /></button>
+        </div>
+
+        {isSystem && (
+          <div className="mb-4 text-xs text-ink-muted gold-line bg-cream p-3">
+            <div>Sent to: {tpl.to}</div>
+            <div>Fires on: {tpl.trigger_event}</div>
+            {tpl.note && <div className="mt-1 text-revoked">{tpl.note}</div>}
+          </div>
+        )}
+
+        {!isSystem && (
+          <div className="space-y-3 mb-4">
+            <input placeholder="Template name" value={name} onChange={(e) => setName(e.target.value)}
+              className="w-full gold-line px-3 py-2 bg-cream text-sm" />
+            <select value={category} onChange={(e) => setCategory(e.target.value)}
+              className="gold-line bg-cream px-3 py-2 text-sm">
+              {(meta?.categories || []).map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <input placeholder="Subject" value={subject} onChange={(e) => setSubject(e.target.value)}
+              className="w-full gold-line px-3 py-2 bg-cream text-sm" />
+            <div className="bg-cream gold-line">
+              <ReactQuill theme="snow" value={bodyHtml} onChange={setBodyHtml} />
+            </div>
+          </div>
+        )}
+
+        {isSystem && (
+          <div className="space-y-3 mb-4">
+            {Object.keys(tpl.field_defaults || {}).map((k) => (
+              <label key={k} className="block">
+                <div className="text-xs uppercase tracking-widest text-ink-muted mb-1">{fieldLabel(k)}</div>
+                {k === "greeting" || k === "footer_note" || k === "body_note" || k === "prep_tips" || k === "affiliate_intro" || k === "intro" ? (
+                  <textarea value={fields[k] || ""} onChange={(e) => setFields((f) => ({ ...f, [k]: e.target.value }))}
+                    rows={2} className="w-full gold-line px-3 py-2 bg-cream text-sm" />
+                ) : (
+                  <input value={fields[k] || ""} onChange={(e) => setFields((f) => ({ ...f, [k]: e.target.value }))}
+                    className="w-full gold-line px-3 py-2 bg-cream text-sm" />
+                )}
+              </label>
+            ))}
+            <label className="flex items-center gap-2 text-sm mt-2">
+              <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+              Enabled — uncheck to stop this email from sending at all
+            </label>
+          </div>
+        )}
+
+        {!isNew && (
+          <div className="flex items-center gap-2 mb-4 gold-line bg-cream p-3">
+            <input placeholder="Send a test to…" value={testEmail} onChange={(e) => setTestEmail(e.target.value)}
+              className="flex-1 gold-line px-3 py-2 bg-ivory text-sm" />
+            <AsyncButton onClick={sendTest} loading={testing} loadingText="Sending…"
+              className="px-4 py-2 text-xs border border-gold/40 hover:border-maroon whitespace-nowrap">
+              Send Test
+            </AsyncButton>
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 text-sm text-ink-soft">Cancel</button>
+          <AsyncButton onClick={save} loading={saving} loadingText="Saving…"
+            className="brand-gradient text-white px-6 py-2 text-sm font-medium">
+            {isNew ? "Create" : "Save"}
+          </AsyncButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Templates() {
+  const [rows, setRows] = useState([]);
+  const [meta, setMeta] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    Promise.all([api.get("/admin/emails/templates"), api.get("/admin/emails/meta")])
+      .then(([t, m]) => { setRows(t.data || []); setMeta(m.data); })
+      .catch(() => toast.error("Could not load templates"))
+      .finally(() => setLoading(false));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const toggleEnabled = async (row) => {
+    try {
+      await api.put(`/admin/emails/templates/${row.key}`, { enabled: !row.enabled });
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Could not update");
+    }
+  };
+
+  const remove = async (row) => {
+    try {
+      await api.delete(`/admin/emails/templates/${row.key}`);
+      toast.success(row.is_system ? "Reset to default" : "Template deleted");
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Could not delete");
+    }
+  };
+
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-4">
+        <p className="text-sm text-ink-muted max-w-lg">
+          System templates fire automatically — edit their copy or turn them off.
+          Custom templates are reusable drafts for the Compose tab.
+        </p>
+        <button onClick={() => setEditing({ key: null, is_system: false, category: "transactional" })}
+          className="flex items-center gap-1.5 brand-gradient text-white px-4 py-2 text-sm font-medium whitespace-nowrap">
+          <PlusCircle size={16} /> New Template
+        </button>
+      </div>
+      <div className="gold-line bg-ivory overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-cream">
+            <tr>
+              {["Name", "Type", "Category", "Status", ""].map((h) => (
+                <th key={h} className="text-xs uppercase tracking-widest text-ink-muted text-left px-4 py-3">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.key} className="border-t border-gold/20">
+                <td className="px-4 py-3">{r.name}</td>
+                <td className="px-4 py-3">{r.is_system ? "System" : "Custom"}</td>
+                <td className="px-4 py-3 capitalize">{r.category}</td>
+                <td className="px-4 py-3">
+                  <button onClick={() => toggleEnabled(r)}
+                    className={r.enabled ? "text-verified" : "text-revoked"}>
+                    {r.enabled ? "Enabled" : "Disabled"}
+                  </button>
+                </td>
+                <td className="px-4 py-3 flex items-center gap-3">
+                  <button onClick={() => setEditing(r)} className="text-ink-muted hover:text-maroon">
+                    <PencilSimple size={16} />
+                  </button>
+                  <button onClick={() => remove(r)} className="text-ink-muted hover:text-revoked"
+                    title={r.is_system ? "Reset to default" : "Delete"}>
+                    <Trash size={16} />
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {!loading && rows.length === 0 && (
+              <tr><td colSpan={5} className="px-4 py-12 text-center text-ink-muted">No templates yet.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      {editing && (
+        <TemplateEditModal tpl={editing} meta={meta} onClose={() => setEditing(null)} onSaved={load} />
+      )}
+    </div>
+  );
+}
+
 function Campaigns() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -538,7 +760,9 @@ function Logs() {
 // ── Shell ───────────────────────────────────────────────────────────────────
 export default function AdminEmail() {
   const [tab, setTab] = useState("compose");
-  const Body = useMemo(() => ({ compose: <Compose />, campaigns: <Campaigns />, logs: <Logs /> }), []);
+  const Body = useMemo(() => ({
+    compose: <Compose />, templates: <Templates />, campaigns: <Campaigns />, logs: <Logs />,
+  }), []);
 
   return (
     <div>
