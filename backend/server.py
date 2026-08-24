@@ -1,5 +1,5 @@
 """
-Tredev Backend — Trust-first spiritual commerce.
+Tredeva Backend — Trust-first spiritual commerce.
 Single-file FastAPI app. Prefixes all routes with /api.
 """
 from __future__ import annotations
@@ -993,7 +993,7 @@ def _cors_origins() -> list[str]:
     return raw
 
 
-app = FastAPI(title="Tredev")
+app = FastAPI(title="Tredeva")
 api = APIRouter(prefix="/api")
 
 # ── Rate limiting ─────────────────────────────────────────────────────────────
@@ -1053,7 +1053,7 @@ async def _shutdown():
 # ── Meta ──────────────────────────────────────────────────────────────────────
 @api.get("/")
 async def root():
-    return {"app": "Tredev", "public_key_ed25519_hex": ED25519_PUBLIC_HEX}
+    return {"app": "Tredeva", "public_key_ed25519_hex": ED25519_PUBLIC_HEX}
 
 
 @app.api_route("/health", methods=["GET", "HEAD"])
@@ -1968,7 +1968,7 @@ _DEFAULT_ANNOUNCEMENT = {"messages": [
     {"text": "5% prepaid discount · WhatsApp assistance daily 9–9", "deva": "छूट"},
 ]}
 _DEFAULT_FOOTER = {
-    "brand": "Tredev", "devanagari": "रत्न · प्रमाण · परंपरा",
+    "brand": "Tredeva", "devanagari": "रत्न · प्रमाण · परंपरा",
     "description": "A first-party house for authentic spiritual products. Every serialised item carries a cryptographically signed provenance chain — a claim you can verify with a public key.",
     "badge": "Ed25519-signed certificates",
     "columns": [
@@ -2071,7 +2071,7 @@ _DEFAULT_HOME = {
     "house": {
         "eyebrow": "The house · घर",
         "title": "Sourced by hand.\nSigned by us.",
-        "body": "Our team walks the same mines in Ceylon, the same tantric ateliers in Kanchi, the same forests of Kathmandu that families have visited for generations. Every unit is intake-photographed, weighed, X-rayed where needed, and stored in the Tredev vault before it's ever offered for sale.",
+        "body": "Our team walks the same mines in Ceylon, the same tantric ateliers in Kanchi, the same forests of Kathmandu that families have visited for generations. Every unit is intake-photographed, weighed, X-rayed where needed, and stored in the Tredeva vault before it's ever offered for sale.",
         "bullets": [
             "First-party: we own every SKU we sell.",
             "Serialised: every unit gets a fingerprint.",
@@ -2091,7 +2091,7 @@ _DEFAULT_HOME = {
     "posts": [
         {"title": "How to wear a Yellow Sapphire (Pukhraj) — a complete guide", "tag": "Guides", "link": ""},
         {"title": "Rudraksha mukhi meanings — 1 through 21", "tag": "Rudraksha", "link": ""},
-        {"title": "Why Tredev signs every certificate with Ed25519", "tag": "Trust", "link": ""},
+        {"title": "Why Tredeva signs every certificate with Ed25519", "tag": "Trust", "link": ""},
     ],
     "trustBadges": [
         {"abbr": "GJEPC", "name": "Gem & Jewellery Export Promotion Council"},
@@ -2106,7 +2106,7 @@ _DEFAULT_HOME = {
         {"name": "Blinkit", "url": ""},
     ],
     "faq": [
-        {"q": "How can I verify a Tredev certificate is real?", "a": "Every certificate we issue is a canonical JSON payload signed with our Ed25519 private key. Our public key is published on our /api/ endpoint. Scan the QR on your certificate — it opens a verification page that recomputes the SHA-256 hash and checks the signature. You can independently verify the signature with any Ed25519 library."},
+        {"q": "How can I verify a Tredeva certificate is real?", "a": "Every certificate we issue is a canonical JSON payload signed with our Ed25519 private key. Our public key is published on our /api/ endpoint. Scan the QR on your certificate — it opens a verification page that recomputes the SHA-256 hash and checks the signature. You can independently verify the signature with any Ed25519 library."},
         {"q": "Are the gemstones lab-certified?", "a": "Yes. Every gemstone we sell carries a lab report from a GJEPC-affiliated laboratory (GJEPC, GIL, GJC or equivalent). The report number is embedded in the certificate and attached to the item's QR page."},
         {"q": "What is 'temple energisation'?", "a": "We take every high-value stone or rudraksha to a partner temple where a priest performs a puja on your item. We record the puja (audio) and the priest signs the energisation record. It's not required for authenticity — it's a service for buyers who want it done reverently."},
         {"q": "Why is the QR sometimes 'SUSPICIOUS'?", "a": "Because we mint the QR when the certificate is issued but only ACTIVATE it once your order is marked delivered. If someone printed a fake label off the internet and you scanned it before then, it correctly reads suspicious. It's how a public scan can flag a fake before your parcel is even confirmed in your hands."},
@@ -2234,7 +2234,7 @@ _DEFAULT_HEADER = {
         ]},
     ],
     "promo": {
-        "eyebrow": "The Tredev promise", "title": "Every item, provably real.",
+        "eyebrow": "The Tredeva promise", "title": "Every item, provably real.",
         "body": "Serialised. Certified. Ed25519 signed. Scan the QR — verify anywhere.",
         "cta_label": "Verify a stone", "cta_href": "/verify",
     },
@@ -2260,15 +2260,15 @@ _DEFAULT_CONTACT_US = {
 }
 _DEFAULT_PRIVACY_POLICY = {
     "title": "Privacy Policy", "effective_date": "5 August 2026",
-    "intro": "This Privacy Policy explains what personal information Tredev collects, why, and how you can control it. By using this website you agree to the practices described here.",
+    "intro": "This Privacy Policy explains what personal information Tredeva collects, why, and how you can control it. By using this website you agree to the practices described here.",
     "html": (
         '<h2 id="who-we-are">Who we are</h2>'
-        '<p>Tredev (“<strong>we</strong>”, “<strong>us</strong>”, “<strong>our</strong>”) is a website and '
+        '<p>Tredeva (“<strong>we</strong>”, “<strong>us</strong>”, “<strong>our</strong>”) is a website and '
         'service operated by <strong>OptiMaxin Solutions Private Limited</strong> (“the Company”), a '
         'company incorporated under the Companies Act, 2013 (CIN: <strong>U62013UP2024PTC211889</strong>), '
         'with its registered/correspondence address at 221A, Nalanda Town, Shamshabad Road, Agra, Uttar '
         'Pradesh – 282001, India.</p>'
-        '<p>This Privacy Policy applies to the Tredev website, our ordering and account systems, our free '
+        '<p>This Privacy Policy applies to the Tredeva website, our ordering and account systems, our free '
         'astrology tools (Lucky Rudraksha finder, Carat ↔ Ratti converter), and our consultation booking '
         'service.</p>'
         '<h2 id="information-we-collect">Information we collect</h2>'
@@ -2293,7 +2293,7 @@ _DEFAULT_PRIVACY_POLICY = {
         '<li>To understand, in aggregate, how the site is used, so we can improve it.</li>'
         '</ul>'
         '<h2 id="sharing-with-third-parties">Sharing with third parties</h2>'
-        '<p>We do not sell your personal information. We share it only with the service providers who help us run Tredev, each engaged only for the purpose stated:</p>'
+        '<p>We do not sell your personal information. We share it only with the service providers who help us run Tredeva, each engaged only for the purpose stated:</p>'
         '<ul>'
         '<li><strong>Firebase (Google)</strong> — phone OTP delivery and Google sign-in.</li>'
         '<li><strong>Razorpay</strong>, and where applicable other RBI-authorised payment aggregators — to process your payment. We never see or store your full card number.</li>'
@@ -2309,7 +2309,7 @@ _DEFAULT_PRIVACY_POLICY = {
         'your account or orders.</p>'
         '<h2 id="payment-information">Payment information</h2>'
         '<p>All payments are processed by our payment gateway partner(s) (currently Razorpay) on their own '
-        'PCI-DSS-compliant systems. Tredev never receives or stores your full card number, CVV, or '
+        'PCI-DSS-compliant systems. Tredeva never receives or stores your full card number, CVV, or '
         'net-banking password — we only receive confirmation that a payment succeeded or failed, plus a '
         'reference ID for support purposes.</p>'
         '<h2 id="data-retention">Data retention</h2>'
@@ -2331,7 +2331,7 @@ _DEFAULT_PRIVACY_POLICY = {
         '<li>Withdraw consent for optional data uses (like the astrology tools) simply by not using those features.</li>'
         '</ul>'
         '<h2 id="childrens-privacy">Children’s privacy</h2>'
-        '<p>Tredev is intended for users who are 18 years of age or older, or who are using the site with the '
+        '<p>Tredeva is intended for users who are 18 years of age or older, or who are using the site with the '
         'involvement of a parent or guardian for the purpose of placing an order or entering into a payment. '
         'We do not knowingly collect personal information from children. If you believe a child has provided '
         'us with personal data, please contact our Grievance Officer and we will remove it.</p>'
@@ -2340,7 +2340,7 @@ _DEFAULT_PRIVACY_POLICY = {
         'law changes. We’ll update the “Effective” date at the top of this page, and for material changes, '
         'we’ll make reasonable efforts to let you know (such as an email or an on-site notice).</p>'
         '<h2 id="grievance-officer">Grievance Officer</h2>'
-        '<p>In accordance with the Information Technology Act, 2000 and the rules made thereunder, the Grievance Officer for Tredev is:</p>'
+        '<p>In accordance with the Information Technology Act, 2000 and the rules made thereunder, the Grievance Officer for Tredeva is:</p>'
         '<p><strong>Lubhansh Sharma</strong><br>'
         'OptiMaxin Solutions Private Limited<br>'
         '221A, Nalanda Town, Shamshabad Road, Agra, Uttar Pradesh – 282001, India<br>'
@@ -2355,12 +2355,12 @@ _DEFAULT_PRIVACY_POLICY = {
 }
 _DEFAULT_TERMS_CONDITIONS = {
     "title": "Terms & Conditions", "effective_date": "5 August 2026",
-    "intro": "These Terms & Conditions govern your access to and use of the Tredev website and services, operated by OptiMaxin Solutions Private Limited. By using the Services, you agree to be bound by them.",
+    "intro": "These Terms & Conditions govern your access to and use of the Tredeva website and services, operated by OptiMaxin Solutions Private Limited. By using the Services, you agree to be bound by them.",
     "html": (
         '<h2 id="acceptance-of-terms">Acceptance of terms</h2>'
         '<p>These Terms &amp; Conditions (“Terms”) are a binding agreement between you and '
         '<strong>OptiMaxin Solutions Private Limited</strong> (“Company”, “we”, “us”), which operates the '
-        'Tredev website, app, and related services (together, the “Services”). By browsing the site, creating '
+        'Tredeva website, app, and related services (together, the “Services”). By browsing the site, creating '
         'an account, booking a consultation, or placing an order, you agree to these Terms and to our '
         '<a href="/privacy-policy">Privacy Policy</a>. If you do not agree, please do '
         'not use the Services.</p>'
@@ -2449,7 +2449,7 @@ _DEFAULT_REFUNDS_CANCELLATIONS = {
     "html": (
         '<h2 id="overview">Overview</h2>'
         '<p>This policy explains when you can cancel an order, when you can return a delivered item, and how '
-        'refunds are processed. It applies to all orders placed on the Tredev website. For general terms, '
+        'refunds are processed. It applies to all orders placed on the Tredeva website. For general terms, '
         'see our <a href="/terms-and-conditions">Terms &amp; Conditions</a>.</p>'
         '<h2 id="cancelling-an-order">Cancelling an order</h2>'
         '<ul>'
@@ -2736,9 +2736,9 @@ async def _email_branding() -> dict:
     """invoice_settings, but with trade_name overridden to EMAIL_FROM_NAME.
 
     Emails and tax invoices intentionally show different names: an invoice is a
-    legal document and keeps trade_name ("Tredev Gems") as registered; customer
+    legal document and keeps trade_name ("Tredeva Gems") as registered; customer
     emails use whatever the storefront is actually branded as (EMAIL_FROM_NAME,
-    "Tredev Store") — same knob that already controls the email's From header,
+    "Tredeva Store") — same knob that already controls the email's From header,
     so there's one source of truth for "what recipients see this store called
     as" instead of two settings drifting apart."""
     settings = await _invoice_settings()
@@ -3540,7 +3540,7 @@ async def _issue_certificate_tx(conn, unit: dict, body, issued_by_user_id: str) 
         "pooja_recording_url": body.pooja_recording_url,
         "mantra": body.mantra,
         "issued_at": iso(now()),
-        "issuer": "Tredev",
+        "issuer": "Tredeva",
         "public_key_hex": ED25519_PUBLIC_HEX,
     }
     chash = content_hash(payload)
@@ -3556,7 +3556,7 @@ async def _issue_certificate_tx(conn, unit: dict, body, issued_by_user_id: str) 
         await conn.execute(
             """INSERT INTO signing_keys (id, kid, algorithm, public_key, is_active)
                VALUES ($1,$2,'ed25519',$3,true)""",
-            signing_key_id, f"tredev-ed25519-{str(signing_key_id)[:8]}",
+            signing_key_id, f"tredeva-ed25519-{str(signing_key_id)[:8]}",
             ED25519_PUBLIC_HEX)
 
     # Mongo inlined lab/temple/priest on the certificate; here they're their own rows.
@@ -3603,7 +3603,7 @@ async def _issue_certificate_tx(conn, unit: dict, body, issued_by_user_id: str) 
                 issuing_authority, issued_by_user_id, issued_at, lab_certification_id,
                 energization_certificate_id, temple_id, signing_key_id, signed_payload,
                 content_hash, signature, verify_code)
-           VALUES ($1,$2::uuid,$3,'Tredev',$4::uuid, now(),$5,$6,$7,$8,$9,$10,$11,$12)""",
+           VALUES ($1,$2::uuid,$3,'Tredeva',$4::uuid, now(),$5,$6,$7,$8,$9,$10,$11,$12)""",
         cert_id, unit["unit_id"], f"TDV-{secrets.token_hex(4).upper()}", issued_by_user_id,
         lab_id, en_id, temple_id, signing_key_id, payload, chash, signature,
         short_code(chash))
@@ -3744,14 +3744,14 @@ def _shape_cert(row: dict) -> dict:
 async def verify(qr_token: str):
     row = await db.fetch_one(_CERT_SELECT + " WHERE q.token = $1", qr_token)
     if not row:
-        return {"status": "SUSPICIOUS", "reason": "Unknown QR token — this label does not exist in Tredev's records."}
+        return {"status": "SUSPICIOUS", "reason": "Unknown QR token — this label does not exist in Tredeva's records."}
     cert = _shape_cert(row)
     if cert["revoked"]:
         return {"status": "REVOKED", "reason": "This certificate was revoked (returned/refunded unit).", "cert": cert}
     if not cert["activated"]:
         return {
             "status": "SUSPICIOUS",
-            "reason": "This QR was minted but the physical unit has not been dispatched by Tredev yet. If you're seeing this in the wild, it likely isn't the real stone.",
+            "reason": "This QR was minted but the physical unit has not been dispatched by Tredeva yet. If you're seeing this in the wild, it likely isn't the real stone.",
             "cert": {k: v for k, v in cert.items() if k in {"serial", "product_name", "issued_at"}},
         }
 
@@ -6742,7 +6742,7 @@ async def admin_create_staff(body: StaffCreateIn, actor: str = Depends(require_o
     if phone:
         try:
             invite_text = (
-                f"You've been added as staff on Tredev Gems.\n"
+                f"You've been added as staff on Tredeva Gems.\n"
                 f"Name: {body.name}\nEmail: {body.email.lower()}\n"
                 f"Temporary password: {temp_pw}\n"
                 f"Login: {login_url or 'https://gemora.in/login'}")
@@ -9155,12 +9155,12 @@ async def meta_whatsapp_webhook(request: Request):
 # copy those into Supabase, where any staff member holding the `whatsapp` permission
 # could read them. So a chat is mirrored ONLY when:
 #     * it is not a group, AND
-#     * its number matches a Tredev user (users.phone)
+#     * its number matches a Tredeva user (users.phone)
 # Everything else is delivered, acted on, and dropped — never written to the DB.
 # _wa_should_mirror() is the single place to change this rule.
 
 async def _wa_should_mirror(chat_id: str) -> Optional[str]:
-    """Return the Tredev user_id this chat belongs to, or None if it must not be stored."""
+    """Return the Tredeva user_id this chat belongs to, or None if it must not be stored."""
     if wa_openwa.is_group(chat_id):
         return None
     phone = wa_openwa.phone_from_chat_id(chat_id)
@@ -9901,7 +9901,7 @@ async def admin_email_diagnose(_: str = Depends(require_perm("email"))):
         return {"ok": False, "error": "ZEPTOMAIL_TOKEN / EMAIL_FROM_ADDRESS not both set"}
     t0 = time.time()
     res = await email_sender.send_email(
-        [email_sender.EMAIL_FROM_ADDRESS], "Tredev Store — email connectivity test",
+        [email_sender.EMAIL_FROM_ADDRESS], "Tredeva Store — email connectivity test",
         "<p>This is a test email from the admin “Send test email to self” button. "
         "If you're reading this, sending works.</p>",
         "This is a test email from the admin 'Send test email to self' button. If you're reading this, sending works.",
@@ -10332,7 +10332,7 @@ async def email_unsubscribe(token: str):
            ON CONFLICT (identifier, channel) DO NOTHING""", address)
     return FastAPIResponse(
         content="<html><body style='font-family:sans-serif;padding:40px;text-align:center'>"
-                "<h2>You've been unsubscribed from Tredev Store marketing emails.</h2>"
+                "<h2>You've been unsubscribed from Tredeva Store marketing emails.</h2>"
                 "<p>You'll still receive emails about your own orders and bookings.</p></body></html>",
         media_type="text/html")
 

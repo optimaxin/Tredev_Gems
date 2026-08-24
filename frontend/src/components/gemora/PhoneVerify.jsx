@@ -196,7 +196,7 @@ export default function PhoneVerify({ open = true, onClose, onVerified, prefillP
           <span className="font-serifd text-xl">Phone verification unavailable</span>
         </div>
         <p className="mt-4 text-sm text-ink-soft">
-          Firebase Phone Auth is not configured on this deployment. Please contact Tredev support to complete your sign-up or sign-in.
+          Firebase Phone Auth is not configured on this deployment. Please contact Tredeva support to complete your sign-up or sign-in.
         </p>
         <p className="mt-3 text-[11px] text-ink-muted">
           (Administrator: set the <code className="font-mono">REACT_APP_FIREBASE_*</code> environment variables and redeploy.)

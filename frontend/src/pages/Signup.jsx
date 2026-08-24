@@ -58,7 +58,7 @@ export default function Signup() {
       });
       localStorage.setItem("gemora_jwt", data.token);
       await refresh();
-      toast.success("Welcome to Tredev");
+      toast.success("Welcome to Tredeva");
       nav(dest);
     } catch (err) {
       toast.error(err.response?.data?.detail || "Signup failed");
@@ -108,7 +108,7 @@ export default function Signup() {
                 className="mt-0.5 w-4 h-4 accent-maroon shrink-0"
               />
               <span className="text-xs text-ink-soft leading-relaxed">
-                I agree to Tredev's{" "}
+                I agree to Tredeva's{" "}
                 <Link to="/terms-and-conditions" target="_blank" rel="noreferrer" className="text-maroon underline decoration-gold-soft">Terms &amp; Conditions</Link>
                 {" "}and{" "}
                 <Link to="/privacy-policy" target="_blank" rel="noreferrer" className="text-maroon underline decoration-gold-soft">Privacy Policy</Link>.

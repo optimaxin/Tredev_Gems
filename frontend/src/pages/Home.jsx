@@ -87,7 +87,7 @@ const DEFAULT_HOME = {
   ],
   house: {
     eyebrow: "The house · घर", title: "Sourced by hand.\nSigned by us.",
-    body: "Our team walks the same mines in Ceylon, the same tantric ateliers in Kanchi, the same forests of Kathmandu that families have visited for generations. Every unit is intake-photographed, weighed, X-rayed where needed, and stored in the Tredev vault before it's ever offered for sale.",
+    body: "Our team walks the same mines in Ceylon, the same tantric ateliers in Kanchi, the same forests of Kathmandu that families have visited for generations. Every unit is intake-photographed, weighed, X-rayed where needed, and stored in the Tredeva vault before it's ever offered for sale.",
     bullets: [
       "First-party: we own every SKU we sell.",
       "Serialised: every unit gets a fingerprint.",
@@ -104,7 +104,7 @@ const DEFAULT_HOME = {
   posts: [
     { title: "How to wear a Yellow Sapphire (Pukhraj) — a complete guide", tag: "Guides", body: "" },
     { title: "Rudraksha mukhi meanings — 1 through 21", tag: "Rudraksha", body: "" },
-    { title: "Why Tredev signs every certificate with Ed25519", tag: "Trust", body: "" },
+    { title: "Why Tredeva signs every certificate with Ed25519", tag: "Trust", body: "" },
   ],
   trustBadges: [
     { abbr: "GJEPC", name: "Gem & Jewellery Export Promotion Council" },
@@ -119,7 +119,7 @@ const DEFAULT_HOME = {
     { name: "Blinkit", url: "" },
   ],
   faq: [
-    { q: "How can I verify a Tredev certificate is real?", a: "Every certificate we issue is a canonical JSON payload signed with our Ed25519 private key. Our public key is published on our /api/ endpoint. Scan the QR on your certificate — it opens a verification page that recomputes the SHA-256 hash and checks the signature. You can independently verify the signature with any Ed25519 library." },
+    { q: "How can I verify a Tredeva certificate is real?", a: "Every certificate we issue is a canonical JSON payload signed with our Ed25519 private key. Our public key is published on our /api/ endpoint. Scan the QR on your certificate — it opens a verification page that recomputes the SHA-256 hash and checks the signature. You can independently verify the signature with any Ed25519 library." },
     { q: "Are the gemstones lab-certified?", a: "Yes. Every gemstone we sell carries a lab report from a GJEPC-affiliated laboratory (GJEPC, GIL, GJC or equivalent). The report number is embedded in the certificate and attached to the item's QR page." },
     { q: "What is 'temple energisation'?", a: "We take every high-value stone or rudraksha to a partner temple where a priest performs a puja on your item. We record the puja (audio) and the priest signs the energisation record. It's not required for authenticity — it's a service for buyers who want it done reverently." },
     { q: "Why is the QR sometimes 'SUSPICIOUS'?", a: "Because we mint the QR when the certificate is issued but only ACTIVATE it once your order is marked delivered. If someone printed a fake label off the internet and you scanned it before then, it correctly reads suspicious. It's how a public scan can flag a fake before your parcel is even confirmed in your hands." },
@@ -332,7 +332,7 @@ export default function Home() {
       </section>
 
       {/* LEDGER — the numbers, set like a colophon */}
-      <section className="bg-ivory border-b border-gold/30 py-14" aria-label="Tredev in numbers">
+      <section className="bg-ivory border-b border-gold/30 py-14" aria-label="Tredeva in numbers">
         <div className="mx-auto max-w-7xl px-6 lg:px-10 grid grid-cols-2 lg:grid-cols-4 gap-y-10 gap-x-6">
           {(home.stats || []).map((s, i) => (
             <Reveal key={s.label + i} delay={i * 0.08}>
@@ -495,7 +495,7 @@ export default function Home() {
               style={{ background: "radial-gradient(circle, rgba(242,140,40,0.35) 0%, rgba(212,175,55,0.12) 45%, transparent 70%)" }} />
             <img
               src="/ambassador/founder.v1.webp"
-              alt="Shri Raghavendra, Tredev's founder & guide"
+              alt="Shri Raghavendra, Tredeva's founder & guide"
               className="relative z-10 w-auto h-[300px] sm:h-[360px] lg:h-[440px] object-contain object-bottom drop-shadow-[0_20px_40px_rgba(0,0,0,0.45)]"
               loading="lazy"
             />
@@ -588,7 +588,7 @@ export default function Home() {
             <div className="text-xs uppercase tracking-[0.3em] text-gold">The one thing no one else does</div>
             <h2 className="font-display text-4xl md:text-5xl mt-4 leading-tight">A public key you can check<br /> against, from anywhere.</h2>
             <p className="mt-6 text-ivory/85 leading-relaxed max-w-xl">
-              Our certificates are canonical JSON payloads signed with an Ed25519 private key kept behind a vault. Anyone — you, a jeweller, an appraiser — can independently verify a Tredev certificate using the public key.
+              Our certificates are canonical JSON payloads signed with an Ed25519 private key kept behind a vault. Anyone — you, a jeweller, an appraiser — can independently verify a Tredeva certificate using the public key.
             </p>
             <Link to="/verify" className="mt-8 inline-flex items-center gap-2 border border-gold text-gold px-6 py-3 text-sm uppercase tracking-widest hover:bg-gold hover:text-maroon-deep transition-colors" data-testid="home-verify-strip">
               <QrCode size={16} weight="duotone" /> Try the verify page
@@ -597,7 +597,7 @@ export default function Home() {
           <div className="lg:col-span-6">
             <div className="border border-gold/40 p-8 bg-maroon-deep/60 backdrop-blur">
               <div className="flex items-center justify-between">
-                <div className="text-xs font-mono tracking-widest text-gold">TREDEV://verify</div>
+                <div className="text-xs font-mono tracking-widest text-gold">TREDEVA://verify</div>
                 <div className="text-verified text-xs font-mono">● AUTHENTIC</div>
               </div>
               <div className="mt-6 grid grid-cols-2 gap-6 text-sm">
@@ -679,7 +679,7 @@ export default function Home() {
             </button>
             <iframe
               src={toEmbedUrl(home.house?.video_url)}
-              title="Tredev — sourced by hand"
+              title="Tredeva — sourced by hand"
               className="w-full h-full"
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
               allowFullScreen
@@ -725,7 +725,7 @@ export default function Home() {
         <div className="flex items-end justify-between mb-10">
           <div>
             <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">Read · पढ़ें</div>
-            <h2 className="font-display text-4xl md:text-5xl text-ink mt-2">From the Tredev journal</h2>
+            <h2 className="font-display text-4xl md:text-5xl text-ink mt-2">From the Tredeva journal</h2>
           </div>
         </div>
         <div className="grid md:grid-cols-3 gap-6">
@@ -798,8 +798,8 @@ export default function Home() {
       {/* PROMISE — set as a magazine pull quote */}
       <section className="mx-auto max-w-4xl px-6 lg:px-10 py-24">
         <Reveal>
-          <PullQuote deva="न हि सत्यात् परो धर्मः" cite="The Tredev promise · There is no greater dharma than truth">
-            Tredev is not a marketplace. We source. We serialise. We certify. We ship — and if a
+          <PullQuote deva="न हि सत्यात् परो धर्मः" cite="The Tredeva promise · There is no greater dharma than truth">
+            Tredeva is not a marketplace. We source. We serialise. We certify. We ship — and if a
             stone we sold is ever proven inauthentic, we make it right. No exceptions.
           </PullQuote>
         </Reveal>
@@ -840,7 +840,7 @@ export default function Home() {
           ))}
         </div>
         <div className="mt-8 text-sm text-ink-soft max-w-2xl mx-auto">
-          Every Tredev certificate is additionally signed with a <span className="font-mono text-maroon">Ed25519</span> key. Verify our claim independently — no other retailer offers this.
+          Every Tredeva certificate is additionally signed with a <span className="font-mono text-maroon">Ed25519</span> key. Verify our claim independently — no other retailer offers this.
         </div>
       </section>
 

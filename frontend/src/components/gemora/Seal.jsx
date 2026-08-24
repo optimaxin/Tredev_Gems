@@ -3,7 +3,7 @@ import React, { useId, useMemo } from "react";
 /**
  * A premium, embossed wax-stamp authenticity seal with the verification code in the
  * centre. Layered like an engraved notarial seal: gold-gradient rings, a beaded
- * border, a slowly-turning guilloché (wavy engraving), curved "TREDEV · CERTIFIED"
+ * border, a slowly-turning guilloché (wavy engraving), curved "TREDEVA · CERTIFIED"
  * over the top and "AUTHENTICITY SEAL" under the bottom, and the code embossed in the
  * middle. `dark` styles it for a dark background.
  */
@@ -112,7 +112,7 @@ export default function Seal({ code, size = 116, dark = false }) {
 
       {/* curved labels */}
       <text fill={ink} fontSize={size * 0.066} fontWeight="600" letterSpacing="1.7" style={{ fontFamily: "Georgia, 'Cormorant Garamond', serif" }}>
-        <textPath href={`#top-${uid}`} startOffset="50%" textAnchor="middle">TREDEV · CERTIFIED</textPath>
+        <textPath href={`#top-${uid}`} startOffset="50%" textAnchor="middle">TREDEVA · CERTIFIED</textPath>
       </text>
       <text fill={ink} fontSize={size * 0.062} letterSpacing="2" style={{ fontFamily: "Georgia, 'Cormorant Garamond', serif" }}>
         <textPath href={`#bot-${uid}`} startOffset="50%" textAnchor="middle">AUTHENTICITY SEAL</textPath>

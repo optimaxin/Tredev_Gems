@@ -29,7 +29,7 @@ const SCOPES = [
 const AUDIENCES = [
   ["all_users", "All users", "Anyone with an account."],
   ["first_purchase", "First-time buyers only", "Rejected once the buyer has one paid order."],
-  ["employees", "Tredev employees only", "Add staff to the list after saving."],
+  ["employees", "Tredeva employees only", "Add staff to the list after saving."],
   ["specific_users", "Specific users only", "Add the exact accounts after saving."],
 ];
 

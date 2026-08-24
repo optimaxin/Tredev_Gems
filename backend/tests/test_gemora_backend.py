@@ -1,4 +1,4 @@
-"""Tredev end-to-end backend tests (pytest).
+"""Tredeva end-to-end backend tests (pytest).
 
 All in ONE class so pytest-xdist loadscope keeps sequential state on a single worker.
 Tests are ordered by name; the file uses `pytest -p ordering` if needed, but the
@@ -30,7 +30,7 @@ def _get(path, headers=None, cookies=None, params=None):
 
 
 class TestGemora:
-    """Full Tredev lifecycle: seed → auth → catalog → verify → cart → checkout → dispatch → revoke."""
+    """Full Tredeva lifecycle: seed → auth → catalog → verify → cart → checkout → dispatch → revoke."""
 
     S = {}  # class-level shared state
 
@@ -39,7 +39,7 @@ class TestGemora:
         r = _get("/")
         assert r.status_code == 200
         d = r.json()
-        assert d["app"] == "Tredev"
+        assert d["app"] == "Tredeva"
         assert isinstance(d.get("public_key_ed25519_hex"), str) and len(d["public_key_ed25519_hex"]) == 64
 
     def test_02_seed_idempotent(self):

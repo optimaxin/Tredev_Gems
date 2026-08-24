@@ -29,7 +29,7 @@ export default function AstrologerLogin() {
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <Sparkle size={40} weight="duotone" className="text-gold mx-auto" />
-          <div className="mt-3 text-xs uppercase tracking-[0.4em] text-gold-soft">Tredev · Astrologer</div>
+          <div className="mt-3 text-xs uppercase tracking-[0.4em] text-gold-soft">Tredeva · Astrologer</div>
           <h1 className="font-display text-4xl text-maroon-deep mt-2">Sign in</h1>
           <p className="text-sm text-ink-muted mt-2">Access your dashboard, consultations & affiliate earnings.</p>
         </div>
@@ -56,7 +56,7 @@ export default function AstrologerLogin() {
             Sign in
           </AsyncButton>
           <div className="text-xs text-ink-muted text-center">
-            No account yet? Contact Tredev admin — they'll send you a welcome link.
+            No account yet? Contact Tredeva admin — they'll send you a welcome link.
           </div>
         </form>
       </div>

@@ -7,7 +7,7 @@ import logo from "@/assets/logo.png";
 // Built-in defaults — used until the admin-edited footer (Admin → Website) loads, and
 // as a fallback for any field left blank.
 const DEFAULT_FOOTER = {
-  brand: "Tredev",
+  brand: "Tredeva",
   devanagari: "रत्न · प्रमाण · परंपरा",
   description: "A first-party house for authentic spiritual products. Every serialised item carries a cryptographically signed provenance chain — a claim you can verify with a public key.",
   badge: "Ed25519-signed certificates",

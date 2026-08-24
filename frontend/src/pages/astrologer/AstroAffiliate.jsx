@@ -23,7 +23,7 @@ export default function AstroAffiliate() {
     else window.prompt("Copy this link:", link);
   };
   const shareWA = () => {
-    const t = `✨ Get authentic gemstones & rudraksha at Tredev — hand-picked & certified. Use my link:\n${link}`;
+    const t = `✨ Get authentic gemstones & rudraksha at Tredeva — hand-picked & certified. Use my link:\n${link}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(t)}`, "_blank");
   };
 

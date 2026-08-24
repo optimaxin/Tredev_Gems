@@ -1,4 +1,4 @@
-"""OpenWA gateway client — WhatsApp send/receive for Tredev Gems.
+"""OpenWA gateway client — WhatsApp send/receive for Tredeva Gems.
 
 This module is pure transport: it talks HTTP to the OpenWA gateway and nothing
 else. Persistence (mirroring messages into wa_chats/wa_messages) and the
@@ -13,7 +13,7 @@ account, so staff can hold ordinary conversations.
 The trade-off is real and deliberate: OpenWA uses a reverse-engineered client
 (Baileys here), which WhatsApp does not sanction. The connected number carries a
 non-zero ban risk. Never point this at a number whose loss would break auth —
-Tredev's phone verification runs on Firebase, not WhatsApp, precisely so a ban
+Tredeva's phone verification runs on Firebase, not WhatsApp, precisely so a ban
 cannot lock customers out.
 
 DEPLOYMENT

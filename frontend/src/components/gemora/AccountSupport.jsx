@@ -94,7 +94,7 @@ function QueryModal({ query, onClose, onUpdated }) {
                 </div>
                 <div className={`max-w-[78%] ${isMe ? "text-right" : ""}`}>
                   <div className="text-[10px] uppercase tracking-widest text-ink-muted">
-                    {isMe ? "You" : "Tredev Support"}{m.at ? ` · ${fmtDateTime(m.at)}` : ""}
+                    {isMe ? "You" : "Tredeva Support"}{m.at ? ` · ${fmtDateTime(m.at)}` : ""}
                   </div>
                   <div className={`mt-1 inline-block text-left px-4 py-2.5 text-sm leading-relaxed border ${
                     isMe ? "bg-ivory border-gold/40 text-ink" : "bg-maroon-deep/[0.04] border-maroon/30 text-ink"

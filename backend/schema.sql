@@ -1,4 +1,4 @@
--- Tredev — relational schema (Postgres / Supabase)
+-- Tredeva — relational schema (Postgres / Supabase)
 -- Ported from MongoDB. See backend/db.py for the access layer.
 --
 -- Conventions:

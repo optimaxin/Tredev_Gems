@@ -146,7 +146,7 @@ function Benefits({ p, copy }) {
 
 /* ── 4. Provenance band — the immersive one ────────────────────────── */
 const CHAIN = [
-  { Icon: Package, title: "Intake & Vault", body: "Photographed, weighed and X-rayed where needed, then stored in the Tredev vault." },
+  { Icon: Package, title: "Intake & Vault", body: "Photographed, weighed and X-rayed where needed, then stored in the Tredeva vault." },
   { Icon: Certificate, title: "Lab Report", body: "A report from a GJEPC-affiliated laboratory is attached to the unit at intake." },
   { Icon: FlowerLotus, title: "Temple Energisation", body: "A priest performs a pooja on your exact unit — recorded, and signed by him." },
   { Icon: Fingerprint, title: "Ed25519 Signature", body: "Canonical JSON hashed with SHA-256 and signed with our vaulted private key." },
@@ -657,7 +657,7 @@ function ConsultBanner({ reduce }) {
             style={{ background: "radial-gradient(circle, rgba(242,140,40,0.32) 0%, rgba(212,175,55,0.12) 45%, transparent 70%)" }} />
           <img
             src="/ambassador/founder.v1.webp"
-            alt="Shri Raghavendra, Tredev's founder & guide"
+            alt="Shri Raghavendra, Tredeva's founder & guide"
             className="relative z-10 w-auto h-[280px] sm:h-[340px] lg:h-[420px] object-contain object-bottom drop-shadow-[0_20px_40px_rgba(0,0,0,0.45)]"
             loading="lazy"
           />

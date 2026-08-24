@@ -173,14 +173,14 @@ async def run(*, hash_password, ed25519_public_hex: str, content_hash, sign_payl
     async with db.transaction() as conn:
         # ── users ──
         admin_id = await _ensure_user(
-            conn, email=ADMIN_EMAIL, full_name="Tredev Admin", password="admin@1234",
+            conn, email=ADMIN_EMAIL, full_name="Tredeva Admin", password="admin@1234",
             phone="+919999900001", role="owner", hash_password=hash_password)
         await _ensure_user(
             conn, email=BUYER_EMAIL, full_name="Priya Sharma", password="priya@1234",
             phone="+919999900002", role="customer", hash_password=hash_password)
 
         # ── signing key (public half only; private stays in env) ──
-        kid = "tredev-ed25519-1"
+        kid = "tredeva-ed25519-1"
         signing_key_id = await conn.fetchval("SELECT id FROM signing_keys WHERE kid=$1", kid)
         if signing_key_id is None:
             signing_key_id = nid()
@@ -339,7 +339,7 @@ async def run(*, hash_password, ed25519_public_hex: str, content_hash, sign_payl
                     "energization_date": "2026-01-15",
                     "priest_name": "Pandit Ashok Mishra",
                     "pooja_recording_url": None, "mantra": "ॐ नमः शिवाय",
-                    "issued_at": iso(now()), "issuer": "Tredev",
+                    "issued_at": iso(now()), "issuer": "Tredeva",
                     "public_key_hex": ed25519_public_hex,
                 }
                 await conn.execute(
@@ -347,7 +347,7 @@ async def run(*, hash_password, ed25519_public_hex: str, content_hash, sign_payl
                             certificate_no, issuing_authority, issued_by_user_id, issued_at,
                             lab_certification_id, energization_certificate_id, temple_id,
                             signing_key_id, signed_payload, content_hash, signature)
-                       VALUES ($1,$2,$3,'Tredev',$4, now(),$5,$6,$7,$8,$9,$10,$11)""",
+                       VALUES ($1,$2,$3,'Tredeva',$4, now(),$5,$6,$7,$8,$9,$10,$11)""",
                     cert_id, unit_id, f"TDV-{secrets.token_hex(4).upper()}", admin_id,
                     lab_id, en_id, temple_id, signing_key_id,
                     payload, content_hash(payload), sign_payload(payload))

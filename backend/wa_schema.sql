@@ -1,4 +1,4 @@
--- WhatsApp gateway tables for Tredev Gems (OpenWA integration).
+-- WhatsApp gateway tables for Tredeva Gems (OpenWA integration).
 --
 -- WHY THESE EXIST: OpenWA keeps its own SQLite database, but that is a disposable
 -- gateway cache — it is wiped whenever the container is rebuilt or the number is
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS wa_chats (
     phone                text,                 -- E.164, null for groups
     display_name         text,
     is_group             boolean     NOT NULL DEFAULT false,
-    -- Links the conversation to a Tredev customer when the number matches a user.
+    -- Links the conversation to a Tredeva customer when the number matches a user.
     -- ON DELETE SET NULL: deleting a customer must not destroy support history.
     user_id              uuid        REFERENCES users(id) ON DELETE SET NULL,
     last_message_at      timestamptz,

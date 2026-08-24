@@ -31,12 +31,12 @@ const waMessage = (lead) => {
   const item = lead.checkout?.items?.[0] || lead.cart?.items?.[0] || lead.wishlist?.items?.[0];
   const name = lead.name ? lead.name.split(" ")[0] : "there";
   if (lead.checkout) {
-    return `Hi ${name}, this is Tredev — noticed your payment for ${item || "your order"} didn't go through. Want help completing it? Happy to guide you.`;
+    return `Hi ${name}, this is Tredeva — noticed your payment for ${item || "your order"} didn't go through. Want help completing it? Happy to guide you.`;
   }
   if (lead.cart) {
-    return `Hi ${name}, this is Tredev — you left ${item || "an item"} in your cart. Want help completing your purchase?`;
+    return `Hi ${name}, this is Tredeva — you left ${item || "an item"} in your cart. Want help completing your purchase?`;
   }
-  return `Hi ${name}, this is Tredev — saw you were interested in ${item || "a piece"}. Happy to answer any questions and help you order.`;
+  return `Hi ${name}, this is Tredeva — saw you were interested in ${item || "a piece"}. Happy to answer any questions and help you order.`;
 };
 
 function StageBadge({ stage }) {

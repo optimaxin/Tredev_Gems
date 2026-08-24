@@ -383,7 +383,7 @@ function AstrologerDetailModal({ astrologerId, onClose }) {
 function WelcomeLinkModal({ m, onClose }) {
   const [copied, setCopied] = useState(false);
   const shareWA = () => {
-    const t = `Hello ${m.name},\n\nYou've been added as an astrologer on Tredev. Please set your password and access your dashboard here:\n\n${m.url}\n\nWelcome aboard!`;
+    const t = `Hello ${m.name},\n\nYou've been added as an astrologer on Tredeva. Please set your password and access your dashboard here:\n\n${m.url}\n\nWelcome aboard!`;
     window.open(`https://wa.me/?text=${encodeURIComponent(t)}`, "_blank");
   };
   const copy = async () => {
@@ -407,7 +407,7 @@ function WelcomeLinkModal({ m, onClose }) {
           <button onClick={shareWA} className="border border-verified text-verified hover:bg-verified hover:text-ivory px-4 py-2 text-xs uppercase tracking-widest inline-flex items-center gap-2">
             <WhatsappLogo size={13} weight="fill" /> Share on WhatsApp
           </button>
-          <a href={`mailto:${m.email}?subject=${encodeURIComponent("Welcome to Tredev — set your password")}&body=${encodeURIComponent(`Hello ${m.name},\n\nYou've been added as an astrologer on Tredev. Please set your password here:\n\n${m.url}\n\nWelcome aboard!`)}`}
+          <a href={`mailto:${m.email}?subject=${encodeURIComponent("Welcome to Tredeva — set your password")}&body=${encodeURIComponent(`Hello ${m.name},\n\nYou've been added as an astrologer on Tredeva. Please set your password here:\n\n${m.url}\n\nWelcome aboard!`)}`}
             className="border border-maroon text-maroon hover:bg-maroon hover:text-ivory px-4 py-2 text-xs uppercase tracking-widest inline-flex items-center gap-2">
             Email
           </a>

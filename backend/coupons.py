@@ -36,7 +36,7 @@ _ACL_TABLE = {
 }
 
 _ACL_ERROR = {
-    "employees": "This coupon is for Tredev team members only.",
+    "employees": "This coupon is for Tredeva team members only.",
     "specific_users": "This coupon is not available for your account.",
 }
 

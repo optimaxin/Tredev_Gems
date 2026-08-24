@@ -36,7 +36,7 @@ TEMPLATE_VERSION = "v1"
 # each invoice freezes its own copy at issue time (§7.4).
 DEFAULT_SETTINGS: dict = {
     "legal_name": "Optimaxin Software Solutions Private Limited",
-    "trade_name": "Tredev Gems",
+    "trade_name": "Tredeva Gems",
     "gstin": "09AAECO5418P1ZV",
     "pan": "AAECO5418P",
     "cin": "",
@@ -52,7 +52,7 @@ DEFAULT_SETTINGS: dict = {
     "logo_url": "",
     "signature_url": "",
     "invoice_prefix": "TRE",
-    "footer_line": ("Tredev Gems is a brand of Optimaxin Software Solutions "
+    "footer_line": ("Tredeva Gems is a brand of Optimaxin Software Solutions "
                     "Private Limited · optimaxin.com"),
     "declarations": [
         "This is a computer generated invoice.",

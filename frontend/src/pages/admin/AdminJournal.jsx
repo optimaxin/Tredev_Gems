@@ -48,7 +48,7 @@ export default function AdminJournal() {
       <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">Content</div>
       <h1 className="font-display text-4xl text-ink mt-1 mb-1">Journal</h1>
       <p className="text-sm text-ink-muted mb-6">
-        The “From the Tredev journal” cards on the homepage. Write the article below — its page URL is generated
+        The “From the Tredeva journal” cards on the homepage. Write the article below — its page URL is generated
         automatically from the title. Card images are set under <span className="text-maroon">Site Images</span> (Blog 1–3).
       </p>
 

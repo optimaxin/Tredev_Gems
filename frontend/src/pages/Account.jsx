@@ -172,7 +172,7 @@ export default function Account() {
           <Phone size={24} weight="duotone" className="text-maroon-deep shrink-0" />
           <div className="flex-1">
             <div className="font-serifd text-lg text-maroon-deep">One more step — verify your phone</div>
-            <div className="text-xs text-ink-soft mt-1">Every Tredev account needs a verified mobile number. It's how we confirm delivery, send tracking, and reach you if a certificate needs re-issuing.</div>
+            <div className="text-xs text-ink-soft mt-1">Every Tredeva account needs a verified mobile number. It's how we confirm delivery, send tracking, and reach you if a certificate needs re-issuing.</div>
           </div>
           <button
             onClick={() => setShowVerify(true)}
@@ -233,7 +233,7 @@ export default function Account() {
           <div>
             <div className="max-w-2xl">
               <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">Your permanent provenance vault</div>
-              <p className="mt-2 text-ink-soft">Every serialised item you own from Tredev, with its certificate, QR and audit trail — kept forever, even if you sell or gift the item.</p>
+              <p className="mt-2 text-ink-soft">Every serialised item you own from Tredeva, with its certificate, QR and audit trail — kept forever, even if you sell or gift the item.</p>
             </div>
             {vault.length === 0 ? (
               <div className="mt-8 gold-line p-10 text-center text-ink-muted">

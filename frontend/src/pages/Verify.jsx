@@ -5,7 +5,7 @@ import { ShieldCheck, ShieldWarning, ShieldSlash, Certificate, QrCode, Fingerpri
 import CryptoFingerprint from "@/components/gemora/CryptoFingerprint";
 
 const STATUS_MAP = {
-  AUTHENTIC: { color: "text-verified", bg: "bg-verified", border: "border-verified", icon: ShieldCheck, label: "AUTHENTIC", sub: "Signature verified against Tredev's public key" },
+  AUTHENTIC: { color: "text-verified", bg: "bg-verified", border: "border-verified", icon: ShieldCheck, label: "AUTHENTIC", sub: "Signature verified against Tredeva's public key" },
   SUSPICIOUS: { color: "text-suspicious", bg: "bg-suspicious", border: "border-suspicious", icon: ShieldWarning, label: "SUSPICIOUS", sub: "This label cannot be verified — treat with caution" },
   REVOKED: { color: "text-revoked", bg: "bg-revoked", border: "border-revoked", icon: ShieldSlash, label: "REVOKED", sub: "This certificate was revoked (returned/refunded unit)" },
 };
@@ -71,7 +71,7 @@ export default function Verify() {
           </div>
           <h1 className="mt-6 font-display text-5xl md:text-6xl text-ink leading-tight">Prove <span className="brand-gradient-text">it</span> — right here.</h1>
           <p className="mt-4 text-ink-soft max-w-2xl mx-auto">
-            Every Tredev stone carries a QR that decodes to a public token. Enter it below (or scan the QR on your certificate) and we'll re-verify the Ed25519 signature against our public key.
+            Every Tredeva stone carries a QR that decodes to a public token. Enter it below (or scan the QR on your certificate) and we'll re-verify the Ed25519 signature against our public key.
           </p>
         </div>
 
@@ -93,8 +93,8 @@ export default function Verify() {
           <div className="mt-10 gold-line p-5">
             <CryptoFingerprint
               value={pubKey}
-              label="Tredev's signing key"
-              description="This code is the same on every genuine certificate we issue. If a certificate shows a different code here, it wasn't signed by Tredev."
+              label="Tredeva's signing key"
+              description="This code is the same on every genuine certificate we issue. If a certificate shows a different code here, it wasn't signed by Tredeva."
             />
           </div>
         )}
@@ -238,8 +238,8 @@ export default function Verify() {
                               <CryptoFingerprint
                                 dark seal
                                 value={result.cert.signature_ed25519_hex}
-                                label="Tredev's seal on this item"
-                                description="Tredev's signature applied to this exact item — proof we personally vouched for it."
+                                label="Tredeva's seal on this item"
+                                description="Tredeva's signature applied to this exact item — proof we personally vouched for it."
                               />
                             </div>
                           </div>

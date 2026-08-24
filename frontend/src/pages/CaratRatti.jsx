@@ -32,7 +32,7 @@ export default function CaratRatti() {
       </div>
       <div className="mt-8 gold-line p-5 bg-cream text-sm text-ink-soft flex items-start gap-2">
         <Sparkle size={16} weight="duotone" className="text-gold-soft shrink-0 mt-0.5" />
-        <span>Note: Some traditions use 1 ratti = 0.91 ct (approximate). Tredev uses the ICA-aligned 0.9114 ct.</span>
+        <span>Note: Some traditions use 1 ratti = 0.91 ct (approximate). Tredeva uses the ICA-aligned 0.9114 ct.</span>
       </div>
     </div>
   );

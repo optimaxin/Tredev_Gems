@@ -162,7 +162,7 @@ def _shell(*, preheader: str, heading: str, content_html: str, settings: dict,
           unsubscribe_url: Optional[str] = None) -> str:
     logo = settings.get("logo_url") or _brand_asset(settings, "/brand/logo.png")
     ambassador_img = _brand_asset(settings, "/brand/ambassador-email.png")
-    trade_name = _e(settings.get("trade_name") or "Tredev Store")
+    trade_name = _e(settings.get("trade_name") or "Tredeva Store")
     support_email = _e(settings.get("support_email") or "")
     support_phone = _e(settings.get("support_phone") or "")
     year = datetime.now(timezone.utc).year
@@ -204,7 +204,7 @@ def _shell(*, preheader: str, heading: str, content_html: str, settings: dict,
               </tr></table>
             </td>
             <td width="40%" valign="bottom" style="text-align:right">
-              <img src="{_e(ambassador_img)}" alt="Shri Raghavendra, Tredev Store's founder and guide"
+              <img src="{_e(ambassador_img)}" alt="Shri Raghavendra, Tredeva Store's founder and guide"
                    width="92" style="display:inline-block;max-width:92px;height:auto;margin-bottom:-2px">
             </td>
           </tr>
@@ -275,7 +275,7 @@ SYSTEM_TEMPLATES: dict[str, dict] = {
     "order_confirmation": {
         "name": "Order Confirmation", "category": "transactional", "trigger_event": "order.placed",
         "to": "The buyer, right after payment", "fields": {
-            "subject": "Order Confirmed! Your Tredev Store Order #{{order_id}}",
+            "subject": "Order Confirmed! Your Tredeva Store Order #{{order_id}}",
             "greeting": "Hi {{customer_name}}, thank you for your order!",
             "button_label": "View My Orders",
             "footer_note": "Questions? Reply to this email or contact us at {{support_email}}",
@@ -292,7 +292,7 @@ SYSTEM_TEMPLATES: dict[str, dict] = {
     "consultation_booking": {
         "name": "Consultation Booking", "category": "consultation", "trigger_event": "consultation.booked",
         "to": "The customer, right after payment", "fields": {
-            "subject": "Your Consultation is Booked! — Tredev Store",
+            "subject": "Your Consultation is Booked! — Tredeva Store",
             "greeting": "Namaste {{customer_name}}! Your consultation has been booked.",
             "body_note": "Our team will assign an expert astrologer and schedule your session. "
                         "You'll receive another email with your astrologer's details and the session time.",
@@ -303,7 +303,7 @@ SYSTEM_TEMPLATES: dict[str, dict] = {
     "astrologer_assignment": {
         "name": "Astrologer Assignment", "category": "consultation", "trigger_event": "consultation.assigned",
         "to": "The customer, once an astrologer + time are set", "fields": {
-            "subject": "Your Astrologer is Confirmed! — Tredev Store",
+            "subject": "Your Astrologer is Confirmed! — Tredeva Store",
             "greeting": "Great news, {{customer_name}}! Your astrologer has been assigned.",
             "prep_tips": "Have your birth date, time, and place of birth ready · "
                         "Find a quiet space for your session · Prepare any specific questions",
@@ -321,8 +321,8 @@ SYSTEM_TEMPLATES: dict[str, dict] = {
     "astrologer_onboarding": {
         "name": "Astrologer Onboarding", "category": "astrologer", "trigger_event": "astrologer.created",
         "to": "A newly created astrologer", "fields": {
-            "subject": "Welcome to Tredev Store! Your Astrologer Account is Ready",
-            "greeting": "Welcome aboard, {{astrologer_name}}! We're thrilled to have you join the Tredev family.",
+            "subject": "Welcome to Tredeva Store! Your Astrologer Account is Ready",
+            "greeting": "Welcome aboard, {{astrologer_name}}! We're thrilled to have you join the Tredeva family.",
             "affiliate_intro": "Share your unique link and earn commissions on every purchase made through it!",
             "button_label": "Set Your Password & Log In",
         },
@@ -330,8 +330,8 @@ SYSTEM_TEMPLATES: dict[str, dict] = {
     "welcome_signup": {
         "name": "Welcome Email", "category": "transactional", "trigger_event": "user.signup",
         "to": "A brand-new customer account", "fields": {
-            "subject": "Welcome to Tredev Store!",
-            "greeting": "Namaste {{customer_name}}, welcome to Tredev Store!",
+            "subject": "Welcome to Tredeva Store!",
+            "greeting": "Namaste {{customer_name}}, welcome to Tredeva Store!",
             "intro": "Your account is ready. Here's what you can do next:",
             "button_label": "Start Shopping",
             "footer_note": "Questions? Reply to this email or contact us at {{support_email}}",
@@ -340,7 +340,7 @@ SYSTEM_TEMPLATES: dict[str, dict] = {
     "affiliate_sale": {
         "name": "Affiliate Sale Notification", "category": "astrologer", "trigger_event": "affiliate.commission",
         "to": "The referring astrologer, when their link earns a commission", "fields": {
-            "subject": "You Earned a Commission! — Tredev Store",
+            "subject": "You Earned a Commission! — Tredeva Store",
             "greeting": "Congratulations, {{astrologer_name}}! You just earned a commission!",
             "footer_note": "Keep sharing your link to earn more!",
         },
@@ -357,7 +357,7 @@ SYSTEM_TEMPLATES: dict[str, dict] = {
     "query_reply": {
         "name": "Support Query Reply", "category": "transactional", "trigger_event": "query.replied",
         "to": "The person who raised the query, whenever staff adds a reply", "fields": {
-            "subject": "Re: {{query_subject}} — Tredev Store Support",
+            "subject": "Re: {{query_subject}} — Tredeva Store Support",
             "greeting": "Hi {{customer_name}}, you have a new reply on your support query.",
             "button_label": "View My Queries",
             "footer_note": "Questions? Reply to this email or contact us at {{support_email}}",
@@ -588,7 +588,7 @@ def render_astrologer_onboarding(d: dict, settings: dict, overrides: Optional[di
     """
     subject = _merge(f['subject'], ctx, escape=False)
     html_out, text_out = _render(preheader="Set your password to activate your astrologer account",
-                                 heading="Welcome to Tredev Store!", content_html=content, settings=settings)
+                                 heading="Welcome to Tredeva Store!", content_html=content, settings=settings)
     return subject, html_out, text_out
 
 
@@ -610,8 +610,8 @@ def render_welcome_signup(d: dict, settings: dict, overrides: Optional[dict] = N
       <p style="font-size:12px;color:{COLORS['text_muted']};text-align:center">{_merge(f['footer_note'], ctx)}</p>
     """
     subject = _merge(f['subject'], ctx, escape=False)
-    html_out, text_out = _render(preheader="Your Tredev Store account is ready",
-                                 heading="Welcome to Tredev Store!", content_html=content, settings=settings)
+    html_out, text_out = _render(preheader="Your Tredeva Store account is ready",
+                                 heading="Welcome to Tredeva Store!", content_html=content, settings=settings)
     return subject, html_out, text_out
 
 
@@ -742,7 +742,7 @@ def render_custom_email(*, subject: str, content_html: str, template: str, setti
 def _demo() -> None:
     """Self-check: `python email_templates.py`. Renders every template with dummy
     data and asserts key content made it through — same convention as invoice.py."""
-    settings = {"trade_name": "Tredev Store", "logo_url": "", "support_email": "support@tredeva.com",
+    settings = {"trade_name": "Tredeva Store", "logo_url": "", "support_email": "support@tredeva.com",
                "support_phone": "", "store_url": "https://tredeva.com"}
     items = [{"name": "Ceylon Blue Sapphire", "image": "", "variant": "Loose Gemstone",
              "quantity": 1, "price": 200000}]
@@ -791,7 +791,7 @@ def _demo() -> None:
 
     subj, h, t = render_welcome_signup(
         {"customer_name": "Lubhansh", "shop_url": "https://tredevastore.com"}, settings)
-    assert "Welcome to Tredev Store" in subj and "Start Shopping" in h
+    assert "Welcome to Tredeva Store" in subj and "Start Shopping" in h
 
     subj, h, t = render_affiliate_sale({
         "astrologer_name": "Pandit Sharma", "order_id": "TDV-1001", "order_date": "20/08/2026",

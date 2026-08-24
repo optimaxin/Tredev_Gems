@@ -224,7 +224,7 @@ export default function Consultation() {
             />
             <img
               src="/ambassador/founder.v1.webp"
-              alt="Shri Raghavendra, Tredev's founder & guide"
+              alt="Shri Raghavendra, Tredeva's founder & guide"
               loading="eager"
               className="relative w-full h-80 object-contain object-bottom"
               style={{ filter: "drop-shadow(0 12px 30px rgba(0,0,0,0.5))" }}

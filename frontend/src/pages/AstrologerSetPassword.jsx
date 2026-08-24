@@ -25,7 +25,7 @@ export default function AstrologerSetPassword() {
     setBusy(true);
     try {
       await setPassword(token, password);
-      toast.success("Password set. Welcome to Tredev.");
+      toast.success("Password set. Welcome to Tredeva.");
       nav("/astrologer/dashboard");
     } catch (err) {
       toast.error(err?.response?.data?.detail || "This link is invalid or has expired.");
@@ -37,9 +37,9 @@ export default function AstrologerSetPassword() {
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <CheckCircle size={40} weight="duotone" className="text-verified mx-auto" />
-          <div className="mt-3 text-xs uppercase tracking-[0.4em] text-gold-soft">Tredev · Astrologer</div>
+          <div className="mt-3 text-xs uppercase tracking-[0.4em] text-gold-soft">Tredeva · Astrologer</div>
           <h1 className="font-display text-4xl text-maroon-deep mt-2">Set your password</h1>
-          <p className="text-sm text-ink-muted mt-2">Choose a password to activate your Tredev astrologer account.</p>
+          <p className="text-sm text-ink-muted mt-2">Choose a password to activate your Tredeva astrologer account.</p>
         </div>
 
         <form onSubmit={submit} className="gold-line-strong bg-ivory p-8 space-y-5">

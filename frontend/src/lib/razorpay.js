@@ -29,7 +29,7 @@ export function openRazorpayCheckout({ keyId, amount, currency, orderId, name, e
       amount,
       currency,
       order_id: orderId,
-      name: "Tredev Gems",
+      name: "Tredeva Gems",
       prefill: { name, email, contact },
       handler: (response) => resolve(response),
       modal: { ondismiss: () => reject(new Error("Payment cancelled")) },

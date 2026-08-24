@@ -6,7 +6,7 @@ import { motion, useInView, useReducedMotion, useScroll, useTransform } from "fr
  *
  * The house style is print, not product-page: asymmetric rules, Devanagari
  * section marks, drop caps and pull quotes. Deliberately avoids the glass /
- * aurora-gradient vocabulary — that reads as template, and Tredev is not one.
+ * aurora-gradient vocabulary — that reads as template, and Tredeva is not one.
  */
 
 /* ०१ — Devanagari numerals as section marks. */

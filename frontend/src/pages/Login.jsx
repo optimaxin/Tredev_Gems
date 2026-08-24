@@ -89,7 +89,7 @@ export default function Login() {
         <div className="p-8 sm:p-10 md:p-12">
           <div>
             <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">Welcome back</div>
-            <h1 className="font-display text-4xl text-ink mt-1">Sign in to Tredev</h1>
+            <h1 className="font-display text-4xl text-ink mt-1">Sign in to Tredeva</h1>
           </div>
 
           <div className="relative mt-8 grid grid-cols-2 gold-line overflow-hidden text-sm bg-cream" role="tablist">

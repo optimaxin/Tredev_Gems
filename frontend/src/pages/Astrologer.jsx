@@ -24,7 +24,7 @@ export default function Astrologer() {
   return (
     <div className="min-h-screen bg-cream flex">
       <aside className="w-64 shrink-0 bg-maroon-deep text-ivory min-h-screen p-6 flex flex-col">
-        <div className="text-xs uppercase tracking-[0.4em] text-gold">Tredev</div>
+        <div className="text-xs uppercase tracking-[0.4em] text-gold">Tredeva</div>
         <div className="font-display text-2xl mt-1">Astrologer</div>
         <div className="mt-6 flex items-center gap-3 border-t border-ivory/10 pt-6">
           {astro.picture ? (

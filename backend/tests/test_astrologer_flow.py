@@ -1,4 +1,4 @@
-"""Tredev — Astrologer-side workspace + Affiliate commission system tests."""
+"""Tredeva — Astrologer-side workspace + Affiliate commission system tests."""
 import os
 import re
 import uuid

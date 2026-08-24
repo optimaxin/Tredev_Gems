@@ -1,4 +1,4 @@
--- Email notification tables for Tredev Gems — see .claude/.email_notification.md
+-- Email notification tables for Tredeva Gems — see .claude/.email_notification.md
 -- and the "Email notification system" plan.
 --
 -- Mirrors wa_schema.sql's shape (email_log ~= wa_messages, email_campaigns ~=

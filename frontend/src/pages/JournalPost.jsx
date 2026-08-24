@@ -4,7 +4,7 @@ import { api, slugify } from "@/lib/api";
 import { ArrowLeft } from "@phosphor-icons/react";
 import { useSiteAssets } from "@/context/SiteAssetsContext";
 
-// Renders one "From the Tredev journal" article. Posts have no separate
+// Renders one "From the Tredeva journal" article. Posts have no separate
 // content store — they live inside the same site-content `home.posts` blob
 // that the homepage cards and the admin editor read/write, keyed by a slug
 // derived from the title (see slugify in lib/api).

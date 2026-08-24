@@ -125,7 +125,7 @@ export default function OrderConfirmed() {
             <span className="shimmer-text">Your order is placed</span>
           </h1>
           <p className="mt-5 text-base md:text-lg text-ink-soft leading-relaxed max-w-xl mx-auto">
-            Thank you for placing your trust in Tredev. Your sacred goods are being prepared with
+            Thank you for placing your trust in Tredeva. Your sacred goods are being prepared with
             reverence — serialised, certified and signed, exactly as promised.
           </p>
 

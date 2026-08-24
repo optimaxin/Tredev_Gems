@@ -1,4 +1,4 @@
-"""Tredev — new admin features (owner-only ops, audit log, staff invite, low-stock).
+"""Tredeva — new admin features (owner-only ops, audit log, staff invite, low-stock).
 
 These tests run AFTER test_gemora_backend.py; they re-seed to ensure a clean state.
 """
