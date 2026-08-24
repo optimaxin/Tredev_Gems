@@ -5035,6 +5035,47 @@ def _email_invoice_generated(order: dict, buyer: Optional[dict], invoice: dict) 
     email_sender._email_fire_event("invoice.generated", _send)
 
 
+def _email_query_reply(query: dict, reply_message: str) -> None:
+    if not query.get("email") or not reply_message:
+        return
+
+    async def _send():
+        settings = await _email_branding()
+        payload = {
+            "customer_name": query.get("name") or "there", "query_subject": query.get("subject") or "",
+            "status": query.get("status") or "", "reply_message": reply_message,
+            "account_url": _app_url("/account"),
+        }
+        rendered = await _render_system_email(
+            "query_reply", payload, settings, email_templates.render_query_reply)
+        if not rendered:
+            return
+        subject, html_out, text_out = rendered
+        await email_sender.send_email([query["email"]], subject, html_out, text_out,
+                                      type_="query_reply", related_id=query.get("query_id"))
+    email_sender._email_fire_event("query.replied", _send)
+
+
+def _email_query_status_update(query: dict, old_status: str, new_status: str) -> None:
+    if not query.get("email") or old_status == new_status:
+        return
+
+    async def _send():
+        settings = await _email_branding()
+        payload = {
+            "customer_name": query.get("name") or "there", "query_subject": query.get("subject") or "",
+            "old_status": old_status, "new_status": new_status, "account_url": _app_url("/account"),
+        }
+        rendered = await _render_system_email(
+            "query_status_update", payload, settings, email_templates.render_query_status_update)
+        if not rendered:
+            return
+        subject, html_out, text_out = rendered
+        await email_sender.send_email([query["email"]], subject, html_out, text_out,
+                                      type_="query_status_update", related_id=query.get("query_id"))
+    email_sender._email_fire_event("query.status_changed", _send)
+
+
 class CashfreeVerifyIn(BaseModel):
     order_id: str
     # Only set for a Razorpay (non-INR) checkout — Razorpay's checkout.js hands the
@@ -8379,6 +8420,9 @@ async def admin_list_queries(_: str = Depends(require_perm("queries")), status: 
 
 @api.patch("/admin/queries/{query_id}")
 async def admin_update_query(query_id: str, body: QueryReplyIn, actor: str = Depends(require_perm("queries"))):
+    before = await db.fetch_one(_QUERY_SELECT + " WHERE q.id = $1::uuid", query_id)
+    if not before:
+        raise HTTPException(404, "Query not found")
     # notes was an embedded array ($push); it's the query_notes child table now.
     async with db.transaction() as conn:
         if body.note:
@@ -8392,6 +8436,12 @@ async def admin_update_query(query_id: str, body: QueryReplyIn, actor: str = Dep
                     WHERE id = $1::uuid""", query_id, body.status)
     await audit_log(actor, "query.update", query_id,
                     {"status": body.status, "note_added": bool(body.note)})
+    # Fired after the transaction commits — same reasoning as every other email
+    # hook in this app: a mail outage must never roll back the reply/status change.
+    if body.note:
+        _email_query_reply({**before, "status": body.status or before["status"]}, body.note)
+    if body.status:
+        _email_query_status_update(before, before["status"], body.status)
     return await db.fetch_one(_QUERY_SELECT + " WHERE q.id = $1::uuid", query_id)
 
 
@@ -9898,6 +9948,11 @@ _SAMPLE_EMAIL_PAYLOADS = {
         "invoice_number": "TRE/2627/000123", "invoice_date": "01/01/2026",
         "items": [{"name": "Ceylon Blue Sapphire", "image": "", "variant": "", "quantity": 1, "price": 200000}],
         "total": 200000, "currency": "INR", "order_url": "#"},
+    "query_reply": {"customer_name": "Test User", "query_subject": "Where is my order?",
+        "status": "in_progress", "reply_message": "We've checked with the courier — it'll arrive by tomorrow evening.",
+        "account_url": "#"},
+    "query_status_update": {"customer_name": "Test User", "query_subject": "Where is my order?",
+        "old_status": "open", "new_status": "resolved", "account_url": "#"},
 }
 
 

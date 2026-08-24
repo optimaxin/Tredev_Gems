@@ -56,6 +56,10 @@ STATUS_COLOR = {
     "confirmed": COLORS["gold_soft"], "processing": COLORS["saffron"], "shipped": COLORS["accent"],
     "out_for_delivery": COLORS["saffron"], "delivered": COLORS["success"], "cancelled": COLORS["error"],
     "refunded": COLORS["error"], "pending": COLORS["saffron"],
+    # Query statuses (open/in_progress/resolved/closed) — distinct namespace,
+    # no collision with the order-status keys above.
+    "open": COLORS["saffron"], "in_progress": COLORS["gold_soft"],
+    "resolved": COLORS["success"], "closed": COLORS["text_muted"],
 }
 
 
@@ -347,6 +351,24 @@ SYSTEM_TEMPLATES: dict[str, dict] = {
             "subject": "Your Tax Invoice for Order #{{order_id}} is Ready",
             "greeting": "Hi {{customer_name}}, your tax invoice has been generated.",
             "button_label": "View My Orders",
+            "footer_note": "Questions? Reply to this email or contact us at {{support_email}}",
+        },
+    },
+    "query_reply": {
+        "name": "Support Query Reply", "category": "transactional", "trigger_event": "query.replied",
+        "to": "The person who raised the query, whenever staff adds a reply", "fields": {
+            "subject": "Re: {{query_subject}} — Tredev Store Support",
+            "greeting": "Hi {{customer_name}}, you have a new reply on your support query.",
+            "button_label": "View My Queries",
+            "footer_note": "Questions? Reply to this email or contact us at {{support_email}}",
+        },
+    },
+    "query_status_update": {
+        "name": "Support Query Status Update", "category": "transactional", "trigger_event": "query.status_changed",
+        "to": "The person who raised the query, whenever staff changes its status", "fields": {
+            "subject": "Your Query Status Changed — {{query_subject}}",
+            "greeting": "Hi {{customer_name}}, the status of your support query has been updated.",
+            "button_label": "View My Queries",
             "footer_note": "Questions? Reply to this email or contact us at {{support_email}}",
         },
     },
@@ -652,6 +674,47 @@ def render_invoice_generated(d: dict, settings: dict, overrides: Optional[dict] 
     return subject, html_out, text_out
 
 
+# ── Support query reply / status update ──────────────────────────────────────
+def render_query_reply(d: dict, settings: dict, overrides: Optional[dict] = None) -> tuple[str, str, str]:
+    f = _fields("query_reply", overrides)
+    ctx = {**d, "support_email": settings.get("support_email", "")}
+    content = f"""
+      <p style="font-size:14px;color:{COLORS['text_body']}">{_merge(f['greeting'], ctx)}</p>
+      {info_card([("Query", d.get('query_subject', '')), ("Status", d.get('status', '').replace('_', ' ').title())])}
+      <div style="margin:16px 0;padding:14px 16px;background:{COLORS['gold_50']};border-left:3px solid {COLORS['gold']}">
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:{COLORS['text_muted']};margin-bottom:6px">
+          Reply from our team</div>
+        <div style="font-size:13px;color:{COLORS['ink']};white-space:pre-wrap">{_e(d.get('reply_message', ''))}</div>
+      </div>
+      <div style="text-align:center;margin:22px 0 8px">{action_button(_merge(f['button_label'], ctx, escape=False), d.get('account_url') or '#')}</div>
+      <p style="font-size:12px;color:{COLORS['text_muted']};text-align:center">{_merge(f['footer_note'], ctx)}</p>
+    """
+    subject = _merge(f['subject'], ctx, escape=False)
+    html_out, text_out = _render(preheader=f"New reply on: {d.get('query_subject', '')}",
+                                 heading="You Have a New Reply", content_html=content, settings=settings)
+    return subject, html_out, text_out
+
+
+def render_query_status_update(d: dict, settings: dict, overrides: Optional[dict] = None) -> tuple[str, str, str]:
+    f = _fields("query_status_update", overrides)
+    ctx = {**d, "support_email": settings.get("support_email", "")}
+    content = f"""
+      <p style="font-size:14px;color:{COLORS['text_body']}">{_merge(f['greeting'], ctx)}</p>
+      {info_card([("Query", d.get('query_subject', ''))])}
+      <div style="text-align:center;margin:16px 0">
+        {status_badge(d.get('old_status', ''))}
+        <span style="color:{COLORS['text_muted']};margin:0 8px">&rarr;</span>
+        {status_badge(d.get('new_status', ''))}
+      </div>
+      <div style="text-align:center;margin:22px 0 8px">{action_button(_merge(f['button_label'], ctx, escape=False), d.get('account_url') or '#')}</div>
+      <p style="font-size:12px;color:{COLORS['text_muted']};text-align:center">{_merge(f['footer_note'], ctx)}</p>
+    """
+    subject = _merge(f['subject'], ctx, escape=False)
+    html_out, text_out = _render(preheader=f"Query status: {d.get('new_status', '')}",
+                                 heading="Your Query Status Changed", content_html=content, settings=settings)
+    return subject, html_out, text_out
+
+
 # ── §6.5/§7.6 Custom / campaign email (compose box + bulk campaigns) ─────────
 _VARIANT_BANNER = {
     "announcement": lambda s: f'<div style="background:{COLORS["gold"]};color:{COLORS["ink"]};padding:10px 16px;' \
@@ -743,6 +806,18 @@ def _demo() -> None:
         "invoice_date": "23/08/2026", "items": items, "total": 200000, "currency": "INR",
         "order_url": "https://tredevastore.com/account"}, settings)
     assert "Tax Invoice" in subj and "TRE/2627/000123" in h and "2,000.00" in h
+
+    subj, h, t = render_query_reply({
+        "customer_name": "Lubhansh", "query_subject": "Where is my order?", "status": "in_progress",
+        "reply_message": "We've checked with the courier — it'll arrive by tomorrow evening.",
+        "account_url": "https://tredevastore.com/account"}, settings)
+    assert "New Reply" in h and "courier" in h and "Where is my order?" in h
+
+    subj, h, t = render_query_status_update({
+        "customer_name": "Lubhansh", "query_subject": "Where is my order?",
+        "old_status": "open", "new_status": "resolved",
+        "account_url": "https://tredevastore.com/account"}, settings)
+    assert "Status Changed" in subj and "OPEN" in h and "RESOLVED" in h
 
     subj, h, t = render_custom_email(subject="Diwali Sale!", content_html="<p>50% off everything.</p>",
                                      template="promotional", settings=settings, recipient_name="Lubhansh",
