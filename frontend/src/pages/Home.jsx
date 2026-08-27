@@ -183,18 +183,14 @@ export default function Home() {
   const [home, setHome] = useState(DEFAULT_HOME);
   const [purposeKV, setPurposeKV] = useState(null); // admin-editable purpose list, from /categories
 
-  // Admin-edited homepage copy (Admin → Website); merged over the built-in defaults.
+  // Home.jsx's own site-content/categories/products in one round trip instead of
+  // three (EventsSection and ShoppableVideos still fetch on their own — they're
+  // reused outside Home too).
   useEffect(() => {
-    api.get("/site-content").then(({ data }) => {
-      if (data?.home) setHome((h) => ({ ...h, ...data.home }));
-    }).catch(() => {});
-  }, []);
-
-  // Purposes are admin-editable (Admin → Website → Purposes) — a purpose added there
-  // must show up here too, not just in the /shop filter chips.
-  useEffect(() => {
-    api.get("/categories").then(({ data }) => {
-      if (data?.purposes?.length) setPurposeKV(data.purposes);
+    api.get("/home").then(({ data }) => {
+      if (data?.site_content?.home) setHome((h) => ({ ...h, ...data.site_content.home }));
+      if (data?.categories?.purposes?.length) setPurposeKV(data.categories.purposes);
+      if (data?.products) setProducts(data.products);
     }).catch(() => {});
   }, []);
 
@@ -229,10 +225,6 @@ export default function Home() {
   const astroBandBg = getAsset("home_astro_band_bg", "https://images.pexels.com/photos/15286007/pexels-photo-15286007.jpeg");
   const verifyBandBg = getAsset("home_verify_band_bg", "https://images.pexels.com/photos/15286007/pexels-photo-15286007.jpeg");
   const craftPoster = getAsset("home_craft_poster", CRAFT_IMG);
-
-  useEffect(() => {
-    api.get("/products?limit=12").then(({ data }) => setProducts(data)).catch(() => {});
-  }, []);
 
   useEffect(() => {
     const t = setInterval(() => setHeroIdx((i) => (i + 1) % heroSlides.length), 7000);

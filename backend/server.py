@@ -2635,6 +2635,24 @@ async def shoppable_videos_public(currency: str = "INR"):
     return await respcache.get_or_set(f"shoppable_videos:{cur}", ttl=300, tag="site_content", compute=_compute)
 
 
+@api.get("/home")
+async def home_bundle(currency: str = "INR"):
+    """Everything Home.jsx needs in one round trip instead of five. Each piece is
+    the same handler the standalone endpoint uses (site_content/categories/events
+    are already respcache-hit after the first visitor; products stays live —
+    stock changes on every order, so it's deliberately not cached, per
+    respcache.py)."""
+    cur = currency if currency in SUPPORTED_CURRENCIES else "INR"
+    site_content, categories_, products, events, videos = await asyncio.gather(
+        site_content_public(), categories(), list_products(limit=12, currency=cur),
+        events_active(), shoppable_videos_public(currency=cur),
+    )
+    return {
+        "site_content": site_content, "categories": categories_, "products": products,
+        "events": events, "shoppable_videos": videos,
+    }
+
+
 # ── Geo lookup (Amazon Location, proxied) ─────────────────────────────────────
 # These proxy Amazon Location so the API key never reaches the browser (see geo.py).
 # Both are cached hard: a pincode's city/state is effectively immutable, and repeat
