@@ -8658,11 +8658,15 @@ async def media_serve(path: str):
     CDN with a signed URL, so the (potentially large) bytes never pass through this
     backend — which is what made every image slow. We only issue a tiny redirect.
 
-    Object keys are content-unique (uuid), so a URL's bytes never change; the
-    redirect itself is cacheable for a day, and the signed target is valid a week.
-    Falls back to proxying the bytes if signing is unavailable."""
+    Object keys are content-unique (uuid), so a URL's bytes never change — the
+    signed URL for a given path is cached in-process (respcache) so every visitor
+    after the first reuses it instead of round-tripping to Supabase to sign it
+    again. TTL is kept under the signed URL's own 7-day validity so we never hand
+    out a stale/expired one. Falls back to proxying the bytes if signing fails."""
     try:
-        signed = await storage_sb.sign(path, 604800)  # 7 days
+        signed = await respcache.get_or_set(
+            f"media_sign:{path}", ttl=6 * 86400, tag="media_sign",
+            compute=lambda: storage_sb.sign(path, 604800))  # 7 days
         return RedirectResponse(signed, status_code=307, headers={
             "Cache-Control": "public, max-age=86400",  # cache the redirect for a day
         })
