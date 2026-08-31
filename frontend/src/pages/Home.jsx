@@ -185,13 +185,21 @@ export default function Home() {
 
   // Home.jsx's own site-content/categories/products in one round trip instead of
   // three (EventsSection and ShoppableVideos still fetch on their own — they're
-  // reused outside Home too).
+  // reused outside Home too). Polled so new/changed products, prices and stock
+  // show up without a refresh; paused while the tab is hidden so background tabs
+  // don't keep hammering the API.
   useEffect(() => {
-    api.get("/home").then(({ data }) => {
-      if (data?.site_content?.home) setHome((h) => ({ ...h, ...data.site_content.home }));
-      if (data?.categories?.purposes?.length) setPurposeKV(data.categories.purposes);
-      if (data?.products) setProducts(data.products);
-    }).catch(() => {});
+    const load = () => {
+      if (document.hidden) return;
+      api.get("/home").then(({ data }) => {
+        if (data?.site_content?.home) setHome((h) => ({ ...h, ...data.site_content.home }));
+        if (data?.categories?.purposes?.length) setPurposeKV(data.categories.purposes);
+        if (data?.products) setProducts(data.products);
+      }).catch(() => {});
+    };
+    load();
+    const t = setInterval(load, 60_000);
+    return () => clearInterval(t);
   }, []);
 
   // Merge the admin's {key,label} list with the curated art/Devanagari where we

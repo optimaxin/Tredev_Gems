@@ -80,6 +80,19 @@ export default function ProductDetail() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug]);
 
+  // Poll for price/stock changes without resetting the buyer's in-progress
+  // selections (qty, picked variants, gallery position) the way a full reload
+  // would. Paused while the tab is hidden.
+  useEffect(() => {
+    const t = setInterval(() => {
+      if (document.hidden) return;
+      api.get(`/products/${slug}`).then(({ data }) => {
+        setP((cur) => (cur && cur.slug === slug ? { ...cur, ...data } : cur));
+      }).catch(() => {});
+    }, 60_000);
+    return () => clearInterval(t);
+  }, [slug]);
+
   if (p === null) return <div className="p-16 text-ink-muted">Loading…</div>;
   if (!p) return <div className="p-16">Not found.</div>;
 

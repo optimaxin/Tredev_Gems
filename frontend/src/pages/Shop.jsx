@@ -58,9 +58,18 @@ export default function Shop() {
     return p.toString();
   }, [category, subcategory, graha, purpose, rashi, q, price, mukhi]);
 
+  // Polled so new/changed products, prices and stock show up without a refresh;
+  // paused while the tab is hidden so background tabs don't keep hammering the API.
+  // Only the initial/filter-change fetch shows the loading state — a background
+  // poll refresh must not blank the grid out from under someone browsing it.
   useEffect(() => {
     setLoading(true);
     api.get(`/products?${params}`).then(({ data }) => setItems(data)).finally(() => setLoading(false));
+    const t = setInterval(() => {
+      if (document.hidden) return;
+      api.get(`/products?${params}`).then(({ data }) => setItems(data)).catch(() => {});
+    }, 60_000);
+    return () => clearInterval(t);
   }, [params]);
 
   const setFilter = (k, v) => {
