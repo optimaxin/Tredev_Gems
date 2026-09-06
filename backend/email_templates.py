@@ -327,6 +327,16 @@ SYSTEM_TEMPLATES: dict[str, dict] = {
             "button_label": "Set Your Password & Log In",
         },
     },
+    "staff_invite": {
+        "name": "Staff/Admin Invite", "category": "admin", "trigger_event": "staff.created",
+        "to": "A newly added staff or admin team member", "fields": {
+            "subject": "You've Been Added to the Tredeva Store Team",
+            "greeting": "Hi {{staff_name}}, you've been added as a team member on Tredeva Store.",
+            "intro": "Use the temporary password below to log in — you can change it after signing in.",
+            "button_label": "Log In to Admin Panel",
+            "footer_note": "Didn't expect this? Contact {{support_email}}.",
+        },
+    },
     "welcome_signup": {
         "name": "Welcome Email", "category": "transactional", "trigger_event": "user.signup",
         "to": "A brand-new customer account", "fields": {
@@ -592,6 +602,25 @@ def render_astrologer_onboarding(d: dict, settings: dict, overrides: Optional[di
     return subject, html_out, text_out
 
 
+# ── Staff/admin invite (new team member created in Admin -> Team) ───────────
+def render_staff_invite(d: dict, settings: dict, overrides: Optional[dict] = None) -> tuple[str, str, str]:
+    f = _fields("staff_invite", overrides)
+    ctx = {**d, "support_email": settings.get("support_email", "")}
+    content = f"""
+      <p style="font-size:14px;color:{COLORS['text_body']}">{_merge(f['greeting'], ctx)}</p>
+      <p style="font-size:13px;color:{COLORS['text_body']}">{_merge(f['intro'], ctx)}</p>
+      {info_card([("Login Email", d.get('email', '')), ("Temporary Password", d.get('temp_password', ''))])}
+      <div style="text-align:center;margin:22px 0 8px">
+        {action_button(_merge(f['button_label'], ctx, escape=False), d.get('login_url') or '#')}
+      </div>
+      <p style="font-size:12px;color:{COLORS['text_muted']};text-align:center">{_merge(f['footer_note'], ctx)}</p>
+    """
+    subject = _merge(f['subject'], ctx, escape=False)
+    html_out, text_out = _render(preheader="Your Tredeva Store team account is ready",
+                                 heading="Welcome to the Team!", content_html=content, settings=settings)
+    return subject, html_out, text_out
+
+
 # ── Customer welcome email (new account created — signup, Google, or phone) ──
 def render_welcome_signup(d: dict, settings: dict, overrides: Optional[dict] = None) -> tuple[str, str, str]:
     f = _fields("welcome_signup", overrides)
@@ -788,6 +817,11 @@ def _demo() -> None:
         "login_url": "https://tredeva.com/astrologer/set-password?token=abc",
         "affiliate_code": "PANDIT10", "affiliate_link": "https://tredeva.com/?ref=PANDIT10"}, settings)
     assert "Astrologer Account is Ready" in subj and "PANDIT10" in h and "set-password" in h
+
+    subj, h, t = render_staff_invite({
+        "staff_name": "Priya", "email": "priya@example.com", "temp_password": "Xy9#kLmP",
+        "login_url": "https://tredeva.com/login"}, settings)
+    assert "Team" in subj and "priya@example.com" in h and "Xy9#kLmP" in h
 
     subj, h, t = render_welcome_signup(
         {"customer_name": "Lubhansh", "shop_url": "https://tredevastore.com"}, settings)

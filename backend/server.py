@@ -4957,6 +4957,23 @@ def _email_astrologer_onboarding(astro_id: str, name: str, email_addr: str, welc
     email_sender._email_fire_event("astrologer.created", _send)
 
 
+def _email_staff_invite(user_id: str, name: str, email_addr: str, temp_password: str) -> None:
+    async def _send():
+        settings = await _email_branding()
+        payload = {
+            "staff_name": name, "email": email_addr, "temp_password": temp_password,
+            "login_url": _app_url("/login"),
+        }
+        rendered = await _render_system_email(
+            "staff_invite", payload, settings, email_templates.render_staff_invite)
+        if not rendered:
+            return
+        subject, html_out, text_out = rendered
+        await email_sender.send_email([email_addr], subject, html_out, text_out,
+                                      type_="staff_invite", related_id=user_id)
+    email_sender._email_fire_event("staff.created", _send)
+
+
 def _email_welcome_signup(user: dict) -> None:
     if not user.get("email"):
         return
@@ -6769,6 +6786,7 @@ async def admin_create_staff(body: StaffCreateIn, actor: str = Depends(require_o
             invite_channel = "mock" if result.get("mock") else "openwa"
         except Exception as e:
             log.warning(f"staff invite WA failed: {e}")
+    _email_staff_invite(doc["user_id"], body.name, body.email.lower(), temp_pw)
     await audit_log(actor, "staff.create", doc["user_id"], {"email": body.email.lower(), "permissions": perms, "invite_sent": invite_sent})
     doc.pop("password_hash", None)
     return {**doc, "temp_password": temp_pw, "invite_sent": invite_sent, "invite_channel": invite_channel}
