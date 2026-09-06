@@ -31,7 +31,7 @@ export default function AdminTeam() {
       const via = data.invite_sent ? "WhatsApp" : "mock (logged)";
       toast.success(`Staff added · invite via ${via}. Temp password: ${data.temp_password}`);
       setShowForm(false); setForm(EMPTY); setSelPerms([]); refresh();
-    } catch (e) { toast.error(e.response?.data?.detail); }
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not add staff"); }
     finally { setCreating(false); }
   };
 
