@@ -6,6 +6,8 @@ import { ShieldCheck, Star, CreditCard } from "@phosphor-icons/react";
 
 export default function ProductCard({ p }) {
   const off = p.mrp && p.mrp > p.price ? Math.round(((p.mrp - p.price) / p.mrp) * 100) : 0;
+  const reviewCount = p.review_count || 0;
+  const filledStars = Math.round(p.rating || 0);
   // Warm the detail request (and the shared GET cache) on hover so the click opens
   // instantly with units already loaded, rather than waiting on a fresh round-trip.
   const prefetch = () => { api.get(`/products/${p.slug}`).catch(() => {}); };
@@ -38,13 +40,15 @@ export default function ProductCard({ p }) {
         {p.devanagari_name && (
           <div className="font-deva text-xs sm:text-sm text-gold-soft truncate">{p.devanagari_name}</div>
         )}
-        <h3 className="font-serifd text-base sm:text-xl text-ink mt-1 leading-snug line-clamp-2">{p.name}</h3>
+        <h3 className="font-serifd text-base sm:text-xl text-ink mt-1 leading-snug line-clamp-2 min-h-[2.5em] sm:min-h-[2.6em]">{p.name}</h3>
         <div className="text-[10px] sm:text-xs text-ink-muted mt-1 uppercase tracking-widest truncate">{p.category}</div>
         <div className="mt-2 flex items-center gap-1 text-xs text-gold-soft">
-          {Array.from({ length: 5 }).map((_, k) => <Star key={k} size={11} weight="fill" />)}
-          <span className="text-ink-muted ml-1">(4.9)</span>
+          {Array.from({ length: 5 }).map((_, k) => (
+            <Star key={k} size={11} weight={k < filledStars ? "fill" : "regular"} />
+          ))}
+          <span className="text-ink-muted ml-1">{reviewCount > 0 ? `${p.rating.toFixed(1)} (${reviewCount})` : "New"}</span>
         </div>
-        <div className="mt-auto pt-3 sm:pt-5 flex items-baseline gap-2 sm:gap-3 flex-wrap">
+        <div className="mt-auto pt-3 sm:pt-5 flex flex-col gap-0.5 min-h-[2.4rem] sm:min-h-[3.2rem]">
           <span className="font-display text-lg sm:text-2xl text-maroon-deep">{formatPrice(p.price, p.currency)}</span>
           {p.mrp && p.mrp > p.price && (
             <span className="text-xs sm:text-sm text-ink-muted line-through">{formatPrice(p.mrp, p.currency)}</span>

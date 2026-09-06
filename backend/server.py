@@ -1638,7 +1638,9 @@ _PRODUCT_SELECT = """
            g.origin                                AS g_origin,
            r.mukhi                                 AS r_mukhi,
            r.ruling_planet::text                   AS r_graha,
-           r.origin::text                          AS r_origin
+           r.origin::text                          AS r_origin,
+           rev.avg_rating                          AS avg_rating,
+           COALESCE(rev.review_count, 0)            AS review_count
       FROM products p
       LEFT JOIN categories cat ON cat.id = p.category_id
       LEFT JOIN LATERAL (
@@ -1648,6 +1650,11 @@ _PRODUCT_SELECT = """
       ) m ON true
       LEFT JOIN gemstone_details  g ON g.product_id = p.id
       LEFT JOIN rudraksha_details r ON r.product_id = p.id
+      LEFT JOIN LATERAL (
+            SELECT round(avg(rv.rating)::numeric, 1) AS avg_rating, count(*) AS review_count
+              FROM reviews rv
+             WHERE rv.product_id = p.id AND rv.moderation_status = 'approved'
+      ) rev ON true
      WHERE p.deleted_at IS NULL
 """
 
@@ -1673,6 +1680,7 @@ def _shape_product(row: Optional[dict]) -> Optional[dict]:
         attrs["mukhi"] = int(r["r_mukhi"]) if str(r["r_mukhi"]).isdigit() else r["r_mukhi"]
     for k in ("g_carat", "r_mukhi", "g_graha", "r_graha", "g_origin", "r_origin"):
         r.pop(k, None)
+    avg_rating = r.pop("avg_rating", None)
     return {
         **r,
         "category": db.CATEGORY_FROM_DB.get(r.pop("category_key"), r.get("category_key")),
@@ -1681,6 +1689,7 @@ def _shape_product(row: Optional[dict]) -> Optional[dict]:
         "mrp": db.to_paise(r.pop("compare_at_price")),
         "currency": "INR",
         "attrs": attrs,
+        "rating": float(avg_rating) if avg_rating is not None else None,
     }
 
 
