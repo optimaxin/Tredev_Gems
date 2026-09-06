@@ -68,6 +68,17 @@ ADMIN_NOTIFICATION_EMAILS = [e.strip() for e in
                              os.environ.get("ADMIN_NOTIFICATION_EMAILS", "").split(",") if e.strip()]
 BULK_EMAIL_RATE_LIMIT = max(1, int(os.environ.get("BULK_EMAIL_RATE_LIMIT", "5") or "5"))
 
+# Staff/admin notification list is admin-editable (Admin -> Emails -> Notifications,
+# see server.py's /admin/staff-notification-emails), stored in site_content under
+# this key. Falls back to the env var above until an admin saves one.
+STAFF_NOTIFICATION_EMAILS_KEY = "staff_notification_emails"
+
+
+async def admin_notification_emails() -> list[str]:
+    stored = await db.fetch_val(
+        "SELECT value FROM site_content WHERE key = $1", STAFF_NOTIFICATION_EMAILS_KEY)
+    return list(stored) if stored else ADMIN_NOTIFICATION_EMAILS
+
 
 def configured() -> bool:
     """True once a real ZeptoMail token + from-address are set. Callers degrade
@@ -213,9 +224,10 @@ async def send_with_admin_copy(customer_email: Optional[str], customer_render: O
         subject, html, text = customer_render
         tasks.append(send_email([customer_email], subject, html, text,
                                 type_=type_, related_id=related_id))
-    if ADMIN_NOTIFICATION_EMAILS and admin_render:
+    admin_emails = await admin_notification_emails()
+    if admin_emails and admin_render:
         subject, html, text = admin_render
-        tasks.append(send_email(ADMIN_NOTIFICATION_EMAILS, subject, html, text,
+        tasks.append(send_email(admin_emails, subject, html, text,
                                 type_=f"{type_}.admin_copy", related_id=related_id))
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)

@@ -4835,8 +4835,10 @@ def _order_line_items_for_email(order: dict) -> list[dict]:
 def _email_order_confirmation(order: dict, buyer: Optional[dict]) -> None:
     shipping = order.get("shipping") or {}
     to_email = (buyer or {}).get("email") or shipping.get("email")
-    if not to_email and not email_sender.ADMIN_NOTIFICATION_EMAILS:
-        return
+    # Staff notification emails are DB-editable (site_content, see
+    # email_sender.admin_notification_emails), so unlike before we can't cheaply
+    # rule out an admin copy here without a query — always fire and let
+    # send_with_admin_copy skip whichever side has no recipients.
 
     async def _send():
         settings = await _email_branding()
@@ -4913,13 +4915,17 @@ def _email_consultation_booking(consult: dict) -> None:
             "amount_paid": consult.get("amount", 0), "currency": consult.get("currency") or "INR",
             "payment_method": "PREPAID", "bookings_url": _app_url("/account"),
         }
-        rendered = await _render_system_email(
+        customer_render = await _render_system_email(
             "consultation_booking", payload, settings, email_templates.render_consultation_booking)
-        if not rendered:
-            return
-        subject, html_out, text_out = rendered
-        await email_sender.send_email([consult["email"]], subject, html_out, text_out,
-                                      type_="consultation_booking", related_id=consult.get("booking_id"))
+        admin_render = await _render_system_email(
+            "admin_consultation_notification",
+            {**payload, "customer_email": consult.get("email") or "",
+             "customer_phone": consult.get("phone") or "",
+             "admin_url": _app_url(f"/admin/consultations?booking_id={consult.get('booking_id')}")},
+            settings, email_templates.render_admin_consultation_notification)
+        await email_sender.send_with_admin_copy(
+            consult.get("email"), customer_render, admin_render,
+            type_="consultation_booking", related_id=consult.get("booking_id"))
     email_sender._email_fire_event("consultation.booked", _send)
 
 
@@ -9999,6 +10005,9 @@ _SAMPLE_EMAIL_PAYLOADS = {
     "consultation_booking": {"customer_name": "Test User", "consultation_type": "Birth Chart Reading",
         "booking_id": "CB-1", "booking_date": "01/01/2026", "amount_paid": 39900, "currency": "INR",
         "payment_method": "PREPAID", "bookings_url": "#"},
+    "admin_consultation_notification": {"customer_name": "Test User", "customer_email": "test@example.com",
+        "customer_phone": "+919999999999", "consultation_type": "Birth Chart Reading", "booking_id": "CB-1",
+        "booking_date": "01/01/2026", "amount_paid": 39900, "currency": "INR", "admin_url": "#"},
     "astrologer_assignment": {"customer_name": "Test User", "booking_id": "CB-1", "astrologer_name": "Pandit Sharma",
         "astrologer_specialties": ["Vedic", "Tarot"], "scheduled_date": "02 Jan 2026", "scheduled_time": "5:00 PM IST",
         "duration": "30 minutes", "meeting_link": "#", "meeting_platform": "Google Meet"},
@@ -10022,6 +10031,32 @@ _SAMPLE_EMAIL_PAYLOADS = {
     "query_status_update": {"customer_name": "Test User", "query_subject": "Where is my order?",
         "old_status": "open", "new_status": "resolved", "account_url": "#"},
 }
+
+
+@api.get("/admin/emails/notification-recipients")
+async def admin_get_notification_recipients(_: str = Depends(require_perm("email"))):
+    """Staff/admin emails CC'd on order-paid + consultation-booking notifications —
+    see email_sender.admin_notification_emails()."""
+    return {"emails": await email_sender.admin_notification_emails()}
+
+
+@api.put("/admin/emails/notification-recipients")
+async def admin_put_notification_recipients(body: SiteContentIn,
+                                             actor: str = Depends(require_perm("email"))):
+    if not isinstance(body.value, list):
+        raise HTTPException(400, "Expected a list of email addresses")
+    emails = []
+    for raw in body.value:
+        e = str(raw).strip().lower()
+        if not e:
+            continue
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", e):
+            raise HTTPException(400, f"'{e}' is not a valid email address")
+        if e not in emails:
+            emails.append(e)
+    await _upsert_content(email_sender.STAFF_NOTIFICATION_EMAILS_KEY, emails)
+    await audit_log(actor, "staff_notification_emails.update", email_sender.STAFF_NOTIFICATION_EMAILS_KEY, {})
+    return {"emails": emails}
 
 
 @api.get("/admin/emails/meta")

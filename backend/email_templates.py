@@ -300,6 +300,14 @@ SYSTEM_TEMPLATES: dict[str, dict] = {
             "footer_note": "Questions? Reply to this email or contact us at {{support_email}}",
         },
     },
+    "admin_consultation_notification": {
+        "name": "Admin Consultation Notification", "category": "consultation", "trigger_event": "consultation.booked",
+        "to": "Staff notification emails, alongside the customer's copy", "fields": {
+            "subject": "New Consultation Booking — #{{booking_id}} from {{customer_name}}",
+            "greeting": "A new consultation was just booked.",
+            "button_label": "View in Admin Panel",
+        },
+    },
     "astrologer_assignment": {
         "name": "Astrologer Assignment", "category": "consultation", "trigger_event": "consultation.assigned",
         "to": "The customer, once an astrologer + time are set", "fields": {
@@ -486,6 +494,27 @@ def render_consultation_booking(d: dict, settings: dict, overrides: Optional[dic
     subject = _merge(f['subject'], ctx, escape=False)
     html_out, text_out = _render(preheader="Your consultation booking is confirmed",
                                  heading="Consultation Booked!", content_html=content, settings=settings)
+    return subject, html_out, text_out
+
+
+# ── §5.3b Admin consultation notification ────────────────────────────────────
+def render_admin_consultation_notification(d: dict, settings: dict, overrides: Optional[dict] = None) -> tuple[str, str, str]:
+    f = _fields("admin_consultation_notification", overrides)
+    ctx = dict(d)
+    currency = d.get("currency", "INR")
+    content = f"""
+      <p style="font-size:14px;color:{COLORS['text_body']}">{_merge(f['greeting'], ctx)}</p>
+      {info_card([("Booking ID", d.get('booking_id', '')), ("Date", d.get('booking_date', '')),
+                 ("Customer", d.get('customer_name', '')), ("Email", d.get('customer_email', '')),
+                 ("Phone", d.get('customer_phone', '')), ("Type", d.get('consultation_type', '')),
+                 ("Amount paid", money(d.get('amount_paid', 0), currency))])}
+      <div style="text-align:center;margin:24px 0 8px">
+        {action_button(_merge(f['button_label'], ctx, escape=False), d.get('admin_url') or '#')}
+      </div>
+    """
+    subject = _merge(f['subject'], ctx, escape=False)
+    html_out, text_out = _render(preheader=f"New consultation booking #{d.get('booking_id')}",
+                                 heading="New Consultation Booking", content_html=content, settings=settings)
     return subject, html_out, text_out
 
 

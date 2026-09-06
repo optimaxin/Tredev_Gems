@@ -6,6 +6,7 @@ import "react-quill-new/dist/quill.snow.css";
 import {
   EnvelopeSimple, PaperPlaneTilt, MegaphoneSimple, ClockCounterClockwise, Notepad,
   CaretLeft, CaretRight, X, ArrowClockwise, Pause, Play, PlusCircle, Trash, PencilSimple,
+  BellRinging, FloppyDisk,
 } from "@phosphor-icons/react";
 import SearchBar from "@/components/gemora/SearchBar";
 import AsyncButton from "@/components/gemora/AsyncButton";
@@ -14,6 +15,7 @@ const TABS = [
   { key: "compose", label: "Compose", Icon: PaperPlaneTilt },
   { key: "templates", label: "Templates", Icon: Notepad },
   { key: "campaigns", label: "Campaigns", Icon: MegaphoneSimple },
+  { key: "notifications", label: "Notifications", Icon: BellRinging },
   { key: "logs", label: "Logs", Icon: ClockCounterClockwise },
 ];
 
@@ -646,6 +648,82 @@ function Campaigns() {
   );
 }
 
+// ── Notifications ────────────────────────────────────────────────────────────
+function NotificationRecipients() {
+  const [emails, setEmails] = useState([]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api.get("/admin/emails/notification-recipients")
+      .then((r) => setEmails(r.data.emails || []))
+      .catch(() => toast.error("Could not load notification emails"))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const addEmail = () => {
+    const clean = input.trim().toLowerCase();
+    if (!clean) return;
+    if (!clean.includes("@")) { toast.error("Enter a valid email"); return; }
+    if (!emails.includes(clean)) setEmails((e) => [...e, clean]);
+    setInput("");
+  };
+  const removeEmail = (email) => setEmails((e) => e.filter((x) => x !== email));
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const { data } = await api.put("/admin/emails/notification-recipients", { value: emails });
+      setEmails(data.emails || []);
+      toast.success("Notification emails saved");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Could not save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) return <div className="text-ink-muted">Loading…</div>;
+
+  return (
+    <div className="max-w-lg">
+      <p className="text-sm text-ink-muted mb-4">
+        Every email listed here gets a copy of the "New Order Received" and
+        "New Consultation Booking" notifications, alongside the customer's own copy.
+      </p>
+      <div className="flex flex-wrap gap-1.5 mb-2">
+        {emails.map((email) => (
+          <span key={email} className="inline-flex items-center gap-1 gold-line bg-cream px-2 py-1 text-xs">
+            {email}
+            <button type="button" onClick={() => removeEmail(email)} className="text-ink-muted hover:text-maroon">
+              <X size={12} />
+            </button>
+          </span>
+        ))}
+        {emails.length === 0 && <span className="text-xs text-ink-muted">No staff emails added yet.</span>}
+      </div>
+      <div className="flex gap-2 mb-5">
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addEmail(); } }}
+          placeholder="staff@example.com — press Enter to add"
+          className="flex-1 gold-line px-3 py-2.5 bg-ivory outline-none focus:border-maroon text-sm"
+        />
+        <button type="button" onClick={addEmail}
+          className="px-4 border border-gold/40 text-ink-soft text-sm hover:border-maroon hover:text-maroon">
+          Add
+        </button>
+      </div>
+      <AsyncButton onClick={save} loading={saving} loadingText="Saving…"
+        className="brand-gradient text-white px-6 py-2.5 text-sm font-medium inline-flex items-center gap-2">
+        <FloppyDisk size={14} weight="duotone" /> Save
+      </AsyncButton>
+    </div>
+  );
+}
+
 // ── Logs ─────────────────────────────────────────────────────────────────────
 const PAGE_SIZE = 25;
 
@@ -761,7 +839,8 @@ function Logs() {
 export default function AdminEmail() {
   const [tab, setTab] = useState("compose");
   const Body = useMemo(() => ({
-    compose: <Compose />, templates: <Templates />, campaigns: <Campaigns />, logs: <Logs />,
+    compose: <Compose />, templates: <Templates />, campaigns: <Campaigns />,
+    notifications: <NotificationRecipients />, logs: <Logs />,
   }), []);
 
   return (
