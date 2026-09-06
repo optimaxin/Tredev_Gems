@@ -88,7 +88,7 @@ export default function Shop() {
       {/* Full-bleed hero collection banner (single-category view) */}
       {showBanner && <CategoryBanner category={category} />}
 
-      <div className="mx-auto max-w-7xl px-6 lg:px-10 py-12">
+      <div className="mx-auto max-w-[1600px] px-6 lg:px-10 py-12">
       {!showBanner && (
         <header className="mb-10">
           <div className="text-xs uppercase tracking-[0.3em] text-gold-soft">The Store · भंडार</div>
@@ -98,7 +98,7 @@ export default function Shop() {
         </header>
       )}
 
-      <div id="collection-grid" className="grid lg:grid-cols-[320px_1fr] gap-10 scroll-mt-24">
+      <div id="collection-grid" className="grid lg:grid-cols-[260px_1fr] gap-8 scroll-mt-24">
         <aside className="lg:sticky lg:top-24 h-fit">
           <div className="gold-line-strong p-6">
             <div className="flex items-center gap-2 text-sm uppercase tracking-[0.2em] text-ink pb-4 border-b border-gold/20"><Funnel size={18} weight="duotone" className="text-gold-soft" /> Filters</div>
@@ -200,7 +200,7 @@ export default function Shop() {
           ) : items.length === 0 ? (
             <div className="gold-line p-10 text-center text-ink-muted">No goods match those filters. Try widening.</div>
           ) : (
-            <div className="grid grid-cols-2 lg:grid-cols-3 gap-5">
+            <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-5">
               {items.map((p) => <ProductCard key={p.product_id} p={p} />)}
             </div>
           )}
