@@ -4974,6 +4974,23 @@ def _email_staff_invite(user_id: str, name: str, email_addr: str, temp_password:
     email_sender._email_fire_event("staff.created", _send)
 
 
+def _email_staff_promoted(user_id: str, name: str, email_addr: str) -> None:
+    if not email_addr:
+        return
+
+    async def _send():
+        settings = await _email_branding()
+        payload = {"staff_name": name, "login_url": _app_url("/login")}
+        rendered = await _render_system_email(
+            "staff_promoted", payload, settings, email_templates.render_staff_promoted)
+        if not rendered:
+            return
+        subject, html_out, text_out = rendered
+        await email_sender.send_email([email_addr], subject, html_out, text_out,
+                                      type_="staff_promoted", related_id=user_id)
+    email_sender._email_fire_event("staff.promoted", _send)
+
+
 def _email_welcome_signup(user: dict) -> None:
     if not user.get("email"):
         return
@@ -6826,6 +6843,8 @@ async def admin_update_user(target_user_id: str, body: StaffUpdateIn, actor: str
             if body.role == "owner":
                 updates["permissions"] = list(ALL_PERMISSIONS)
                 await _set_user_perms(conn, target_user_id, list(ALL_PERMISSIONS))
+                if target.get("role") != "owner":
+                    _email_staff_promoted(target_user_id, target.get("name"), target.get("email"))
         if body.permissions is not None:
             perms = [p for p in body.permissions if p in ALL_PERMISSIONS]
             updates["permissions"] = perms

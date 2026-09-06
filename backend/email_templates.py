@@ -337,6 +337,16 @@ SYSTEM_TEMPLATES: dict[str, dict] = {
             "footer_note": "Didn't expect this? Contact {{support_email}}.",
         },
     },
+    "staff_promoted": {
+        "name": "Promoted to Admin", "category": "admin", "trigger_event": "staff.promoted",
+        "to": "A staff member promoted to owner/admin", "fields": {
+            "subject": "Congratulations! You're Now an Admin on Tredeva Store",
+            "greeting": "Congratulations, {{staff_name}}!",
+            "intro": "You've been promoted to Admin/Owner on Tredeva Store — you now have full access to every admin panel section.",
+            "button_label": "Go to Admin Panel",
+            "footer_note": "Questions? Contact {{support_email}}.",
+        },
+    },
     "welcome_signup": {
         "name": "Welcome Email", "category": "transactional", "trigger_event": "user.signup",
         "to": "A brand-new customer account", "fields": {
@@ -621,6 +631,24 @@ def render_staff_invite(d: dict, settings: dict, overrides: Optional[dict] = Non
     return subject, html_out, text_out
 
 
+# ── Staff promoted to admin/owner (Admin -> Team -> Promote to owner) ───────
+def render_staff_promoted(d: dict, settings: dict, overrides: Optional[dict] = None) -> tuple[str, str, str]:
+    f = _fields("staff_promoted", overrides)
+    ctx = {**d, "support_email": settings.get("support_email", "")}
+    content = f"""
+      <p style="font-size:14px;color:{COLORS['text_body']}">{_merge(f['greeting'], ctx)}</p>
+      <p style="font-size:13px;color:{COLORS['text_body']}">{_merge(f['intro'], ctx)}</p>
+      <div style="text-align:center;margin:22px 0 8px">
+        {action_button(_merge(f['button_label'], ctx, escape=False), d.get('login_url') or '#')}
+      </div>
+      <p style="font-size:12px;color:{COLORS['text_muted']};text-align:center">{_merge(f['footer_note'], ctx)}</p>
+    """
+    subject = _merge(f['subject'], ctx, escape=False)
+    html_out, text_out = _render(preheader="You've been promoted to Admin on Tredeva Store",
+                                 heading="Congratulations!", content_html=content, settings=settings)
+    return subject, html_out, text_out
+
+
 # ── Customer welcome email (new account created — signup, Google, or phone) ──
 def render_welcome_signup(d: dict, settings: dict, overrides: Optional[dict] = None) -> tuple[str, str, str]:
     f = _fields("welcome_signup", overrides)
@@ -822,6 +850,10 @@ def _demo() -> None:
         "staff_name": "Priya", "email": "priya@example.com", "temp_password": "Xy9#kLmP",
         "login_url": "https://tredeva.com/login"}, settings)
     assert "Team" in subj and "priya@example.com" in h and "Xy9#kLmP" in h
+
+    subj, h, t = render_staff_promoted({
+        "staff_name": "Priya", "login_url": "https://tredeva.com/login"}, settings)
+    assert "Now an Admin" in subj and "Priya" in h
 
     subj, h, t = render_welcome_signup(
         {"customer_name": "Lubhansh", "shop_url": "https://tredevastore.com"}, settings)
