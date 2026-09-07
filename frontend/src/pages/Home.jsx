@@ -240,7 +240,7 @@ export default function Home() {
   }, [heroSlides.length]);
 
   const bestsellers = useMemo(() => products.slice(0, 4), [products]);
-  const newArrivals = useMemo(() => [...products].reverse().slice(0, 6), [products]);
+  const newArrivals = useMemo(() => [...products].reverse().slice(0, 4), [products]);
   const slide = heroSlides.length ? heroSlides[heroIdx % heroSlides.length] : null;
 
   const findGo = (e) => {
@@ -553,7 +553,7 @@ export default function Home() {
           <Link to="/shop" className="text-sm text-maroon underline underline-offset-4 decoration-gold-soft">View all →</Link>
         </div>
         <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-          {newArrivals.slice(0, 8).map((p) => <ProductCard key={p.product_id} p={p} />)}
+          {newArrivals.map((p) => <ProductCard key={p.product_id} p={p} />)}
         </div>
       </section>
 

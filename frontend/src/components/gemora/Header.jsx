@@ -223,9 +223,14 @@ export default function Header() {
           <nav className="hidden lg:flex items-center gap-4 xl:gap-6 ml-3">
             {megaNav.map((m) => {
               // Hovering previews the dropdown; clicking the label itself jumps straight
-              // to that section's landing page (its first sub-link) instead of just
-              // toggling the panel open with nowhere to go for a mouse click.
-              const viewAllHref = m.columns?.[0]?.items?.[0]?.href;
+              // to that section's landing page instead of just toggling the panel open
+              // with nowhere to go for a mouse click. Uses the category itself, not
+              // columns[0].items[0] — that broke whenever an admin reordered the
+              // mega-menu columns in AdminWebsite (e.g. "By Purpose" moved to column 1
+              // made clicking "Rudraksha" jump to the "Wealth" filter).
+              const CATEGORY_KEYS = ["rudraksha", "gemstone", "bracelet", "yantra"];
+              const viewAllHref = m.href
+                || (CATEGORY_KEYS.includes(m.key) ? `/shop?category=${m.key}` : m.columns?.[0]?.items?.[0]?.href);
               return (
                 <button
                   key={m.key}
