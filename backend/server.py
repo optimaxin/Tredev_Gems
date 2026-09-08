@@ -1842,8 +1842,8 @@ async def _attach_rudraksha_product(rec: Optional[dict]) -> None:
         rec["product"] = None
         return
     row = await db.fetch_one(
-        _PRODUCT_SELECT + " AND p.category_key = 'rudraksha'::category_key AND r.mukhi = $1"
-        " ORDER BY p.created_at DESC LIMIT 1", m.group(1))
+        _PRODUCT_SELECT + " AND p.category_key = 'rudraksha'::category_key AND p.status = 'active'"
+        " AND r.mukhi = $1 ORDER BY p.created_at DESC LIMIT 1", m.group(1))
     rec["product"] = _shape_product(row) if row else None
 
 
