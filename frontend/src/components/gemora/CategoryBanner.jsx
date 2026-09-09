@@ -70,7 +70,9 @@ export default function CategoryBanner({ category }) {
   useEffect(() => {
     let alive = true;
     api.get("/categories")
-      .then(({ data }) => alive && setCat((data.categories || []).find((c) => c.key === category) || null))
+      // `key` is the category *type* and isn't unique — subcategories (e.g. "0 Mukhi
+      // Rudraksha") share their parent's key, so also require the top-level row here.
+      .then(({ data }) => alive && setCat((data.categories || []).find((c) => c.key === category && !c.parent_category_id) || null))
       .catch(() => {});
     return () => { alive = false; };
   }, [category]);
